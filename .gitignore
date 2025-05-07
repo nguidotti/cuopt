@@ -1,0 +1,59 @@
+## A common gitignore file
+## The private files that shouldn't be tracked can be put in:
+## .git/info/exclude
+
+## Common
+__pycache__
+*.py[cod]
+*$py.class
+*.a
+*.o
+*.so
+*.dylib
+.cache
+.vscode
+*.swp
+*.pytest_cache
+*.manifest
+*.spec
+.nfs*
+.clangd
+build
+dist
+html
+*.egg-info
+
+# Ignore _skbuild directory
+_skbuild/
+
+## Python build directories & artifacts
+python/**/*.cpp
+
+# profiler reports
+*.qdrep
+*.ncu-rep
+*.nsys-rep
+
+# datasets
+datasets/**
+!datasets/ref
+!datasets/get_test_data.sh
+!datasets/distance_engine
+!datasets/sat/get_test_data.sh
+
+## Doxygen
+cpp/doxygen/html
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+
+# Managed Service Cache
+token_cache.json
+version_cache.json
+
+# Local Server Error Log
+error_log.txt
+
+# docs
+docs/cuopt/_build
+docs/cuopt/_repo

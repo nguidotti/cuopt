@@ -1,0 +1,24 @@
+#cpp code owners
+cpp/               @rapidsai/cuopt-cpp-codeowners
+
+#python code owners
+python/            @rapidsai/cuopt-python-codeowners
+notebooks/         @rapidsai/cuopt-python-codeowners
+docs/              @rapidsai/cuopt-python-codeowners
+
+#infra code owners
+**/CMakeLists.txt  @rapidsai/cuopt-infra-codeowners
+**/cmake/          @rapidsai/cuopt-infra-codeowners
+container-builder/ @rapidsai/cuopt-infra-codeowners
+
+#CI code owners
+/.github/                @rapidsai/ci-codeowners
+/ci/                     @rapidsai/ci-codeowners
+/.pre-commit-config.yaml @rapidsai/ci-codeowners
+
+#packaging code owners
+/.devcontainer/    @rapidsai/packaging-codeowners
+/conda/            @rapidsai/packaging-codeowners
+/dependencies.yaml @rapidsai/packaging-codeowners
+/build.sh          @rapidsai/packaging-codeowners
+pyproject.toml     @rapidsai/packaging-codeowners

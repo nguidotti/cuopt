@@ -1,0 +1,207 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights
+ * reserved. SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#include <cuopt/linear_programming/mip/solver_solution.hpp>
+#include <mip/mip_constants.hpp>
+
+#include <raft/common/nvtx.hpp>
+#include <raft/util/cudart_utils.hpp>
+
+#include <limits>
+#include <vector>
+
+namespace cuopt::linear_programming {
+
+template <typename i_t, typename f_t>
+mip_solution_t<i_t, f_t>::mip_solution_t(rmm::device_uvector<f_t> solution,
+                                         std::vector<std::string> var_names,
+                                         f_t objective,
+                                         f_t mip_gap,
+                                         f_t solution_bound,
+                                         double total_solve_time,
+                                         double presolve_time,
+                                         mip_termination_status_t termination_status,
+                                         f_t max_constraint_violation,
+                                         f_t max_int_violation,
+                                         f_t max_variable_bound_violation,
+                                         std::vector<rmm::device_uvector<f_t>> solution_pool)
+  : solution_(std::move(solution)),
+    var_names_(std::move(var_names)),
+    objective_(objective),
+    mip_gap_(mip_gap),
+    solution_bound_(solution_bound),
+    total_solve_time_(total_solve_time),
+    presolve_time_(presolve_time),
+    termination_status_(termination_status),
+    max_constraint_violation_(max_constraint_violation),
+    max_int_violation_(max_int_violation),
+    max_variable_bound_violation_(max_variable_bound_violation),
+    solution_pool_(std::move(solution_pool))
+{
+}
+
+template <typename i_t, typename f_t>
+mip_solution_t<i_t, f_t>::mip_solution_t(mip_termination_status_t termination_status,
+                                         rmm::cuda_stream_view stream_view)
+  : solution_(0, stream_view),
+    objective_(0),
+    mip_gap_(0),
+    solution_bound_(0),
+    total_solve_time_(0),
+    presolve_time_(0),
+    termination_status_(termination_status),
+    max_constraint_violation_(0),
+    max_int_violation_(0),
+    max_variable_bound_violation_(0)
+{
+}
+
+template <typename i_t, typename f_t>
+const rmm::device_uvector<f_t>& mip_solution_t<i_t, f_t>::get_solution() const
+{
+  return solution_;
+}
+
+template <typename i_t, typename f_t>
+rmm::device_uvector<f_t>& mip_solution_t<i_t, f_t>::get_solution()
+{
+  return solution_;
+}
+
+template <typename i_t, typename f_t>
+f_t mip_solution_t<i_t, f_t>::get_objective_value() const
+{
+  return objective_;
+}
+
+template <typename i_t, typename f_t>
+f_t mip_solution_t<i_t, f_t>::get_mip_gap() const
+{
+  return mip_gap_;
+}
+
+template <typename i_t, typename f_t>
+f_t mip_solution_t<i_t, f_t>::get_solution_bound() const
+{
+  return solution_bound_;
+}
+
+template <typename i_t, typename f_t>
+double mip_solution_t<i_t, f_t>::get_total_solve_time() const
+{
+  return total_solve_time_;
+}
+
+template <typename i_t, typename f_t>
+double mip_solution_t<i_t, f_t>::get_presolve_time() const
+{
+  return presolve_time_;
+}
+
+template <typename i_t, typename f_t>
+mip_termination_status_t mip_solution_t<i_t, f_t>::get_termination_status() const
+{
+  return termination_status_;
+}
+
+template <typename i_t, typename f_t>
+std::string mip_solution_t<i_t, f_t>::get_termination_status_string(
+  mip_termination_status_t termination_status)
+{
+  switch (termination_status) {
+    case mip_termination_status_t::NoTermination: return "NoTermination";
+    case mip_termination_status_t::Optimal: return "Optimal";
+    case mip_termination_status_t::FeasibleFound: return "FeasibleFound";
+    case mip_termination_status_t::Infeasible: return "Infeasible";
+    case mip_termination_status_t::Unbounded:
+      return "Unbounded";
+      // Do not implement default case to trigger compile time error if new enum is added
+  }
+  return std::string();
+}
+
+template <typename i_t, typename f_t>
+std::string mip_solution_t<i_t, f_t>::get_termination_status_string() const
+{
+  return get_termination_status_string(termination_status_);
+}
+
+template <typename i_t, typename f_t>
+f_t mip_solution_t<i_t, f_t>::get_max_constraint_violation() const
+{
+  return max_constraint_violation_;
+}
+
+template <typename i_t, typename f_t>
+f_t mip_solution_t<i_t, f_t>::get_max_int_violation() const
+{
+  return max_int_violation_;
+}
+
+template <typename i_t, typename f_t>
+f_t mip_solution_t<i_t, f_t>::get_max_variable_bound_violation() const
+{
+  return max_variable_bound_violation_;
+}
+
+template <typename i_t, typename f_t>
+const std::vector<std::string>& mip_solution_t<i_t, f_t>::get_variable_names() const
+{
+  return var_names_;
+}
+
+template <typename i_t, typename f_t>
+const std::vector<rmm::device_uvector<f_t>>& mip_solution_t<i_t, f_t>::get_solution_pool() const
+{
+  return solution_pool_;
+}
+
+template <typename i_t, typename f_t>
+void mip_solution_t<i_t, f_t>::write_to_sol_file(std::string_view filename,
+                                                 rmm::cuda_stream_view stream_view) const
+{
+  raft::common::nvtx::range fun_scope("write final solution to .sol file");
+
+  std::ofstream myfile(filename.data());
+  myfile.precision(std::numeric_limits<f_t>::digits10 + 1);
+
+  if (termination_status_ == mip_termination_status_t::NoTermination ||
+      termination_status_ == mip_termination_status_t::Infeasible) {
+    myfile << "=infeas=" << std::endl;
+    return;
+  }
+  std::vector<f_t> h_solution;
+  h_solution.resize(solution_.size());
+  raft::copy(h_solution.data(), solution_.data(), solution_.size(), stream_view.value());
+  RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view.value()));
+
+  myfile << "=obj=\t" << get_objective_value() << std::endl;
+  if (!var_names_.empty()) {
+    for (size_t i = 0; i < h_solution.size(); i++) {
+      myfile << var_names_[i] << "\t" << h_solution[i] << std::endl;
+    }
+  }
+}
+
+#if MIP_INSTANTIATE_FLOAT
+template class mip_solution_t<int, float>;
+#endif
+
+#if MIP_INSTANTIATE_DOUBLE
+template class mip_solution_t<int, double>;
+#endif
+}  // namespace cuopt::linear_programming

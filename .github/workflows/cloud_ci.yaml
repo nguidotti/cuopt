@@ -1,0 +1,17 @@
+name: cloud_ci_checker
+on:
+  push:
+    branches:
+      - ${GITHUB_REF##*/}
+    paths:
+      - 'cloud-scripts'
+jobs:
+  conditional_step:
+    runs-on: 'ubuntu-22.04'
+    steps:
+      - run: echo "Starting GitHub Actions Job for Cloud CI test notification"
+      - uses: cinotify/github-action@main
+        with:
+          to: 'cuopt-eng@nvidia.com'
+          subject: 'Cloud scripts change notification'
+          body: 'This is a notification from GitHub actions.'
