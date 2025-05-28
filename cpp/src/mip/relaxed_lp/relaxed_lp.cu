@@ -19,6 +19,7 @@
 
 #include <cuopt/error.hpp>
 #include <cuopt/linear_programming/pdlp/pdlp_hyper_params.cuh>
+#include <cuopt/linear_programming/solve.hpp>
 #include <mip/mip_constants.hpp>
 #include <mip/utils.cuh>
 
@@ -71,7 +72,6 @@ optimization_problem_solution_t<i_t, f_t> get_relaxed_lp_solution(
   // settings.set_save_best_primal_so_far(true);
   // currently disable first primal setting as it is not supported without per constraint mode
   settings.first_primal_feasible = return_first_feasible;
-  pdlp_solver_t<i_t, f_t> lp_solver(op_problem, settings);
   if (save_state) {
     i_t prev_size = lp_state.prev_dual.size();
     CUOPT_LOG_DEBUG(
@@ -95,17 +95,16 @@ optimization_problem_solution_t<i_t, f_t> get_relaxed_lp_solution(
                        if (!isfinite(x) || i >= prev_size) { return 0.0; }
                        return x;
                      });
-    lp_solver.set_initial_primal_solution(lp_state.prev_primal);
-    lp_solver.set_initial_dual_solution(lp_state.prev_dual);
+    settings.set_initial_primal_solution(lp_state.prev_primal);
+    settings.set_initial_dual_solution(lp_state.prev_dual);
   }
   CUOPT_LOG_DEBUG(
     "running LP with n_vars %d n_cstr %d", op_problem.n_variables, op_problem.n_constraints);
   // before LP flush the logs as it takes quite some time
   cuopt::default_logger().flush();
   // temporarily add timer
-  auto start_time = std::chrono::high_resolution_clock::now();
-  lp_solver.set_inside_mip(true);
-  auto solver_response = lp_solver.run_solver(start_time);
+  // TODO check that we do want to do problem checking here
+  auto solver_response = solve_lp(op_problem, settings, true, true, true);
 
   if (solver_response.get_primal_solution().size() != 0 &&
       solver_response.get_dual_solution().size() != 0 && save_state) {

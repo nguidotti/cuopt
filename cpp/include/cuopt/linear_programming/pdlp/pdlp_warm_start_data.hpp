@@ -49,6 +49,7 @@ struct pdlp_warm_start_data_t {
   f_t last_restart_kkt_score_{-1};
   f_t sum_solution_weight_{-1};
   i_t iterations_since_last_restart_{-1};
+  bool solved_by_pdlp_{false};
 
   // Constructor when building it in the solution object
   pdlp_warm_start_data_t(rmm::device_uvector<f_t>& current_primal_solution,
@@ -67,7 +68,8 @@ struct pdlp_warm_start_data_t {
                          f_t last_candidate_kkt_score,
                          f_t last_restart_kkt_score,
                          f_t sum_solution_weight,
-                         i_t iterations_since_last_restart);
+                         i_t iterations_since_last_restart,
+                         bool solved_by_pdlp);
 
   // Empty constructor
   pdlp_warm_start_data_t();
@@ -104,6 +106,7 @@ struct pdlp_warm_start_data_view_t {
   f_t last_restart_kkt_score_{-1};
   f_t sum_solution_weight_{-1};
   i_t iterations_since_last_restart_{-1};
+  bool solved_by_pdlp_{false};
 };
 
 }  // namespace cuopt::linear_programming

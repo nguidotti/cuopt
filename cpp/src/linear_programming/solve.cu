@@ -363,7 +363,8 @@ static optimization_problem_solution_t<i_t, f_t> run_pdlp_solver(
 
 template <typename i_t, typename f_t>
 optimization_problem_solution_t<i_t, f_t> run_pdlp(detail::problem_t<i_t, f_t>& problem,
-                                                   pdlp_solver_settings_t<i_t, f_t> const& settings)
+                                                   pdlp_solver_settings_t<i_t, f_t> const& settings,
+                                                   bool inside_mip)
 {
   auto start_solver = std::chrono::high_resolution_clock::now();
   f_t start_time    = dual_simplex::tic();
@@ -465,16 +466,15 @@ void run_dual_simplex_thread(
 
 template <typename i_t, typename f_t>
 optimization_problem_solution_t<i_t, f_t> run_concurrent(
-  optimization_problem_t<i_t, f_t>& op_problem,
   detail::problem_t<i_t, f_t>& problem,
-  pdlp_solver_settings_t<i_t, f_t> const& settings)
+  pdlp_solver_settings_t<i_t, f_t> const& settings,
+  bool inside_mip)
 {
   CUOPT_LOG_INFO("Running concurrent\n");
   f_t start_time = dual_simplex::tic();
 
   // Copy the settings so that we can set the concurrent halt pointer
-  pdlp_solver_settings_t<i_t, f_t> settings_pdlp(settings,
-                                                 op_problem.get_handle_ptr()->get_stream());
+  pdlp_solver_settings_t<i_t, f_t> settings_pdlp(settings, problem.handle_ptr->get_stream());
 
   // Set the concurrent halt pointer
   global_concurrent_halt.store(0, std::memory_order_release);
@@ -495,7 +495,7 @@ optimization_problem_solution_t<i_t, f_t> run_concurrent(
                                   std::ref(sol_dual_simplex_ptr));
 
   // Run pdlp in the main thread
-  auto sol_pdlp = run_pdlp(problem, settings_pdlp);
+  auto sol_pdlp = run_pdlp(problem, settings_pdlp, inside_mip);
 
   // Wait for dual simplex thread to finish
   dual_simplex_thread.join();
@@ -515,7 +515,8 @@ optimization_problem_solution_t<i_t, f_t> run_concurrent(
       sol_dual_simplex.get_termination_status() == pdlp_termination_status_t::PrimalInfeasible ||
       sol_dual_simplex.get_termination_status() == pdlp_termination_status_t::DualInfeasible) {
     CUOPT_LOG_INFO("Solved with dual simplex");
-    sol_pdlp.copy_from(op_problem.get_handle_ptr(), sol_dual_simplex);
+    // TODO confirm with Akif that using the problem handle ptr is not a problem
+    sol_pdlp.copy_from(problem.handle_ptr, sol_dual_simplex);
     sol_pdlp.set_solve_time(end_time);
     CUOPT_LOG_INFO("Status: %s   Objective: %.8e  Iterations: %d  Time: %.3fs",
                    sol_pdlp.get_termination_status_string().c_str(),
@@ -537,24 +538,25 @@ optimization_problem_solution_t<i_t, f_t> run_concurrent(
 
 template <typename i_t, typename f_t>
 optimization_problem_solution_t<i_t, f_t> solve_lp_with_method(
-  optimization_problem_t<i_t, f_t>& op_problem,
   detail::problem_t<i_t, f_t>& problem,
-  pdlp_solver_settings_t<i_t, f_t> const& settings)
+  pdlp_solver_settings_t<i_t, f_t> const& settings,
+  bool inside_mip)
 {
   if (settings.method == method_t::DualSimplex) {
     return run_dual_simplex(problem, settings);
   } else if (settings.method == method_t::Concurrent) {
-    return run_concurrent(op_problem, problem, settings);
+    return run_concurrent(problem, settings, inside_mip);
   } else {
-    return run_pdlp(problem, settings);
+    return run_pdlp(problem, settings, inside_mip);
   }
 }
 
 template <typename i_t, typename f_t>
-optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f_t>& op_problem,
+optimization_problem_solution_t<i_t, f_t> solve_lp(detail::problem_t<i_t, f_t>& problem,
                                                    pdlp_solver_settings_t<i_t, f_t> const& settings,
                                                    bool problem_checking,
-                                                   bool use_pdlp_solver_mode)
+                                                   bool use_pdlp_solver_mode,
+                                                   bool inside_mip)
 {
   try {
     // Create log stream for file logging and add it to default logger
@@ -562,17 +564,16 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
 
     // Init libraies before to not include it in solve time
     // This needs to be called before pdlp is initialized
-    init_handler(op_problem.get_handle_ptr());
+    init_handler(problem.handle_ptr);
 
     raft::common::nvtx::range fun_scope("Running solver");
 
     if (problem_checking) {
       raft::common::nvtx::range fun_scope("Check problem representation");
       // This is required as user might forget to set some fields
-      problem_checking_t<i_t, f_t>::check_problem_representation(op_problem);
-      problem_checking_t<i_t, f_t>::check_initial_solution_representation(op_problem, settings);
+      problem_checking_t<i_t, f_t>::check_problem_representation(*problem.original_problem_ptr);
+      problem_checking_t<i_t, f_t>::check_initial_solution_representation(*problem.original_problem_ptr, settings);
     }
-    detail::problem_t<i_t, f_t> problem(op_problem);
     CUOPT_LOG_INFO(
       "Solving a problem with %d constraints %d variables (%d integers) and %d nonzeros",
       problem.n_constraints,
@@ -591,25 +592,35 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
     // Set the hyper-parameters based on the solver_settings
     if (use_pdlp_solver_mode) { set_pdlp_solver_mode(settings); }
 
-    setup_device_symbols(op_problem.get_handle_ptr()->get_stream());
+    setup_device_symbols(problem.handle_ptr->get_stream());
 
-    auto sol = solve_lp_with_method(op_problem, problem, settings);
+    auto sol = solve_lp_with_method( problem, settings, inside_mip);
 
     if (settings.sol_file != "") {
       CUOPT_LOG_INFO("Writing solution to file %s", settings.sol_file.c_str());
-      sol.write_to_sol_file(settings.sol_file, op_problem.get_handle_ptr()->get_stream());
+      sol.write_to_sol_file(settings.sol_file, problem.handle_ptr->get_stream());
     }
 
     return sol;
   } catch (const cuopt::logic_error& e) {
     CUOPT_LOG_ERROR("Error in solve_lp: %s", e.what());
-    return optimization_problem_solution_t<i_t, f_t>{e, op_problem.get_handle_ptr()->get_stream()};
+    return optimization_problem_solution_t<i_t, f_t>{e, problem.handle_ptr->get_stream()};
   } catch (const std::bad_alloc& e) {
     CUOPT_LOG_ERROR("Error in solve_lp: %s", e.what());
     return optimization_problem_solution_t<i_t, f_t>{
       cuopt::logic_error("Memory allocation failed", cuopt::error_type_t::RuntimeError),
-      op_problem.get_handle_ptr()->get_stream()};
+      problem.handle_ptr->get_stream()};
   }
+}
+
+template <typename i_t, typename f_t>
+optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f_t>& op_problem,
+                                                   pdlp_solver_settings_t<i_t, f_t> const& settings,
+                                                   bool problem_checking,
+                                                   bool use_pdlp_solver_mode)
+{
+  detail::problem_t<i_t, f_t> problem(op_problem);
+  return solve_lp(problem, settings, problem_checking, use_pdlp_solver_mode);
 }
 
 template <typename i_t, typename f_t>

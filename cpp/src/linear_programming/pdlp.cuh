@@ -171,7 +171,7 @@ class pdlp_solver_t {
   // Intentionnaly take a copy to avoid an unintentional modification in the calling context
   const pdlp_solver_settings_t<i_t, f_t> settings_;
 
-  pdlp_warm_start_data_t<i_t, f_t> get_filled_warmed_start_data();
+  pdlp_warm_start_data_t<i_t, f_t> get_filled_warmed_start_data(bool solved_by_pdlp);
 
   // Initial scaling strategy
   detail::pdlp_initial_scaling_strategy_t<i_t, f_t> initial_scaling_strategy_;

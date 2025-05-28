@@ -110,6 +110,9 @@ class pdlp_solver_settings_t {
                                    i_t size,
                                    rmm::cuda_stream_view stream = rmm::cuda_stream_default);
 
+  // TODO comment
+  void set_initial_primal_solution(const rmm::device_uvector<f_t>& initial_primal_solution);
+
   /**
    * @brief Set an initial dual solution.
    *
@@ -123,6 +126,9 @@ class pdlp_solver_settings_t {
   void set_initial_dual_solution(const f_t* initial_dual_solution,
                                  i_t size,
                                  rmm::cuda_stream_view stream = rmm::cuda_stream_default);
+
+  // TODO comment
+  void set_initial_dual_solution(const rmm::device_uvector<f_t>& initial_dual_solution);
 
   /**
    * @brief Set the pdlp warm start data. This allows to restart PDLP with a previous solution
@@ -160,14 +166,15 @@ class pdlp_solver_settings_t {
                                 f_t last_candidate_kkt_score_,
                                 f_t last_restart_kkt_score_,
                                 f_t sum_solution_weight_,
-                                i_t iterations_since_last_restart_);
+                                i_t iterations_since_last_restart_,
+                                bool solved_by_pdlp_);
   /**
    * @brief Get the pdlp warm start data
    *
    * @return pdlp warm start data
    */
-  const pdlp_warm_start_data_t<i_t, f_t>& get_pdlp_warm_start_data() const noexcept;
-  pdlp_warm_start_data_t<i_t, f_t>& get_pdlp_warm_start_data();
+  const std::optional<pdlp_warm_start_data_t<i_t, f_t>>& get_pdlp_warm_start_data() const noexcept;
+  std::optional<pdlp_warm_start_data_t<i_t, f_t>>& get_pdlp_warm_start_data();
   const pdlp_warm_start_data_view_t<i_t, f_t>& get_pdlp_warm_start_data_view() const noexcept;
 
   const rmm::device_uvector<f_t>& get_initial_primal_solution() const;
@@ -216,7 +223,7 @@ class pdlp_solver_settings_t {
   /** Initial dual solution */
   std::shared_ptr<rmm::device_uvector<f_t>> initial_dual_solution_;
   // For the C++ interface
-  pdlp_warm_start_data_t<i_t, f_t> pdlp_warm_start_data_;
+  std::optional<pdlp_warm_start_data_t<i_t, f_t>> pdlp_warm_start_data_;
   // For the Cython interface
   pdlp_warm_start_data_view_t<i_t, f_t> pdlp_warm_start_data_view_;
 

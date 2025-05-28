@@ -46,7 +46,8 @@ pdlp_warm_start_data_t<i_t, f_t>::pdlp_warm_start_data_t(
   f_t last_candidate_kkt_score,
   f_t last_restart_kkt_score,
   f_t sum_solution_weight,
-  i_t iterations_since_last_restart)
+  i_t iterations_since_last_restart,
+  bool solved_by_pdlp)
   :  // When initially creating this object, we can't move neither the primal/dual solution nor
      // the average since they might be used as a solution by the solution object, they have to be
      // copied
@@ -66,7 +67,8 @@ pdlp_warm_start_data_t<i_t, f_t>::pdlp_warm_start_data_t(
     last_candidate_kkt_score_(last_candidate_kkt_score),
     last_restart_kkt_score_(last_restart_kkt_score),
     sum_solution_weight_(sum_solution_weight),
-    iterations_since_last_restart_(iterations_since_last_restart)
+    iterations_since_last_restart_(iterations_since_last_restart),
+    solved_by_pdlp_(solved_by_pdlp)
 {
   check_sizes();
 }
@@ -107,7 +109,8 @@ pdlp_warm_start_data_t<i_t, f_t>::pdlp_warm_start_data_t(
     last_candidate_kkt_score_(other.last_candidate_kkt_score_),
     last_restart_kkt_score_(other.last_restart_kkt_score_),
     sum_solution_weight_(other.sum_solution_weight_),
-    iterations_since_last_restart_(other.iterations_since_last_restart_)
+    iterations_since_last_restart_(other.iterations_since_last_restart_),
+    solved_by_pdlp_(other.solved_by_pdlp_)
 {
   raft::copy(current_primal_solution_.data(),
              other.current_primal_solution_.data(),
@@ -168,7 +171,8 @@ pdlp_warm_start_data_t<i_t, f_t>::pdlp_warm_start_data_t(const pdlp_warm_start_d
     last_candidate_kkt_score_(other.last_candidate_kkt_score_),
     last_restart_kkt_score_(other.last_restart_kkt_score_),
     sum_solution_weight_(other.sum_solution_weight_),
-    iterations_since_last_restart_(other.iterations_since_last_restart_)
+    iterations_since_last_restart_(other.iterations_since_last_restart_),
+    solved_by_pdlp_(other.solved_by_pdlp_)
 {
   check_sizes();
 }

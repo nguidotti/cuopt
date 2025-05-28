@@ -29,6 +29,11 @@
 
 namespace cuopt::linear_programming {
 
+namespace detail {
+template <typename i_t, typename f_t>
+class problem_t;
+}
+
 /**
  * @brief Linear programming solve function.
  * @note Both primal and dual solutions are zero-initialized. For custom initialization, see
@@ -52,6 +57,31 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(
   pdlp_solver_settings_t<i_t, f_t> const& settings = pdlp_solver_settings_t<i_t, f_t>{},
   bool problem_checking                            = true,
   bool use_pdlp_solver_mode                        = true);
+
+/**
+ * @brief Linear programming solve function.
+ * @note Both primal and dual solutions are zero-initialized. For custom initialization, see
+ * op_problem.initial_primal/dual_solution
+ *
+ * @tparam i_t Data type of indexes
+ * @tparam f_t Data type of the variables and their weights in the equations
+ *
+ * @param[in] op_problem  An optimization_problem_t<i_t, f_t> object with a
+ * representation of a linear program
+ * @param[in] settings  A pdlp_solver_settings_t<i_t, f_t> object with the settings for the PDLP
+ * solver.
+ * @param[in] problem_checking  If true, the problem is checked for consistency.
+ * @param[in] use_pdlp_solver_modes  If true, the PDLP hyperparameters coming from the
+ * pdlp_solver_mode are used (instead of the ones comming from a potential hyper-params file).
+ * @return optimization_problem_solution_t<i_t, f_t> owning container for the solver solution
+ */
+template <typename i_t, typename f_t>
+optimization_problem_solution_t<i_t, f_t> solve_lp(
+  detail::problem_t<i_t, f_t>& problem,
+  pdlp_solver_settings_t<i_t, f_t> const& settings = pdlp_solver_settings_t<i_t, f_t>{},
+  bool problem_checking                            = true,
+  bool use_pdlp_solver_mode                        = true,
+  bool inside_mip                                = false);
 
 /**
  * @brief Linear programming solve function.

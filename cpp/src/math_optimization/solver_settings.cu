@@ -334,7 +334,8 @@ void solver_settings_t<i_t, f_t>::set_pdlp_warm_start_data(
   f_t last_candidate_kkt_score,
   f_t last_restart_kkt_score,
   f_t sum_solution_weight,
-  i_t iterations_since_last_restart)
+  i_t iterations_since_last_restart,
+  bool solved_by_pdlp)
 {
   pdlp_settings.set_pdlp_warm_start_data(current_primal_solution,
                                          current_dual_solution,
@@ -354,7 +355,8 @@ void solver_settings_t<i_t, f_t>::set_pdlp_warm_start_data(
                                          last_candidate_kkt_score,
                                          last_restart_kkt_score,
                                          sum_solution_weight,
-                                         iterations_since_last_restart);
+                                         iterations_since_last_restart,
+                                         solved_by_pdlp);
 }
 
 template <typename i_t, typename f_t>

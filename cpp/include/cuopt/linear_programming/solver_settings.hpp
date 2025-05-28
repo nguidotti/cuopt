@@ -82,7 +82,8 @@ class solver_settings_t {
                                 f_t last_candidate_kkt_score_,
                                 f_t last_restart_kkt_score_,
                                 f_t sum_solution_weight_,
-                                i_t iterations_since_last_restart_);
+                                i_t iterations_since_last_restart_,
+                                bool solved_by_pdlp_);
 
   const rmm::device_uvector<f_t>& get_initial_pdlp_primal_solution() const;
   const rmm::device_uvector<f_t>& get_initial_pdlp_dual_solution() const;

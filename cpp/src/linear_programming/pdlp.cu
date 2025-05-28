@@ -128,56 +128,64 @@ pdlp_solver_t<i_t, f_t>::pdlp_solver_t(problem_t<i_t, f_t>& op_problem,
     set_initial_dual_solution(dual_sol);
   }
 
-  if (settings.get_pdlp_warm_start_data().last_restart_duality_gap_dual_solution_.size() != 0) {
-    set_initial_primal_solution(settings.get_pdlp_warm_start_data().current_primal_solution_);
-    set_initial_dual_solution(settings.get_pdlp_warm_start_data().current_dual_solution_);
-    initial_step_size_     = settings.get_pdlp_warm_start_data().initial_step_size_;
-    initial_primal_weight_ = settings.get_pdlp_warm_start_data().initial_primal_weight_;
-    total_pdlp_iterations_ = settings.get_pdlp_warm_start_data().total_pdlp_iterations_;
-    pdhg_solver_.total_pdhg_iterations_ =
-      settings.get_pdlp_warm_start_data().total_pdhg_iterations_;
-    pdhg_solver_.get_d_total_pdhg_iterations().set_value_async(
-      settings.get_pdlp_warm_start_data().total_pdhg_iterations_, stream_view_);
-    restart_strategy_.last_candidate_kkt_score =
-      settings.get_pdlp_warm_start_data().last_candidate_kkt_score_;
-    restart_strategy_.last_restart_kkt_score =
-      settings.get_pdlp_warm_start_data().last_restart_kkt_score_;
-    raft::copy(restart_strategy_.weighted_average_solution_.sum_primal_solutions_.data(),
-               settings.get_pdlp_warm_start_data().sum_primal_solutions_.data(),
-               settings.get_pdlp_warm_start_data().sum_primal_solutions_.size(),
-               stream_view_);
-    raft::copy(restart_strategy_.weighted_average_solution_.sum_dual_solutions_.data(),
-               settings.get_pdlp_warm_start_data().sum_dual_solutions_.data(),
-               settings.get_pdlp_warm_start_data().sum_dual_solutions_.size(),
-               stream_view_);
-    raft::copy(unscaled_primal_avg_solution_.data(),
-               settings.get_pdlp_warm_start_data().initial_primal_average_.data(),
-               settings.get_pdlp_warm_start_data().initial_primal_average_.size(),
-               stream_view_);
-    raft::copy(unscaled_dual_avg_solution_.data(),
-               settings.get_pdlp_warm_start_data().initial_dual_average_.data(),
-               settings.get_pdlp_warm_start_data().initial_dual_average_.size(),
-               stream_view_);
-    raft::copy(pdhg_solver_.get_saddle_point_state().get_current_AtY().data(),
-               settings.get_pdlp_warm_start_data().current_ATY_.data(),
-               settings.get_pdlp_warm_start_data().current_ATY_.size(),
-               stream_view_);
-    raft::copy(restart_strategy_.last_restart_duality_gap_.primal_solution_.data(),
-               settings.get_pdlp_warm_start_data().last_restart_duality_gap_primal_solution_.data(),
-               settings.get_pdlp_warm_start_data().last_restart_duality_gap_primal_solution_.size(),
-               stream_view_);
-    raft::copy(restart_strategy_.last_restart_duality_gap_.dual_solution_.data(),
-               settings.get_pdlp_warm_start_data().last_restart_duality_gap_dual_solution_.data(),
-               settings.get_pdlp_warm_start_data().last_restart_duality_gap_dual_solution_.size(),
-               stream_view_);
+  if (settings.get_pdlp_warm_start_data().has_value()) {
+    const auto& warm_start_data = settings.get_pdlp_warm_start_data().value();
+    if (!warm_start_data.solved_by_pdlp_) {
+      CUOPT_LOG_INFO("Warm start data coming from a solution which was not solved by PDLP, skipping warm start");
+    }
+    else if (pdlp_hyper_params::restart_strategy == static_cast<int>(pdlp_restart_strategy_t<i_t, f_t>::restart_strategy_t::TRUST_REGION_RESTART)) {
+      CUOPT_LOG_INFO("Trying to use warm start with trust region restart (neither Stable nor Fast1), skipping warm start");
+    }
+    else {
+      set_initial_primal_solution(warm_start_data.current_primal_solution_);
+      set_initial_dual_solution(warm_start_data.current_dual_solution_);
+      initial_step_size_     = warm_start_data.initial_step_size_;
+      initial_primal_weight_ = warm_start_data.initial_primal_weight_;
+      total_pdlp_iterations_ = warm_start_data.total_pdlp_iterations_;
+      pdhg_solver_.total_pdhg_iterations_ = warm_start_data.total_pdhg_iterations_;
+      pdhg_solver_.get_d_total_pdhg_iterations().set_value_async(
+        warm_start_data.total_pdhg_iterations_, stream_view_);
+      restart_strategy_.last_candidate_kkt_score =
+        warm_start_data.last_candidate_kkt_score_;
+      restart_strategy_.last_restart_kkt_score =
+        warm_start_data.last_restart_kkt_score_;
+      raft::copy(restart_strategy_.weighted_average_solution_.sum_primal_solutions_.data(),
+                warm_start_data.sum_primal_solutions_.data(),
+                warm_start_data.sum_primal_solutions_.size(),
+                stream_view_);
+      raft::copy(restart_strategy_.weighted_average_solution_.sum_dual_solutions_.data(),
+                warm_start_data.sum_dual_solutions_.data(),
+                warm_start_data.sum_dual_solutions_.size(),
+                stream_view_);
+      raft::copy(unscaled_primal_avg_solution_.data(),
+                warm_start_data.initial_primal_average_.data(),
+                warm_start_data.initial_primal_average_.size(),
+                stream_view_);
+      raft::copy(unscaled_dual_avg_solution_.data(),
+                warm_start_data.initial_dual_average_.data(),
+                warm_start_data.initial_dual_average_.size(),
+                stream_view_);
+      raft::copy(pdhg_solver_.get_saddle_point_state().get_current_AtY().data(),
+                warm_start_data.current_ATY_.data(),
+                warm_start_data.current_ATY_.size(),
+                stream_view_);
+      raft::copy(restart_strategy_.last_restart_duality_gap_.primal_solution_.data(),
+                warm_start_data.last_restart_duality_gap_primal_solution_.data(),
+                warm_start_data.last_restart_duality_gap_primal_solution_.size(),
+                stream_view_);
+      raft::copy(restart_strategy_.last_restart_duality_gap_.dual_solution_.data(),
+                warm_start_data.last_restart_duality_gap_dual_solution_.data(),
+                warm_start_data.last_restart_duality_gap_dual_solution_.size(),
+                stream_view_);
 
-    const auto value = settings.get_pdlp_warm_start_data().sum_solution_weight_;
-    restart_strategy_.weighted_average_solution_.sum_primal_solution_weights_.set_value_async(
-      value, stream_view_);
-    restart_strategy_.weighted_average_solution_.sum_dual_solution_weights_.set_value_async(
-      value, stream_view_);
-    restart_strategy_.weighted_average_solution_.iterations_since_last_restart_ =
-      settings.get_pdlp_warm_start_data().iterations_since_last_restart_;
+      const auto value = warm_start_data.sum_solution_weight_;
+      restart_strategy_.weighted_average_solution_.sum_primal_solution_weights_.set_value_async(
+        value, stream_view_);
+      restart_strategy_.weighted_average_solution_.sum_dual_solution_weights_.set_value_async(
+        value, stream_view_);
+      restart_strategy_.weighted_average_solution_.iterations_since_last_restart_ =
+          warm_start_data.iterations_since_last_restart_;
+    }
   }
   // Checks performed below are assert only
   best_primal_quality_so_far_.primal_objective = (op_problem_scaled_.maximize)
@@ -283,7 +291,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
       pdhg_solver_,
       pdhg_solver_.get_primal_solution(),
       pdhg_solver_.get_dual_solution(),
-      get_filled_warmed_start_data(),
+      get_filled_warmed_start_data(true),
       pdlp_termination_status_t::TimeLimit);
   }
 
@@ -307,7 +315,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
       pdhg_solver_,
       pdhg_solver_.get_primal_solution(),
       pdhg_solver_.get_dual_solution(),
-      get_filled_warmed_start_data(),
+      get_filled_warmed_start_data(true),
       pdlp_termination_status_t::IterationLimit);
   }
 
@@ -323,7 +331,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
       pdhg_solver_,
       pdhg_solver_.get_primal_solution(),
       pdhg_solver_.get_dual_solution(),
-      get_filled_warmed_start_data(),
+      get_filled_warmed_start_data(false),
       pdlp_termination_status_t::ConcurrentLimit);
   }
 
@@ -466,7 +474,7 @@ void pdlp_solver_t<i_t, f_t>::record_best_primal_so_far(
 }
 
 template <typename i_t, typename f_t>
-pdlp_warm_start_data_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::get_filled_warmed_start_data()
+pdlp_warm_start_data_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::get_filled_warmed_start_data(bool solved_by_pdlp)
 {
   return pdlp_warm_start_data_t<i_t, f_t>(
     pdhg_solver_.get_primal_solution(),
@@ -485,7 +493,8 @@ pdlp_warm_start_data_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::get_filled_warmed_star
     restart_strategy_.last_candidate_kkt_score,
     restart_strategy_.last_restart_kkt_score,
     restart_strategy_.weighted_average_solution_.sum_primal_solution_weights_.value(stream_view_),
-    restart_strategy_.weighted_average_solution_.iterations_since_last_restart_);
+    restart_strategy_.weighted_average_solution_.iterations_since_last_restart_,
+    solved_by_pdlp);
 }
 
 template <typename i_t, typename f_t>
@@ -545,9 +554,14 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
 #ifdef PDLP_VERBOSE_MODE
   RAFT_CUDA_TRY(cudaDeviceSynchronize());
   printf("Termination criteria current\n");
-  current_termination_strategy_.print_termination_criteria();
+  const auto current_time = std::chrono::high_resolution_clock::now();
+  const f_t elapsed =
+    std::chrono::duration_cast<std::chrono::milliseconds>(current_time - start_time).count() /
+    1000.0;
+  current_termination_strategy_.print_termination_criteria(total_pdlp_iterations_, elapsed);
   RAFT_CUDA_TRY(cudaDeviceSynchronize());
 #endif
+
   pdlp_termination_status_t termination_current =
     current_termination_strategy_.evaluate_termination_criteria(
       pdhg_solver_,
@@ -559,7 +573,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
 #ifdef PDLP_VERBOSE_MODE
   RAFT_CUDA_TRY(cudaDeviceSynchronize());
   std::cout << "Termination criteria average:" << std::endl;
-  average_termination_strategy_.print_termination_criteria();
+  average_termination_strategy_.print_termination_criteria(total_pdlp_iterations_, elapsed);
   RAFT_CUDA_TRY(cudaDeviceSynchronize());
 #endif
 
@@ -600,7 +614,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
           pdhg_solver_,
           pdhg_solver_.get_primal_solution(),
           pdhg_solver_.get_dual_solution(),
-          get_filled_warmed_start_data(),
+          get_filled_warmed_start_data(true),
           termination_current);
       } else  // Average has better overall residual
       {
@@ -609,7 +623,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
           pdhg_solver_,
           unscaled_primal_avg_solution_,
           unscaled_dual_avg_solution_,
-          get_filled_warmed_start_data(),
+          get_filled_warmed_start_data(true),
           termination_average);
       }
     } else if (termination_current == pdlp_termination_status_t::PrimalFeasible) {
@@ -618,7 +632,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
         pdhg_solver_,
         pdhg_solver_.get_primal_solution(),
         pdhg_solver_.get_dual_solution(),
-        get_filled_warmed_start_data(),
+        get_filled_warmed_start_data(true),
         termination_current);
     } else if (termination_average == pdlp_termination_status_t::PrimalFeasible) {
       return average_termination_strategy_.fill_return_problem_solution(
@@ -626,7 +640,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
         pdhg_solver_,
         unscaled_primal_avg_solution_,
         unscaled_dual_avg_solution_,
-        get_filled_warmed_start_data(),
+        get_filled_warmed_start_data(true),
         termination_average);
     }
     // else neither of the two is primal feasible
@@ -660,7 +674,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
         pdhg_solver_,
         pdhg_solver_.get_primal_solution(),
         pdhg_solver_.get_dual_solution(),
-        get_filled_warmed_start_data(),
+        get_filled_warmed_start_data(true),
         termination_current);
     } else {
 #ifdef PDLP_VERBOSE_MODE
@@ -676,7 +690,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
         pdhg_solver_,
         unscaled_primal_avg_solution_,
         unscaled_dual_avg_solution_,
-        get_filled_warmed_start_data(),
+        get_filled_warmed_start_data(true),
         termination_average);
     }
   }
@@ -696,7 +710,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
       pdhg_solver_,
       unscaled_primal_avg_solution_,
       unscaled_dual_avg_solution_,
-      get_filled_warmed_start_data(),
+      get_filled_warmed_start_data(true),
       termination_average);
   }
   if (termination_current == pdlp_termination_status_t::Optimal) {
@@ -711,7 +725,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
       pdhg_solver_,
       pdhg_solver_.get_primal_solution(),
       pdhg_solver_.get_dual_solution(),
-      get_filled_warmed_start_data(),
+      get_filled_warmed_start_data(true),
       termination_current);
   }
 
@@ -984,6 +998,8 @@ template <typename i_t, typename f_t>
 optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(
   const std::chrono::high_resolution_clock::time_point& start_time)
 {
+  raft::common::nvtx::range fun_scope("Run PDLP Solver");
+
   bool verbose;
 #ifdef PDLP_VERBOSE_MODE
   verbose = true;
@@ -1071,8 +1087,7 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(
     raft::print_device_vector("Initial dual_step_size", dual_step_size_.data(), 1, std::cout);
   }
 
-  bool warm_start_was_given =
-    settings_.get_pdlp_warm_start_data().last_restart_duality_gap_dual_solution_.size() != 0;
+  bool warm_start_was_given = settings_.get_pdlp_warm_start_data().has_value();
 
   if (!inside_mip_) {
     CUOPT_LOG_INFO(
