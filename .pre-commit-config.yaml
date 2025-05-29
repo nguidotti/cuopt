@@ -81,6 +81,13 @@ repos:
       - id: shellcheck
         args: ["--severity=warning"]
         files: ^ci/
-
+  - repo: https://github.com/rapidsai/pre-commit-hooks
+    rev: v0.6.0
+    hooks:
+      - id: verify-alpha-spec
+        args:
+          - --fix
+          - --rapids-version=25.04
+          - --mode=release
 default_language_version:
       python: python3
