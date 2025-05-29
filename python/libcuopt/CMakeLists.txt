@@ -42,7 +42,7 @@ include(FetchContent)
 FetchContent_Declare(
   argparse
   GIT_REPOSITORY https://github.com/p-ranav/argparse.git
-  GIT_TAG v2.9
+  GIT_TAG v3.2
 )
 FetchContent_MakeAvailable(argparse)
 
@@ -58,6 +58,7 @@ target_link_libraries(cuopt_cli PRIVATE argparse)
 
 set(rpaths
   "$ORIGIN/../lib64"
+  "$ORIGIN/../../rapids_logger/lib64"
   "$ORIGIN/../../nvidia/cublas/lib"
   "$ORIGIN/../../nvidia/curand/lib"
   "$ORIGIN/../../nvidia/cusolver/lib"

@@ -287,11 +287,17 @@ std::vector<thrust::pair<i_t, f_t>> lb_constraint_prop_t<i_t, f_t>::generate_bul
                  "Probing value must be an integer");
     f_t val_to_round = first_probe;
     // check probing cache if some implied bounds exists
-    if (use_probing_cache && lb_bounds_update.probing_cache.contains(unset_var_idx)) {
+    if (use_probing_cache &&
+        lb_bounds_update.probing_cache.contains(*orig_sol.problem_ptr, unset_var_idx)) {
       // TODO here we can try checking the amount of implied stack.
       // check if there are any conflicting bounds
-      val_to_round = lb_bounds_update.probing_cache.get_least_conflicting_rounding(
-        lb_bounds_update.host_bounds, unset_var_idx, first_probe, second_probe, int_tol);
+      val_to_round =
+        lb_bounds_update.probing_cache.get_least_conflicting_rounding(*orig_sol.problem_ptr,
+                                                                      lb_bounds_update.host_bounds,
+                                                                      unset_var_idx,
+                                                                      first_probe,
+                                                                      second_probe,
+                                                                      int_tol);
     }
     cuopt_assert(orig_sol.problem_ptr->variable_lower_bounds.element(
                    unset_var_idx, orig_sol.handle_ptr->get_stream()) <= val_to_round + int_tol &&
@@ -949,6 +955,7 @@ bool lb_constraint_prop_t<i_t, f_t>::find_integer(
                            orig_sol,
                            orig_sol.problem_ptr->integer_indices,
                            context.settings.get_tolerances(),
+                           context.lp_state,
                            lp_run_time_after_feasible,
                            true);
   }

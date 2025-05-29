@@ -89,8 +89,6 @@ void problem_t<i_t, f_t>::op_problem_cstr_body(const optimization_problem_t<i_t,
     is_binary_variable.resize(n_variables, handle_ptr->get_stream());
     compute_n_integer_vars();
     compute_binary_var_table();
-    original_ids.resize(n_variables);
-    std::iota(original_ids.begin(), original_ids.end(), 0);
   }
   compute_transpose_of_problem();
   // Check after modifications
@@ -157,6 +155,7 @@ problem_t<i_t, f_t>::problem_t(const problem_t<i_t, f_t>& problem_)
     is_binary_pb(problem_.is_binary_pb),
     presolve_data(problem_.presolve_data, handle_ptr->get_stream()),
     original_ids(problem_.original_ids),
+    reverse_original_ids(problem_.reverse_original_ids),
     reverse_coefficients(problem_.reverse_coefficients, handle_ptr->get_stream()),
     reverse_constraints(problem_.reverse_constraints, handle_ptr->get_stream()),
     reverse_offsets(problem_.reverse_offsets, handle_ptr->get_stream()),
@@ -205,6 +204,7 @@ problem_t<i_t, f_t>::problem_t(const problem_t<i_t, f_t>& problem_, bool no_deep
         ? std::move(presolve_data_t{*problem_.original_problem_ptr, handle_ptr->get_stream()})
         : std::move(presolve_data_t{problem_.presolve_data, handle_ptr->get_stream()})),
     original_ids(problem_.original_ids),
+    reverse_original_ids(problem_.reverse_original_ids),
     reverse_coefficients(
       (!no_deep_copy)
         ? rmm::device_uvector<f_t>(problem_.reverse_coefficients, handle_ptr->get_stream())
@@ -572,26 +572,12 @@ void problem_t<i_t, f_t>::check_problem_representation(bool check_transposed,
 template <typename i_t, typename f_t>
 bool problem_t<i_t, f_t>::pre_process_assignment(rmm::device_uvector<f_t>& assignment)
 {
-  cuopt_assert(assignment.size() == original_problem_ptr->get_n_variables(), "size mismatch");
   auto has_nans = cuopt::linear_programming::detail::has_nans(handle_ptr, assignment);
   if (has_nans) {
-    CUOPT_LOG_DEBUG("Solution discared due to nans");
+    CUOPT_LOG_DEBUG("Solution discarded due to nans");
     return false;
   }
-
-  auto has_integrality_discrepancy = cuopt::linear_programming::detail::has_integrality_discrepancy(
-    handle_ptr, integer_indices, assignment, tolerances.integrality_tolerance);
-  if (has_integrality_discrepancy) {
-    CUOPT_LOG_DEBUG("Solution discared due to integrality discrepancy");
-    return false;
-  }
-
-  auto has_variable_bounds_violation =
-    cuopt::linear_programming::detail::has_variable_bounds_violation(handle_ptr, assignment, this);
-  if (has_variable_bounds_violation) {
-    CUOPT_LOG_DEBUG("Solution discared due to variable bounds violation");
-    return false;
-  }
+  cuopt_assert(assignment.size() == original_problem_ptr->get_n_variables(), "size mismatch");
 
   // create a temp assignment with the var size after bounds standardization (free vars added)
   rmm::device_uvector<f_t> temp_assignment(presolve_data.additional_var_used.size(),
@@ -630,6 +616,20 @@ bool problem_t<i_t, f_t>::pre_process_assignment(rmm::device_uvector<f_t>& assig
                  temp_assignment.begin(),
                  assignment.begin());
   handle_ptr->sync_stream();
+
+  auto has_integrality_discrepancy = cuopt::linear_programming::detail::has_integrality_discrepancy(
+    handle_ptr, integer_indices, assignment, tolerances.integrality_tolerance);
+  if (has_integrality_discrepancy) {
+    CUOPT_LOG_DEBUG("Solution discarded due to integrality discrepancy");
+    return false;
+  }
+
+  auto has_variable_bounds_violation =
+    cuopt::linear_programming::detail::has_variable_bounds_violation(handle_ptr, assignment, this);
+  if (has_variable_bounds_violation) {
+    CUOPT_LOG_DEBUG("Solution discarded due to variable bounds violation");
+    return false;
+  }
   return true;
 }
 
@@ -1067,11 +1067,15 @@ problem_t<i_t, f_t> problem_t<i_t, f_t>::get_problem_after_fixing_vars(
   // if we are fixing on the original problem, the variable_map is what we want in
   // problem.original_ids but considering the case that we are fixing some variables multiple times,
   // do an assignment from the original_ids of the current problem
-  // TODO if we have more host gather operations, put them in a function
   problem.original_ids.resize(variable_map.size());
+  std::fill(problem.reverse_original_ids.begin(), problem.reverse_original_ids.end(), -1);
   auto h_variable_map = cuopt::host_copy(variable_map);
   for (size_t i = 0; i < variable_map.size(); ++i) {
+    cuopt_assert(h_variable_map[i] < original_ids.size(), "Variable index out of bounds");
     problem.original_ids[i] = original_ids[h_variable_map[i]];
+    cuopt_assert(original_ids[h_variable_map[i]] < reverse_original_ids.size(),
+                 "Variable index out of bounds");
+    problem.reverse_original_ids[original_ids[h_variable_map[i]]] = i;
   }
   RAFT_CHECK_CUDA(handle_ptr->get_stream());
   return problem;
@@ -1301,6 +1305,10 @@ void problem_t<i_t, f_t>::preprocess_problem()
                              0.);
   integer_indices.resize(n_variables, handle_ptr->get_stream());
   is_binary_variable.resize(n_variables, handle_ptr->get_stream());
+  original_ids.resize(n_variables);
+  std::iota(original_ids.begin(), original_ids.end(), 0);
+  reverse_original_ids.resize(n_variables);
+  std::iota(reverse_original_ids.begin(), reverse_original_ids.end(), 0);
   compute_n_integer_vars();
   compute_binary_var_table();
   check_problem_representation(true);
