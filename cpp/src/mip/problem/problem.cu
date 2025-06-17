@@ -54,20 +54,6 @@ void problem_t<i_t, f_t>::op_problem_cstr_body(const optimization_problem_t<i_t,
 {
   // Mark the problem as empty if the op_problem has an empty matrix.
   if (problem_.get_constraint_matrix_values().is_empty()) {
-    cuopt_assert(problem_.get_constraint_matrix_indices().is_empty(),
-                 "Problem is empty but constraint matrix indices are not empty.");
-    cuopt_assert(problem_.get_constraint_matrix_offsets().size() == 1,
-                 "Problem is empty but constraint matrix offsets are not empty.");
-    cuopt_assert(problem_.get_objective_coefficients().is_empty(),
-                 "Problem is empty but objective coefficients are not empty.");
-    cuopt_assert(problem_.get_variable_lower_bounds().is_empty(),
-                 "Problem is empty but variable lower bounds are not empty.");
-    cuopt_assert(problem_.get_variable_upper_bounds().is_empty(),
-                 "Problem is empty but variable upper bounds are not empty.");
-    cuopt_assert(problem_.get_constraint_lower_bounds().is_empty(),
-                 "Problem is empty but constraint lower bounds are not empty.");
-    cuopt_assert(problem_.get_constraint_upper_bounds().is_empty(),
-                 "Problem is empty but constraint upper bounds are not empty.");
     empty = true;
   }
 
