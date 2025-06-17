@@ -355,7 +355,7 @@ static optimization_problem_solution_t<i_t, f_t> run_pdlp_solver(
   if (problem.n_constraints == 0) {
     CUOPT_LOG_INFO("No constraints in the problem: PDLP can't be run, use Dual Simplex instead.");
     return optimization_problem_solution_t<i_t, f_t>{pdlp_termination_status_t::NumericalError,
-                                                       problem.handle_ptr->get_stream()};
+                                                     problem.handle_ptr->get_stream()};
   }
   detail::pdlp_solver_t<i_t, f_t> solver(problem, settings);
   return solver.run_solver(start_time);
@@ -367,9 +367,9 @@ optimization_problem_solution_t<i_t, f_t> run_pdlp(detail::problem_t<i_t, f_t>& 
 {
   auto start_solver = std::chrono::high_resolution_clock::now();
   f_t start_time    = dual_simplex::tic();
-  auto sol = run_pdlp_solver(problem, settings, start_solver);
-  auto end      = std::chrono::high_resolution_clock::now();
-  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start_solver);
+  auto sol          = run_pdlp_solver(problem, settings, start_solver);
+  auto end          = std::chrono::high_resolution_clock::now();
+  auto duration     = std::chrono::duration_cast<std::chrono::milliseconds>(end - start_solver);
   sol.set_solve_time(duration.count() / 1000.0);
   CUOPT_LOG_INFO("PDLP finished");
   if (sol.get_termination_status() != pdlp_termination_status_t::ConcurrentLimit) {

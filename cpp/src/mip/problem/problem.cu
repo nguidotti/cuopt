@@ -53,9 +53,7 @@ template <typename i_t, typename f_t>
 void problem_t<i_t, f_t>::op_problem_cstr_body(const optimization_problem_t<i_t, f_t>& problem_)
 {
   // Mark the problem as empty if the op_problem has an empty matrix.
-  if (problem_.get_constraint_matrix_values().is_empty()) {
-    empty = true;
-  }
+  if (problem_.get_constraint_matrix_values().is_empty()) { empty = true; }
 
   // Set variables bounds to default if not set and constraints bounds if user has set a row type
   set_bounds_if_not_set(*this);
