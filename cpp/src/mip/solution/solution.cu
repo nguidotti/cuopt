@@ -541,10 +541,13 @@ f_t solution_t<i_t, f_t>::compute_max_int_violation()
 template <typename i_t, typename f_t>
 f_t solution_t<i_t, f_t>::compute_max_variable_violation()
 {
+  const auto num_variables = view().assignment.size();
+  assert(problem_ptr->variable_lower_bounds.size() >= num_variables);
+  assert(problem_ptr->variable_upper_bounds.size() >= num_variables);
   return thrust::transform_reduce(
     handle_ptr->get_thrust_policy(),
     thrust::make_counting_iterator(0),
-    thrust::make_counting_iterator(0) + problem_ptr->n_variables,
+    thrust::make_counting_iterator(0) + num_variables,
     cuda::proclaim_return_type<f_t>([v = view()] __device__(i_t idx) -> f_t {
       f_t lower_vio = max(0., v.problem.variable_lower_bounds[idx] - v.assignment[idx]);
       f_t upper_vio = max(0., v.assignment[idx] - v.problem.variable_upper_bounds[idx]);
