@@ -510,6 +510,22 @@ def test_parser_and_batch_solver():
         )
 
 
+def test_solved_by_pdlp():
+
+    file_path = (
+        RAPIDS_DATASET_ROOT_DIR + "/linear_programming/afiro_original.mps"
+    )
+    data_model_obj = cuopt_mps_parser.ParseMps(file_path)
+
+    settings = solver_settings.SolverSettings()
+    settings.set_parameter(CUOPT_METHOD, SolverMethod.PDLP)
+
+    solution = solver.Solve(data_model_obj, settings)
+
+    assert solution.get_solved_by_pdlp()
+    assert solution.get_pdlp_warm_start_data().solved_by_pdlp
+
+
 def test_warm_start():
 
     file_path = RAPIDS_DATASET_ROOT_DIR + "/linear_programming/a2864/a2864.mps"

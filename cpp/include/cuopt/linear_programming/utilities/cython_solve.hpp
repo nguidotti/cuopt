@@ -70,6 +70,12 @@ struct linear_programming_ret_t {
   double gap_;
   int nb_iterations_;
   double solve_time_;
+  // This parameter is stored twice in both the C++ and the Python layer: inside the solution object
+  // and in the warm start data It is required in the solution object to know if the problem was
+  // solved by PDLP or Dual Simplex, whether or not the warm start data was populated It is required
+  // in the warm start data as only this object and not the solution object is passed to the solver
+  // settings In this adapter between the C++ and the Python layer, we can carry the information
+  // through a single field
   bool solved_by_pdlp_;
 };
 

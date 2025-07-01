@@ -574,6 +574,7 @@ class WarmStartData(StrictModel):
     last_restart_kkt_score: float
     sum_solution_weight: float
     iterations_since_last_restart: int
+    solved_by_pdlp: bool = False
 
 
 class SolutionData(StrictModel):

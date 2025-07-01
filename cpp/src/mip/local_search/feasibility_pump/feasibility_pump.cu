@@ -146,6 +146,8 @@ bool feasibility_pump_t<i_t, f_t>::linear_project_onto_polytope(solution_t<i_t, 
                                                                 f_t ratio_of_set_integers,
                                                                 bool longer_lp_run)
 {
+  raft::common::nvtx::range fun_scope("linear_project_onto_polytope");
+
   CUOPT_LOG_DEBUG("linear projection of fp");
   auto h_assignment            = solution.get_host_assignment();
   auto h_variable_upper_bounds = cuopt::host_copy(solution.problem_ptr->variable_upper_bounds,

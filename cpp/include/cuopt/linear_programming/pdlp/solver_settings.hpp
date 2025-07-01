@@ -173,8 +173,9 @@ class pdlp_solver_settings_t {
    *
    * @return pdlp warm start data
    */
-  const std::optional<pdlp_warm_start_data_t<i_t, f_t>>& get_pdlp_warm_start_data() const noexcept;
-  std::optional<pdlp_warm_start_data_t<i_t, f_t>>& get_pdlp_warm_start_data();
+  bool has_pdlp_warm_start_data() const;
+  const pdlp_warm_start_data_t<i_t, f_t>& get_pdlp_warm_start_data() const noexcept;
+  pdlp_warm_start_data_t<i_t, f_t>& get_pdlp_warm_start_data();
   const pdlp_warm_start_data_view_t<i_t, f_t>& get_pdlp_warm_start_data_view() const noexcept;
 
   const rmm::device_uvector<f_t>& get_initial_primal_solution() const;

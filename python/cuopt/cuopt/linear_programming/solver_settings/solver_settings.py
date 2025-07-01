@@ -226,10 +226,14 @@ class SolverSettings:
         For now, the problem must have the same number of variables and
         constraints as the one found in the previous solution.
 
-        Only supported solver modes are Stable2 and Fast1.
+        Only supported PDLP solver modes are Stable2 and Fast1.
+        Only supported if both the previous and new problem are solved by PDLP.
 
         Examples
         --------
+        >>> # Set PDLP as the solver method to make sure Dual Simplex will not
+        >>> # be used
+        >>> settings.set_parameter(CUOPT_METHOD, SolverMethod.PDLP)
         >>> solution = solver.Solve(first_problem, settings)
         >>> settings.set_pdlp_warm_start_data(
         >>>     solution.get_pdlp_warm_start_data()

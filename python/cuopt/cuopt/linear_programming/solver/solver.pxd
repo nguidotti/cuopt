@@ -64,7 +64,8 @@ cdef extern from "cuopt/linear_programming/solver_settings.hpp" namespace "cuopt
             f_t last_candidate_kkt_score_,
             f_t last_restart_kkt_score_,
             f_t sum_solution_weight_,
-            i_t iterations_since_last_restart_) except +
+            i_t iterations_since_last_restart_,
+            bool solved_by_pdlp_) except +
 
         void set_parameter_from_string(
             const string& name,

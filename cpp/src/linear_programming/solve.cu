@@ -572,7 +572,8 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(detail::problem_t<i_t, f_t>& 
       raft::common::nvtx::range fun_scope("Check problem representation");
       // This is required as user might forget to set some fields
       problem_checking_t<i_t, f_t>::check_problem_representation(*problem.original_problem_ptr);
-      problem_checking_t<i_t, f_t>::check_initial_solution_representation(*problem.original_problem_ptr, settings);
+      problem_checking_t<i_t, f_t>::check_initial_solution_representation(
+        *problem.original_problem_ptr, settings);
     }
     CUOPT_LOG_INFO(
       "Solving a problem with %d constraints %d variables (%d integers) and %d nonzeros",
@@ -594,7 +595,7 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(detail::problem_t<i_t, f_t>& 
 
     setup_device_symbols(problem.handle_ptr->get_stream());
 
-    auto sol = solve_lp_with_method( problem, settings, inside_mip);
+    auto sol = solve_lp_with_method(problem, settings, inside_mip);
 
     if (settings.sol_file != "") {
       CUOPT_LOG_INFO("Writing solution to file %s", settings.sol_file.c_str());
@@ -711,7 +712,12 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(
     pdlp_solver_settings_t<int, F_TYPE> const& settings,                               \
     bool problem_checking,                                                             \
     bool use_pdlp_solver_mode);                                                        \
-                                                                                       \
+  template optimization_problem_solution_t<int, F_TYPE> solve_lp(                      \
+    detail::problem_t<int, F_TYPE>& problem,                                           \
+    pdlp_solver_settings_t<int, F_TYPE> const& settings,                               \
+    bool problem_checking,                                                             \
+    bool use_pdlp_solver_mode,                                                         \
+    bool inside_mip);                                                                  \
   template optimization_problem_solution_t<int, F_TYPE> solve_lp(                      \
     raft::handle_t const* handle_ptr,                                                  \
     const cuopt::mps_parser::mps_data_model_t<int, F_TYPE>& mps_data_model,            \

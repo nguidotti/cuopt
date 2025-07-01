@@ -344,86 +344,90 @@ cdef set_solver_setting(
 
 
     if settings.get_pdlp_warm_start_data() is not None:  # noqa
-        if len(data_model_obj.get_objective_coefficients()) != len(
-            settings.get_pdlp_warm_start_data().current_primal_solution
-        ):
-            raise Exception(
-                "Invalid PDLPWarmStart data. Passed problem and PDLPWarmStart " # noqa
-                "data should have the same amount of variables."
-            )
-        if len(data_model_obj.get_constraint_matrix_offsets()) - 1 != len( # noqa
-            settings.get_pdlp_warm_start_data().current_dual_solution
-        ):
-            raise Exception(
-                "Invalid PDLPWarmStart data. Passed problem and PDLPWarmStart " # noqa
-                "data should have the same amount of constraints."
-            )
-        c_current_primal_solution = (
-            get_data_ptr(
-                settings.get_pdlp_warm_start_data().current_primal_solution # noqa
-            )
-        )
-        c_current_dual_solution = (
-            get_data_ptr(
+        if not settings.get_pdlp_warm_start_data().solved_by_pdlp:
+            warnings.warn("PDLPWarmStart data was passed to the solver, but the problem was solved by Dual Simplex. This data will be ignored.") # noqa
+        else:
+            if len(data_model_obj.get_objective_coefficients()) != len(
+                settings.get_pdlp_warm_start_data().current_primal_solution
+            ):
+                raise Exception(
+                    "Invalid PDLPWarmStart data. Passed problem and PDLPWarmStart " # noqa
+                    "data should have the same amount of variables."
+                )
+            if len(data_model_obj.get_constraint_matrix_offsets()) - 1 != len( # noqa
                 settings.get_pdlp_warm_start_data().current_dual_solution
+            ):
+                raise Exception(
+                    "Invalid PDLPWarmStart data. Passed problem and PDLPWarmStart " # noqa
+                    "data should have the same amount of constraints."
+                )
+            c_current_primal_solution = (
+                get_data_ptr(
+                    settings.get_pdlp_warm_start_data().current_primal_solution # noqa
+                )
             )
-        )
-        c_initial_primal_average = (
-            get_data_ptr(
-               settings.get_pdlp_warm_start_data().initial_primal_average # noqa
+            c_current_dual_solution = (
+                get_data_ptr(
+                    settings.get_pdlp_warm_start_data().current_dual_solution
+                )
             )
-        )
-        c_initial_dual_average = (
-            get_data_ptr(
-                settings.get_pdlp_warm_start_data().initial_dual_average
+            c_initial_primal_average = (
+                get_data_ptr(
+                settings.get_pdlp_warm_start_data().initial_primal_average # noqa
+                )
             )
-        )
-        c_current_ATY = (
-            get_data_ptr(
-                settings.get_pdlp_warm_start_data().current_ATY
+            c_initial_dual_average = (
+                get_data_ptr(
+                    settings.get_pdlp_warm_start_data().initial_dual_average
+                )
             )
-        )
-        c_sum_primal_solutions = (
-            get_data_ptr(
-                settings.get_pdlp_warm_start_data().sum_primal_solutions
+            c_current_ATY = (
+                get_data_ptr(
+                    settings.get_pdlp_warm_start_data().current_ATY
+                )
             )
-        )
-        c_sum_dual_solutions = (
-            get_data_ptr(
-                settings.get_pdlp_warm_start_data().sum_dual_solutions
+            c_sum_primal_solutions = (
+                get_data_ptr(
+                    settings.get_pdlp_warm_start_data().sum_primal_solutions
+                )
             )
-        )
-        c_last_restart_duality_gap_primal_solution = (
-            get_data_ptr(
-                settings.get_pdlp_warm_start_data().last_restart_duality_gap_primal_solution # noqa
+            c_sum_dual_solutions = (
+                get_data_ptr(
+                    settings.get_pdlp_warm_start_data().sum_dual_solutions
+                )
             )
-        )
-        c_last_restart_duality_gap_dual_solution = (
-            get_data_ptr(
-                settings.get_pdlp_warm_start_data().last_restart_duality_gap_dual_solution # noqa
+            c_last_restart_duality_gap_primal_solution = (
+                get_data_ptr(
+                    settings.get_pdlp_warm_start_data().last_restart_duality_gap_primal_solution # noqa
+                )
             )
-        )
-        c_solver_settings.set_pdlp_warm_start_data(
-            <const double *> c_current_primal_solution,
-            <const double *> c_current_dual_solution,
-            <const double *> c_initial_primal_average,
-            <const double *> c_initial_dual_average,
-            <const double *> c_current_ATY,
-            <const double *> c_sum_primal_solutions,
-            <const double *> c_sum_dual_solutions,
-            <const double *> c_last_restart_duality_gap_primal_solution,
-            <const double *> c_last_restart_duality_gap_dual_solution,
-            settings.get_pdlp_warm_start_data().last_restart_duality_gap_primal_solution.shape[0], # Primal size # noqa
-            settings.get_pdlp_warm_start_data().last_restart_duality_gap_dual_solution.shape[0], # Dual size # noqa
-            settings.get_pdlp_warm_start_data().initial_primal_weight,
-            settings.get_pdlp_warm_start_data().initial_step_size,
-            settings.get_pdlp_warm_start_data().total_pdlp_iterations,
-            settings.get_pdlp_warm_start_data().total_pdhg_iterations,
-            settings.get_pdlp_warm_start_data().last_candidate_kkt_score,
-            settings.get_pdlp_warm_start_data().last_restart_kkt_score,
-            settings.get_pdlp_warm_start_data().sum_solution_weight,
-            settings.get_pdlp_warm_start_data().iterations_since_last_restart # noqa
-        )
+            c_last_restart_duality_gap_dual_solution = (
+                get_data_ptr(
+                    settings.get_pdlp_warm_start_data().last_restart_duality_gap_dual_solution # noqa
+                )
+            )
+            c_solver_settings.set_pdlp_warm_start_data(
+                <const double *> c_current_primal_solution,
+                <const double *> c_current_dual_solution,
+                <const double *> c_initial_primal_average,
+                <const double *> c_initial_dual_average,
+                <const double *> c_current_ATY,
+                <const double *> c_sum_primal_solutions,
+                <const double *> c_sum_dual_solutions,
+                <const double *> c_last_restart_duality_gap_primal_solution,
+                <const double *> c_last_restart_duality_gap_dual_solution,
+                settings.get_pdlp_warm_start_data().last_restart_duality_gap_primal_solution.shape[0], # Primal size # noqa
+                settings.get_pdlp_warm_start_data().last_restart_duality_gap_dual_solution.shape[0], # Dual size # noqa
+                settings.get_pdlp_warm_start_data().initial_primal_weight,
+                settings.get_pdlp_warm_start_data().initial_step_size,
+                settings.get_pdlp_warm_start_data().total_pdlp_iterations,
+                settings.get_pdlp_warm_start_data().total_pdhg_iterations,
+                settings.get_pdlp_warm_start_data().last_candidate_kkt_score,
+                settings.get_pdlp_warm_start_data().last_restart_kkt_score,
+                settings.get_pdlp_warm_start_data().sum_solution_weight,
+                settings.get_pdlp_warm_start_data().iterations_since_last_restart, # noqa
+                settings.get_pdlp_warm_start_data().solved_by_pdlp
+            )
 
     # Common to LP and MIP
 
@@ -648,7 +652,7 @@ cdef create_solution(unique_ptr[solver_ret_t] sol_ret_ptr,
                 dual_objective,
                 gap,
                 nb_iterations,
-                solved_by_pdlp,
+                solved_by_pdlp=solved_by_pdlp,
             )
         return Solution(
             problem_category=ProblemCategory(sol_ret.problem_type),

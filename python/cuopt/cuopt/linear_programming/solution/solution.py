@@ -40,6 +40,7 @@ class PDLPWarmStartData:
         last_restart_kkt_score,
         sum_solution_weight,
         iterations_since_last_restart,
+        solved_by_pdlp,
     ):
         self.current_primal_solution = current_primal_solution
         self.current_dual_solution = current_dual_solution
@@ -62,6 +63,7 @@ class PDLPWarmStartData:
         self.last_restart_kkt_score = last_restart_kkt_score
         self.sum_solution_weight = sum_solution_weight
         self.iterations_since_last_restart = iterations_since_last_restart
+        self.solved_by_pdlp = solved_by_pdlp
 
 
 class Solution:
@@ -197,6 +199,7 @@ class Solution:
             last_restart_kkt_score,
             sum_solution_weight,
             iterations_since_last_restart,
+            solved_by_pdlp,
         )
         self._set_termination_status(termination_status)
         self.error_status = error_status
