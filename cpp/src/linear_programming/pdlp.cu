@@ -292,7 +292,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
       pdhg_solver_,
       pdhg_solver_.get_primal_solution(),
       pdhg_solver_.get_dual_solution(),
-      get_filled_warmed_start_data(true),
+      get_filled_warmed_start_data(),
       pdlp_termination_status_t::TimeLimit);
   }
 
@@ -316,7 +316,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
       pdhg_solver_,
       pdhg_solver_.get_primal_solution(),
       pdhg_solver_.get_dual_solution(),
-      get_filled_warmed_start_data(true),
+      get_filled_warmed_start_data(),
       pdlp_termination_status_t::IterationLimit);
   }
 
@@ -616,7 +616,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
           pdhg_solver_,
           pdhg_solver_.get_primal_solution(),
           pdhg_solver_.get_dual_solution(),
-          get_filled_warmed_start_data(true),
+          get_filled_warmed_start_data(),
           termination_current);
       } else  // Average has better overall residual
       {
@@ -625,7 +625,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
           pdhg_solver_,
           unscaled_primal_avg_solution_,
           unscaled_dual_avg_solution_,
-          get_filled_warmed_start_data(true),
+          get_filled_warmed_start_data(),
           termination_average);
       }
     } else if (termination_current == pdlp_termination_status_t::PrimalFeasible) {
@@ -634,7 +634,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
         pdhg_solver_,
         pdhg_solver_.get_primal_solution(),
         pdhg_solver_.get_dual_solution(),
-        get_filled_warmed_start_data(true),
+        get_filled_warmed_start_data(),
         termination_current);
     } else if (termination_average == pdlp_termination_status_t::PrimalFeasible) {
       return average_termination_strategy_.fill_return_problem_solution(
@@ -642,7 +642,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
         pdhg_solver_,
         unscaled_primal_avg_solution_,
         unscaled_dual_avg_solution_,
-        get_filled_warmed_start_data(true),
+        get_filled_warmed_start_data(),
         termination_average);
     }
     // else neither of the two is primal feasible
@@ -676,7 +676,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
         pdhg_solver_,
         pdhg_solver_.get_primal_solution(),
         pdhg_solver_.get_dual_solution(),
-        get_filled_warmed_start_data(true),
+        get_filled_warmed_start_data(),
         termination_current);
     } else {
 #ifdef PDLP_VERBOSE_MODE
@@ -692,7 +692,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
         pdhg_solver_,
         unscaled_primal_avg_solution_,
         unscaled_dual_avg_solution_,
-        get_filled_warmed_start_data(true),
+        get_filled_warmed_start_data(),
         termination_average);
     }
   }
@@ -712,7 +712,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
       pdhg_solver_,
       unscaled_primal_avg_solution_,
       unscaled_dual_avg_solution_,
-      get_filled_warmed_start_data(true),
+      get_filled_warmed_start_data(),
       termination_average);
   }
   if (termination_current == pdlp_termination_status_t::Optimal) {
@@ -727,7 +727,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
       pdhg_solver_,
       pdhg_solver_.get_primal_solution(),
       pdhg_solver_.get_dual_solution(),
-      get_filled_warmed_start_data(true),
+      get_filled_warmed_start_data(),
       termination_current);
   }
 

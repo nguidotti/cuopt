@@ -110,9 +110,6 @@ class pdlp_solver_settings_t {
                                    i_t size,
                                    rmm::cuda_stream_view stream = rmm::cuda_stream_default);
 
-  // TODO comment
-  void set_initial_primal_solution(const rmm::device_uvector<f_t>& initial_primal_solution);
-
   /**
    * @brief Set an initial dual solution.
    *
@@ -126,9 +123,6 @@ class pdlp_solver_settings_t {
   void set_initial_dual_solution(const f_t* initial_dual_solution,
                                  i_t size,
                                  rmm::cuda_stream_view stream = rmm::cuda_stream_default);
-
-  // TODO comment
-  void set_initial_dual_solution(const rmm::device_uvector<f_t>& initial_dual_solution);
 
   /**
    * @brief Set the pdlp warm start data. This allows to restart PDLP with a previous solution
@@ -168,12 +162,23 @@ class pdlp_solver_settings_t {
                                 f_t sum_solution_weight_,
                                 i_t iterations_since_last_restart_,
                                 bool solved_by_pdlp_);
+
+  /**
+   * @brief Check if the pdlp warm start data is set
+   *
+   * @return true if the pdlp warm start data is set, false otherwise
+   */
+  bool has_pdlp_warm_start_data() const;
+
   /**
    * @brief Get the pdlp warm start data
    *
+   * @note PDLP warm start data is an optional field, it is not set by default.
+   * You need to make sure that the warm start data is set before calling this function.
+   * You can check if the warm start data is set by calling has_pdlp_warm_start_data().
+   *
    * @return pdlp warm start data
    */
-  bool has_pdlp_warm_start_data() const;
   const pdlp_warm_start_data_t<i_t, f_t>& get_pdlp_warm_start_data() const noexcept;
   pdlp_warm_start_data_t<i_t, f_t>& get_pdlp_warm_start_data();
   const pdlp_warm_start_data_view_t<i_t, f_t>& get_pdlp_warm_start_data_view() const noexcept;

@@ -295,7 +295,8 @@ optimization_problem_solution_t<i_t, f_t> convert_dual_simplex_sol(
 template <typename i_t, typename f_t>
 std::tuple<dual_simplex::lp_solution_t<i_t, f_t>, dual_simplex::lp_status_t, f_t, f_t, f_t>
 run_dual_simplex(dual_simplex::user_problem_t<i_t, f_t>& user_problem,
-                 pdlp_solver_settings_t<i_t, f_t> const& settings)
+                 pdlp_solver_settings_t<i_t, f_t> const& settings,
+                 bool inside_mip)
 {
   auto start_solver = std::chrono::high_resolution_clock::now();
 
@@ -306,6 +307,7 @@ run_dual_simplex(dual_simplex::user_problem_t<i_t, f_t>& user_problem,
   dual_simplex_settings.time_limit      = settings.time_limit;
   dual_simplex_settings.iteration_limit = settings.iteration_limit;
   dual_simplex_settings.concurrent_halt = settings.concurrent_halt;
+  dual_simplex_settings.inside_mip      = inside_mip;
   if (dual_simplex_settings.concurrent_halt != nullptr) {
     // Don't show the dual simplex log in concurrent mode. Show the PDLP log instead
     dual_simplex_settings.log.log = false;
@@ -332,12 +334,14 @@ run_dual_simplex(dual_simplex::user_problem_t<i_t, f_t>& user_problem,
 
 template <typename i_t, typename f_t>
 optimization_problem_solution_t<i_t, f_t> run_dual_simplex(
-  detail::problem_t<i_t, f_t>& problem, pdlp_solver_settings_t<i_t, f_t> const& settings)
+  detail::problem_t<i_t, f_t>& problem,
+  pdlp_solver_settings_t<i_t, f_t> const& settings,
+  bool inside_mip)
 {
   // Convert data structures to dual simplex format and back
   dual_simplex::user_problem_t<i_t, f_t> dual_simplex_problem =
     cuopt_problem_to_simplex_problem<i_t, f_t>(problem);
-  auto sol_dual_simplex = run_dual_simplex(dual_simplex_problem, settings);
+  auto sol_dual_simplex = run_dual_simplex(dual_simplex_problem, settings, inside_mip);
   return convert_dual_simplex_sol(problem,
                                   std::get<0>(sol_dual_simplex),
                                   std::get<1>(sol_dual_simplex),
@@ -350,7 +354,8 @@ template <typename i_t, typename f_t>
 static optimization_problem_solution_t<i_t, f_t> run_pdlp_solver(
   detail::problem_t<i_t, f_t>& problem,
   pdlp_solver_settings_t<i_t, f_t> const& settings,
-  const std::chrono::high_resolution_clock::time_point& start_time)
+  const std::chrono::high_resolution_clock::time_point& start_time,
+  bool inside_mip)
 {
   if (problem.n_constraints == 0) {
     CUOPT_LOG_INFO("No constraints in the problem: PDLP can't be run, use Dual Simplex instead.");
@@ -358,6 +363,7 @@ static optimization_problem_solution_t<i_t, f_t> run_pdlp_solver(
                                                      problem.handle_ptr->get_stream()};
   }
   detail::pdlp_solver_t<i_t, f_t> solver(problem, settings);
+  solver.set_inside_mip(inside_mip);
   return solver.run_solver(start_time);
 }
 
@@ -368,7 +374,7 @@ optimization_problem_solution_t<i_t, f_t> run_pdlp(detail::problem_t<i_t, f_t>& 
 {
   auto start_solver = std::chrono::high_resolution_clock::now();
   f_t start_time    = dual_simplex::tic();
-  auto sol          = run_pdlp_solver(problem, settings, start_solver);
+  auto sol          = run_pdlp_solver(problem, settings, start_solver, inside_mip);
   auto end          = std::chrono::high_resolution_clock::now();
   auto duration     = std::chrono::duration_cast<std::chrono::milliseconds>(end - start_solver);
   sol.set_solve_time(duration.count() / 1000.0);
@@ -456,12 +462,13 @@ void run_dual_simplex_thread(
   pdlp_solver_settings_t<i_t, f_t> const& settings,
   std::unique_ptr<
     std::tuple<dual_simplex::lp_solution_t<i_t, f_t>, dual_simplex::lp_status_t, f_t, f_t, f_t>>&
-    sol_ptr)
+    sol_ptr,
+  bool inside_mip)
 {
   // We will return the solution from the thread as a unique_ptr
   sol_ptr = std::make_unique<
     std::tuple<dual_simplex::lp_solution_t<i_t, f_t>, dual_simplex::lp_status_t, f_t, f_t, f_t>>(
-    run_dual_simplex(problem, settings));
+    run_dual_simplex(problem, settings, inside_mip));
 }
 
 template <typename i_t, typename f_t>
@@ -492,7 +499,8 @@ optimization_problem_solution_t<i_t, f_t> run_concurrent(
   std::thread dual_simplex_thread(run_dual_simplex_thread<i_t, f_t>,
                                   std::ref(dual_simplex_problem),
                                   std::ref(settings_pdlp),
-                                  std::ref(sol_dual_simplex_ptr));
+                                  std::ref(sol_dual_simplex_ptr),
+                                  inside_mip);
 
   // Run pdlp in the main thread
   auto sol_pdlp = run_pdlp(problem, settings_pdlp, inside_mip);
@@ -543,7 +551,7 @@ optimization_problem_solution_t<i_t, f_t> solve_lp_with_method(
   bool inside_mip)
 {
   if (settings.method == method_t::DualSimplex) {
-    return run_dual_simplex(problem, settings);
+    return run_dual_simplex(problem, settings, inside_mip);
   } else if (settings.method == method_t::Concurrent) {
     return run_concurrent(problem, settings, inside_mip);
   } else {

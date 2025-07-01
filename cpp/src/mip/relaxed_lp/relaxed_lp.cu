@@ -95,8 +95,11 @@ optimization_problem_solution_t<i_t, f_t> get_relaxed_lp_solution(
                        if (!isfinite(x) || i >= prev_size) { return 0.0; }
                        return x;
                      });
-    settings.set_initial_primal_solution(lp_state.prev_primal);
-    settings.set_initial_dual_solution(lp_state.prev_dual);
+    settings.set_initial_primal_solution(lp_state.prev_primal.data(),
+                                         lp_state.prev_primal.size(),
+                                         op_problem.handle_ptr->get_stream());
+    settings.set_initial_dual_solution(
+      lp_state.prev_dual.data(), lp_state.prev_dual.size(), op_problem.handle_ptr->get_stream());
   }
   CUOPT_LOG_DEBUG(
     "running LP with n_vars %d n_cstr %d", op_problem.n_variables, op_problem.n_constraints);

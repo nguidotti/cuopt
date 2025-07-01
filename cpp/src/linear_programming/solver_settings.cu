@@ -80,18 +80,6 @@ void pdlp_solver_settings_t<i_t, f_t>::set_initial_primal_solution(
 }
 
 template <typename i_t, typename f_t>
-void pdlp_solver_settings_t<i_t, f_t>::set_initial_primal_solution(
-  const rmm::device_uvector<f_t>& initial_primal_solution)
-{
-  initial_primal_solution_ = std::make_shared<rmm::device_uvector<f_t>>(
-    initial_primal_solution.size(), initial_primal_solution.stream());
-  raft::copy(initial_primal_solution_.get()->data(),
-             initial_primal_solution.data(),
-             initial_primal_solution.size(),
-             initial_primal_solution.stream());
-}
-
-template <typename i_t, typename f_t>
 void pdlp_solver_settings_t<i_t, f_t>::set_initial_dual_solution(const f_t* initial_dual_solution,
                                                                  i_t size,
                                                                  rmm::cuda_stream_view stream)
@@ -102,19 +90,6 @@ void pdlp_solver_settings_t<i_t, f_t>::set_initial_dual_solution(const f_t* init
 
   initial_dual_solution_ = std::make_shared<rmm::device_uvector<f_t>>(size, stream);
   raft::copy(initial_dual_solution_.get()->data(), initial_dual_solution, size, stream);
-}
-
-// TODO could use a move constructor here
-template <typename i_t, typename f_t>
-void pdlp_solver_settings_t<i_t, f_t>::set_initial_dual_solution(
-  const rmm::device_uvector<f_t>& initial_dual_solution)
-{
-  initial_dual_solution_ = std::make_shared<rmm::device_uvector<f_t>>(
-    initial_dual_solution.size(), initial_dual_solution.stream());
-  raft::copy(initial_dual_solution_.get()->data(),
-             initial_dual_solution.data(),
-             initial_dual_solution.size(),
-             initial_dual_solution.stream());
 }
 
 template <typename i_t, typename f_t>

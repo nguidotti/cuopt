@@ -59,7 +59,8 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(
   bool use_pdlp_solver_mode                        = true);
 
 /**
- * @brief Linear programming solve function.
+ * @brief Linear programming solve function. Used in the context of a MIP when the input is a
+ * detail::problem_t.
  * @note Both primal and dual solutions are zero-initialized. For custom initialization, see
  * op_problem.initial_primal/dual_solution
  *
@@ -73,6 +74,7 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(
  * @param[in] problem_checking  If true, the problem is checked for consistency.
  * @param[in] use_pdlp_solver_modes  If true, the PDLP hyperparameters coming from the
  * pdlp_solver_mode are used (instead of the ones comming from a potential hyper-params file).
+ * @param[in] inside_mip  If true, the problem is being solved in the context of a MIP.
  * @return optimization_problem_solution_t<i_t, f_t> owning container for the solver solution
  */
 template <typename i_t, typename f_t>
@@ -84,7 +86,8 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(
   bool inside_mip                                  = false);
 
 /**
- * @brief Linear programming solve function.
+ * @brief Linear programming solve function. This is a wrapper around the solve_lp function taking a
+ * detail::problem_t as input.
  * @note Both primal and dual solutions are zero-initialized. For custom initialization, see
  * op_problem.initial_primal/dual_solution
  *
