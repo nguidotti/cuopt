@@ -67,8 +67,8 @@ jobs:
         run: |
           MATRIX=$(cat <<EOF
           arch: [amd, arm]
-          cuda_ver: [12.8]
-          python_ver: [3.12]
+          cuda_ver: [12.8.0]
+          python_ver: [3.12.11]
           EOF
           )
           echo "MATRIX=${MATRIX}" >> $GITHUB_OUTPUT
