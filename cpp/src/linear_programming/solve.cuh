@@ -23,11 +23,19 @@
 
 #include <raft/core/handle.hpp>
 
+#include <linear_programming/pdhg.hpp>
+
 namespace cuopt::linear_programming {
 
 template <typename i_t, typename f_t>
 cuopt::linear_programming::optimization_problem_t<i_t, f_t> mps_data_model_to_optimization_problem(
   raft::handle_t const* handle_ptr,
   const cuopt::mps_parser::mps_data_model_t<i_t, f_t>& data_model);
+
+template <typename i_t, typename f_t>
+std::unique_ptr<detail::pdhg_solver_t<i_t, f_t>> create_pdhg_solver(
+  optimization_problem_t<i_t, f_t>& op_problem,
+  detail::problem_t<i_t, f_t>& problem);
+
 
 }  // namespace cuopt::linear_programming

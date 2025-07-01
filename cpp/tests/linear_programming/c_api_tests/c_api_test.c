@@ -287,6 +287,85 @@ DONE:
   return status;
 }
 
+int test_pdhg(const char* filename) {
+  cuOptOptimizationProblem problem = NULL;
+  cuOptPDHG pdhg = NULL;
+  cuopt_int_t num_variables;
+  cuopt_int_t num_constraints;
+  cuopt_float_t* device_x;
+  cuopt_float_t* device_y;
+  cuopt_float_t* host_x;
+  cuopt_float_t* host_y;
+  cuopt_float_t* host_x_prime;
+  cuopt_float_t* host_y_prime;
+  cuopt_int_t status = cuOptReadProblem(filename, &problem);
+  if (status != CUOPT_SUCCESS) {
+    printf("Error reading problem\n");
+    goto DONE;
+  }
+  status = cuOptCreatePDHG(problem, &pdhg);
+  if (status != CUOPT_SUCCESS) {
+    printf("Error creating PDHG\n");
+    goto DONE;
+  }
+
+  status = cuOptGetPDHGDimensions(pdhg, &num_variables, &num_constraints);
+  if (status != CUOPT_SUCCESS) {
+    printf("Error getting PDHG dimensions\n");
+    goto DONE;
+  }
+  printf("PDHG dimensions: %d variables, %d constraints\n", num_variables, num_constraints);
+  status = cuOptGetPDHGDeviceIterate(pdhg, &device_x, &device_y);
+  if (status != CUOPT_SUCCESS) {
+    printf("Error getting PDHG device iterate\n");
+    goto DONE;
+  }
+
+  host_x = (cuopt_float_t*)malloc(num_variables * sizeof(cuopt_float_t));
+  host_y = (cuopt_float_t*)malloc(num_constraints * sizeof(cuopt_float_t));
+  host_x_prime = (cuopt_float_t*)malloc(num_variables * sizeof(cuopt_float_t));
+  host_y_prime = (cuopt_float_t*)malloc(num_constraints * sizeof(cuopt_float_t));
+
+  status = cuOptGetPDHGHostIterate(pdhg, host_x, host_y, host_x_prime, host_y_prime);
+  if (status != CUOPT_SUCCESS) {
+    printf("Error getting PDHG host iterate\n");
+    goto DONE;
+  }
+  for (cuopt_int_t j = 0; j < num_variables; j++) {
+    printf("PDHG host iterate: x[%d] = %f next %f\n", j, host_x[j], host_x_prime[j]);
+  }
+  for (cuopt_int_t j = 0; j < num_constraints; j++) {
+    printf("PDHG host iterate: y[%d] = %f next %f\n", j, host_y[j], host_y_prime[j]);
+  }
+
+  cuopt_float_t primal_step_size = 1e-4;
+  cuopt_float_t dual_step_size = 1e-4;
+  status = cuOptPDHGIterations(pdhg, 1, &primal_step_size, &dual_step_size);
+  if (status != CUOPT_SUCCESS) {
+    printf("Error taking PDHG iterations\n");
+    goto DONE;
+  }
+  status = cuOptGetPDHGHostIterate(pdhg, host_x, host_y, host_x_prime, host_y_prime);
+  if (status != CUOPT_SUCCESS) {
+    printf("Error getting PDHG host iterate\n");
+    goto DONE;
+  }
+
+  printf("After 1 PDHG iteration\n");
+
+  for (cuopt_int_t j = 0; j < num_variables; j++) {
+    printf("PDHG host iterate: x[%d] = %f next %f\n", j, host_x[j], host_x_prime[j]);
+  }
+  for (cuopt_int_t j = 0; j < num_constraints; j++) {
+    printf("PDHG host iterate: y[%d] = %f next %f\n", j, host_y[j], host_y_prime[j]);
+  }
+
+DONE:
+  cuOptDestroyPDHG(&pdhg);
+  cuOptDestroyProblem(&problem);
+  return status;
+}
+
 int solve_mps_file(const char* filename, double time_limit, double iteration_limit, int* termination_status_ptr, double* solve_time_ptr, int method)
 {
   cuOptOptimizationProblem problem = NULL;

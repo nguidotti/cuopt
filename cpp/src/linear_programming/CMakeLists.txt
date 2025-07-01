@@ -34,7 +34,7 @@ set(LP_SRC_FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/termination_strategy/termination_strategy.cu
   ${CMAKE_CURRENT_SOURCE_DIR}/termination_strategy/infeasibility_information.cu
   ${CMAKE_CURRENT_SOURCE_DIR}/termination_strategy/convergence_information.cu
-  ${CMAKE_CURRENT_SOURCE_DIR}/cuopt_c.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/cuopt_c.cu
 )
 
 set(CUOPT_SRC_FILES ${CUOPT_SRC_FILES} ${LP_SRC_FILES} PARENT_SCOPE)

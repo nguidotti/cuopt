@@ -16,6 +16,7 @@
  */
 
 #include <cuopt/error.hpp>
+#include <linear_programming/pdhg.hpp>
 #include <linear_programming/pdlp.cuh>
 #include <linear_programming/restart_strategy/pdlp_restart_strategy.cuh>
 #include <linear_programming/step_size_strategy/adaptive_step_size_strategy.hpp>
@@ -551,6 +552,20 @@ optimization_problem_solution_t<i_t, f_t> solve_lp_with_method(
 }
 
 template <typename i_t, typename f_t>
+std::unique_ptr<detail::pdhg_solver_t<i_t, f_t>> create_pdhg_solver(
+  optimization_problem_t<i_t, f_t>& op_problem,
+  detail::problem_t<i_t, f_t>& problem)
+{
+  init_handler(op_problem.get_handle_ptr());
+  setup_device_symbols(op_problem.get_handle_ptr()->get_stream());
+
+  std::unique_ptr<detail::pdhg_solver_t<i_t, f_t>> pdhg_solver_ptr =
+    std::make_unique<detail::pdhg_solver_t<i_t, f_t>>(op_problem.get_handle_ptr(), problem);
+
+  return pdhg_solver_ptr;
+}
+
+template <typename i_t, typename f_t>
 optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f_t>& op_problem,
                                                    pdlp_solver_settings_t<i_t, f_t> const& settings,
                                                    bool problem_checking,
@@ -710,7 +725,11 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(
                                                                                        \
   template optimization_problem_t<int, F_TYPE> mps_data_model_to_optimization_problem( \
     raft::handle_t const* handle_ptr,                                                  \
-    const cuopt::mps_parser::mps_data_model_t<int, F_TYPE>& data_model);
+    const cuopt::mps_parser::mps_data_model_t<int, F_TYPE>& data_model);               \
+                                                                                       \
+  template std::unique_ptr<detail::pdhg_solver_t<int, F_TYPE>> create_pdhg_solver(     \
+    optimization_problem_t<int, F_TYPE>& op_problem,                                   \
+    detail::problem_t<int, F_TYPE>& problem);
 
 #if MIP_INSTANTIATE_FLOAT
 INSTANTIATE(float)

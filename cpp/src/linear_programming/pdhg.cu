@@ -157,6 +157,8 @@ void pdhg_solver_t<i_t, f_t>::compute_primal_projection_with_gradient(
     stream_view_);
 }
 
+#define PDLP_DEBUG_MODE
+
 template <typename i_t, typename f_t>
 void pdhg_solver_t<i_t, f_t>::compute_next_primal_dual_solution(
   rmm::device_scalar<f_t>& primal_step_size,
@@ -346,5 +348,8 @@ template class pdhg_solver_t<int, float>;
 #if MIP_INSTANTIATE_DOUBLE
 template class pdhg_solver_t<int, double>;
 #endif
+
+
+#undef PDLP_DEBUG_MODE
 
 }  // namespace cuopt::linear_programming::detail

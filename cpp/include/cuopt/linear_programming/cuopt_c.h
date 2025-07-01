@@ -47,6 +47,9 @@ typedef void* cuOptSolverSettings;
  */
 typedef void* cuOptSolution;
 
+
+typedef void *cuOptPDHG;
+
 #if CUOPT_INSTANTIATE_FLOAT
 
 /**
@@ -238,6 +241,77 @@ cuopt_int_t cuOptCreateRangedProblem(cuopt_int_t num_constraints,
  *  output the problem will be destroyed, and the pointer will be set to NULL.
  */
 void cuOptDestroyProblem(cuOptOptimizationProblem* problem_ptr);
+
+/** @brief Create a PDHG solver for an optimization problem.
+ *
+ * @param[in] problem - The optimization problem.
+ *
+ * @param[out] pdhg_ptr - A pointer to a cuOptPDHG. On output the PDHG solver will be created and initialized.
+ *
+ * @return A status code indicating success or failure.
+ */
+cuopt_int_t cuOptCreatePDHG(cuOptOptimizationProblem problem, cuOptPDHG* pdhg_ptr);
+
+/** @brief Destroy a PDHG solver.
+ *
+ * @param[in, out] pdhg_ptr - A pointer to a cuOptPDHG. On output the PDHG solver will be destroyed, and the pointer will be set to NULL.
+ */
+void cuOptDestroyPDHG(cuOptPDHG* pdhg_ptr);
+
+/** @brief Get the dimensions of the PDHG solver.
+ *
+ * @param[in] pdhg - The PDHG solver.
+ *
+ * @param[out] num_variables - A pointer to a cuopt_int_t that will contain the number of variables.
+ *
+ * @param[out] num_constraints - A pointer to a cuopt_int_t that will contain the number of constraints.
+ */
+cuopt_int_t cuOptGetPDHGDimensions(cuOptPDHG pdhg, cuopt_int_t* num_variables, cuopt_int_t* num_constraints);
+
+/** @brief Get the primal and dual iterates of the PDHG algorithm.
+ *
+ * @param[in] pdhg - The PDHG solver.
+ *
+ * @param[out] device_x - A pointer to an array of type cuopt_float_t of size num_variables that will contain the primal iterate. This is a device pointer.
+ *
+ * @param[out] device_y - A pointer to an array of type cuopt_float_t of size num_constraints that will contain the dual iterate. This is a device pointer.
+ *
+ * @return A status code indicating success or failure.
+ */
+cuopt_int_t cuOptGetPDHGDeviceIterate(cuOptPDHG pdhg, cuopt_float_t** device_x, cuopt_float_t** device_y);
+
+/** @brief Get the primal and dual iterates of the PDHG algorithm.
+ *
+ * @param[in] pdhg - The PDHG solver.
+ *
+ * @param[out] host_x - A pointer to an array of type cuopt_float_t of size num_variables that will contain the primal iterate. This is a host pointer.
+ *
+ * @param[out] host_y - A pointer to an array of type cuopt_float_t of size num_constraints that will contain the dual iterate. This is a host pointer.
+ *
+ * @param[out] host_x_prime - A pointer to an array of type cuopt_float_t of size num_variables that will contain the next primal iterate. This is a host pointer.
+ *
+ * @param[out] host_y_prime - A pointer to an array of type cuopt_float_t of size num_constraints that will contain the next dual iterate. This is a host pointer.
+ *
+ * @return A status code indicating success or failure.
+*/
+cuopt_int_t cuOptGetPDHGHostIterate(cuOptPDHG pdhg, cuopt_float_t* host_x, cuopt_float_t* host_y, cuopt_float_t* host_x_prime, cuopt_float_t* host_y_prime);
+
+
+
+/** @brief Run several iterations of PDHG
+ *
+ * @param[in] pdhg - The PDHG solver.
+ *
+ * @param[in] num_iterations - The number of iterations to run.
+ *
+ * @param[in] host_primal_step_size - A pointer to a cuopt_float_t that contains the primal step size. This is a host pointer.
+ *
+ * @param[in] host_dual_step_size - A pointer to a cuopt_float_t that contains the dual step size. This is a host pointer.
+ *
+* @return A status code indicating success or failure.
+*/
+cuopt_int_t cuOptPDHGIterations(cuOptPDHG pdhg, cuopt_int_t num_iterations, cuopt_float_t* host_primal_step_size, cuopt_float_t* host_dual_step_size);
+
 
 /** @brief Get the number of constraints of an optimization problem.
  *

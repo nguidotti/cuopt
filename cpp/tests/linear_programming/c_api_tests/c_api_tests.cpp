@@ -95,3 +95,9 @@ TEST(c_api, test_ranged_problem)
   EXPECT_EQ(termination_status, CUOPT_TERIMINATION_STATUS_OPTIMAL);
   EXPECT_NEAR(objective, 32.0, 1e-3);
 }
+
+TEST(c_api, test_pdhg) {
+  const std::string& rapidsDatasetRootDir = cuopt::test::get_rapids_dataset_root_dir();
+  std::string filename = rapidsDatasetRootDir + "/linear_programming/" + "afiro_original.mps";
+  EXPECT_EQ(test_pdhg(filename.c_str()), CUOPT_SUCCESS);
+}
