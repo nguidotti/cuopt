@@ -132,6 +132,7 @@ jobs:
           CUOPT_VER: ${{ steps.compute-cuopt-ver.outputs.CUOPT_VER }}
           CUDA_VER: ${{ matrix.cuda_ver }}
           PYTHON_VER: ${{ matrix.python_ver }}
+          IMAGE_TAG_PREFIX: ${{ steps.compute-cuopt-ver.outputs.IMAGE_TAG_PREFIX }}
           ARCH: ${{ matrix.arch }}
 
         run: ci/docker/create_multiarch_manifest.sh
