@@ -243,32 +243,25 @@ cuopt_int_t cuOptNormEstimate(cuopt_int_t num_rows,
 
   A.m = num_rows;
   A.n = num_cols;
-  printf("A m %d, n %d, nnz %d\n", A.m, A.n, nnz);
 
-  printf("setting row_start\n");
   A.row_start.resize(num_rows + 1);
   for (cuopt_int_t i = 0; i <= num_rows; i++) {
     A.row_start[i] = row_offsets[i];
   }
 
-  printf("setting column_indices\n");
   A.j.resize(nnz);
   for (cuopt_int_t p = 0; p < nnz; p++) {
     A.j[p] = column_indices[p];
   }
 
-  printf("setting values\n");
   A.x.resize(nnz);
   for (cuopt_int_t p = 0; p < nnz; p++) {
     A.x[p] = values[p];
   }
 
-  printf("converting to compressed col\n");
   cuopt::linear_programming::dual_simplex::csc_matrix_t<cuopt_int_t, cuopt_float_t> A_col(1, 1, 1);
   A.to_compressed_col(A_col);
-  printf("A_col m %d, n %d, nnz %d\n", A_col.m, A_col.n, A_col.col_start[A_col.n]);
 
-  printf("computing norm estimate\n");
   *norm_estimate_ptr = A_col.norm2_estimate();
 
   return CUOPT_SUCCESS;
