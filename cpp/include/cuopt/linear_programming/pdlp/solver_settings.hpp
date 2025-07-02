@@ -206,6 +206,7 @@ class pdlp_solver_settings_t {
   bool save_best_primal_so_far{false};
   bool first_primal_feasible{false};
   method_t method{method_t::Concurrent};
+  bool batch_mode{false};
   // For concurrent termination
   std::atomic<i_t>* concurrent_halt;
   static constexpr f_t minimal_absolute_tolerance = 1.0e-12;

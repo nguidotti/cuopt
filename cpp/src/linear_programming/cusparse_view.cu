@@ -121,6 +121,36 @@ void my_cusparsespmv_preprocess(cusparseHandle_t handle,
 }
 #endif
 
+// TODO add proper checking
+#if CUDA_VER_12_4_UP
+template <
+  typename T,
+  typename std::enable_if_t<std::is_same_v<T, float> || std::is_same_v<T, double>>* = nullptr>
+cusparseStatus_t my_cusparsespmm_preprocess(cusparseHandle_t handle,
+                                         cusparseOperation_t opA,
+                                         cusparseOperation_t opB,
+                                         const T* alpha,
+                                         const cusparseSpMatDescr_t matA,
+                                         const cusparseDnMatDescr_t matB,
+                                         const T* beta,
+                                         const cusparseDnMatDescr_t matC,
+                                         cusparseSpMMAlg_t alg,
+                                         void* externalBuffer,
+                                         cudaStream_t stream)
+{
+  auto constexpr float_type = []() constexpr {
+    if constexpr (std::is_same_v<T, float>) {
+      return CUDA_R_32F;
+    } else if constexpr (std::is_same_v<T, double>) {
+      return CUDA_R_64F;
+    }
+  }();
+  CUSPARSE_CHECK(cusparseSetStream(handle, stream));
+  return cusparseSpMM_preprocess(
+    handle, opA, opB, alpha, matA, matB, beta, matC, float_type, alg, externalBuffer);
+}
+#endif
+
 // This cstr is used in pdhg
 // A_T is owned by the scaled problem
 // It was already transposed in the scaled_problem version
@@ -130,6 +160,7 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
   const problem_t<i_t, f_t>& op_problem_scaled,
   saddle_point_state_t<i_t, f_t>& current_saddle_point_state,
   rmm::device_uvector<f_t>& _tmp_primal,
+  rmm::device_uvector<f_t>& _batch_tmp_primals,
   rmm::device_uvector<f_t>& _tmp_dual,
   rmm::device_uvector<f_t>& _potential_next_dual_solution)
   : handle_ptr_(handle_ptr),
@@ -150,6 +181,8 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
     A_T_indices_{op_problem_scaled.reverse_constraints},
     buffer_non_transpose{0, handle_ptr->get_stream()},
     buffer_transpose{0, handle_ptr->get_stream()},
+    buffer_transpose_batch{0, handle_ptr->get_stream()},
+    buffer_non_transpose_batch{0, handle_ptr->get_stream()},
     A_{op_problem_scaled.coefficients},
     A_offsets_{op_problem_scaled.offsets},
     A_indices_{op_problem_scaled.variables}
@@ -192,6 +225,37 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
     &dual_solution,
     op_problem_scaled.n_constraints,
     current_saddle_point_state.get_dual_solution().data()));
+
+  if (true) {
+    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
+      &batch_dual_solutions,
+      op_problem_scaled.n_constraints,
+      (0 + 1)/*@@*/,
+      (0 + 1)/*@@*/,
+      current_saddle_point_state.batch_dual_solutions_.data(),
+      CUSPARSE_ORDER_ROW));
+    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
+      &batch_current_AtYs,
+      op_problem_scaled.n_variables,
+      (0 + 1)/*@@*/,
+      (0 + 1)/*@@*/,
+      current_saddle_point_state.batch_current_AtYs_.data(),
+      CUSPARSE_ORDER_ROW));
+    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
+      &batch_tmp_primals,
+      op_problem_scaled.n_variables,
+      (0 + 1)/*@@*/,
+      (0 + 1)/*@@*/,
+      _batch_tmp_primals.data(),
+      CUSPARSE_ORDER_ROW));
+    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
+      &batch_dual_gradients,
+      op_problem_scaled.n_constraints,
+      (0 + 1)/*@@*/,
+      (0 + 1)/*@@*/,
+      current_saddle_point_state.batch_dual_gradients_.data(),
+      CUSPARSE_ORDER_ROW));
+  }
 
   RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednvec(
     &primal_gradient,
@@ -250,6 +314,35 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
 
   buffer_transpose.resize(buffer_size_transpose, handle_ptr->get_stream());
 
+  if (true) {
+    size_t buffer_size_transpose_batch = 0;
+    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmm_bufferSize(handle_ptr_->get_cusparse_handle(),
+                                                                   CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                                   CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                                   alpha.data(),
+                                                                   A_T,
+                                                                   batch_dual_solutions,
+                                                                   beta.data(),
+                                                                   batch_current_AtYs,
+                                                                   CUSPARSE_SPMM_CSR_ALG3,
+                                                                   &buffer_size_transpose_batch,
+                                                                   handle_ptr->get_stream()));
+    buffer_transpose_batch.resize(buffer_size_transpose_batch, handle_ptr->get_stream());
+    size_t buffer_size_non_transpose_batch = 0;
+    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmm_bufferSize(handle_ptr_->get_cusparse_handle(),
+                                                                   CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                                   CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                                   alpha.data(),
+                                                                   A,
+                                                                   batch_tmp_primals,
+                                                                   beta.data(),
+                                                                   batch_dual_gradients,
+                                                                   CUSPARSE_SPMM_CSR_ALG3,
+                                                                   &buffer_size_non_transpose_batch,
+                                                                   handle_ptr->get_stream()));
+    buffer_non_transpose_batch.resize(buffer_size_non_transpose_batch, handle_ptr->get_stream());
+  }
+
 #if CUDA_VER_12_4_UP
   my_cusparsespmv_preprocess(handle_ptr_->get_cusparse_handle(),
                              CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -272,6 +365,22 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
                              CUSPARSE_SPMV_CSR_ALG2,
                              buffer_transpose.data(),
                              handle_ptr->get_stream());
+
+  my_cusparsespmm_preprocess(handle_ptr_->get_cusparse_handle(),
+                          CUSPARSE_OPERATION_NON_TRANSPOSE,
+                          CUSPARSE_OPERATION_NON_TRANSPOSE,
+                          alpha.data(),
+                          A_T,
+                          batch_dual_solutions,
+                          beta.data(), batch_current_AtYs, CUSPARSE_SPMM_CSR_ALG3, buffer_transpose_batch.data(), handle_ptr->get_stream());
+
+  my_cusparsespmm_preprocess(handle_ptr_->get_cusparse_handle(),
+                          CUSPARSE_OPERATION_NON_TRANSPOSE,
+                          CUSPARSE_OPERATION_NON_TRANSPOSE,
+                          alpha.data(),
+                          A,
+                          batch_tmp_primals,
+                          beta.data(), batch_dual_gradients, CUSPARSE_SPMM_CSR_ALG3, buffer_non_transpose_batch.data(), handle_ptr->get_stream());
 #endif
 }
 
@@ -302,6 +411,8 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(raft::handle_t const* handle_ptr,
     A_T_indices_{_A_T_indices},
     buffer_non_transpose{0, handle_ptr->get_stream()},
     buffer_transpose{0, handle_ptr->get_stream()},
+    buffer_transpose_batch{0, handle_ptr->get_stream()},
+    buffer_non_transpose_batch{0, handle_ptr->get_stream()},
     A_{op_problem.coefficients},
     A_offsets_{op_problem.offsets},
     A_indices_{op_problem.variables}
@@ -421,6 +532,8 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
     tmp_dual(existing_cusparse_view.tmp_dual),
     buffer_non_transpose{0, handle_ptr->get_stream()},
     buffer_transpose{0, handle_ptr->get_stream()},
+    buffer_transpose_batch{0, handle_ptr->get_stream()},
+    buffer_non_transpose_batch{0, handle_ptr->get_stream()},
     A_T_{existing_cusparse_view.A_T_},                  // Need to be init but not used
     A_T_offsets_{existing_cusparse_view.A_T_offsets_},  // Need to be init but not used
     A_T_indices_{existing_cusparse_view.A_T_indices_},  // Need to be init but not used
@@ -533,6 +646,8 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
   : handle_ptr_(handle_ptr),
     buffer_non_transpose{0, handle_ptr->get_stream()},
     buffer_transpose{0, handle_ptr->get_stream()},
+    buffer_transpose_batch{0, handle_ptr->get_stream()},
+    buffer_non_transpose_batch{0, handle_ptr->get_stream()},
     A_T_(dummy_float),
     A_T_offsets_(dummy_int),
     A_T_indices_(dummy_int),

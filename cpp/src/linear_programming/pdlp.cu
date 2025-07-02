@@ -68,7 +68,7 @@ pdlp_solver_t<i_t, f_t>::pdlp_solver_t(problem_t<i_t, f_t>& op_problem,
     primal_weight_{stream_view_},
     step_size_{(f_t)pdlp_hyper_params::initial_step_size_scaling, stream_view_},
     step_size_strategy_{handle_ptr_, &primal_weight_, &step_size_},
-    pdhg_solver_{handle_ptr_, op_problem_scaled_},
+    pdhg_solver_{handle_ptr_, op_problem_scaled_, settings.batch_mode},
     settings_(settings, stream_view_),
     initial_scaling_strategy_{handle_ptr_,
                               op_problem_scaled_,
@@ -544,8 +544,12 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
   // after for kkt restart
 #ifdef PDLP_VERBOSE_MODE
   RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  const auto current_time = std::chrono::high_resolution_clock::now();
+    const f_t elapsed =
+      std::chrono::duration_cast<std::chrono::milliseconds>(current_time - start_time).count() /
+      1000.0;
   printf("Termination criteria current\n");
-  current_termination_strategy_.print_termination_criteria();
+  current_termination_strategy_.print_termination_criteria(total_pdlp_iterations_, elapsed);
   RAFT_CUDA_TRY(cudaDeviceSynchronize());
 #endif
   pdlp_termination_status_t termination_current =
@@ -559,7 +563,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
 #ifdef PDLP_VERBOSE_MODE
   RAFT_CUDA_TRY(cudaDeviceSynchronize());
   std::cout << "Termination criteria average:" << std::endl;
-  average_termination_strategy_.print_termination_criteria();
+  average_termination_strategy_.print_termination_criteria(total_pdlp_iterations_, elapsed);
   RAFT_CUDA_TRY(cudaDeviceSynchronize());
 #endif
 
@@ -1041,13 +1045,6 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(
   if (pdlp_hyper_params::project_initial_primal) {
     raft::linalg::ternaryOp(pdhg_solver_.get_primal_solution().data(),
                             pdhg_solver_.get_primal_solution().data(),
-                            op_problem_scaled_.variable_lower_bounds.data(),
-                            op_problem_scaled_.variable_upper_bounds.data(),
-                            primal_size_h_,
-                            clamp<f_t>(),
-                            stream_view_);
-    raft::linalg::ternaryOp(unscaled_primal_avg_solution_.data(),
-                            unscaled_primal_avg_solution_.data(),
                             op_problem_scaled_.variable_lower_bounds.data(),
                             op_problem_scaled_.variable_upper_bounds.data(),
                             primal_size_h_,

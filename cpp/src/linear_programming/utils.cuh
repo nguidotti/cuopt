@@ -63,7 +63,7 @@ DI f_t deterministic_block_reduce(raft::device_span<f_t> shared, f_t val)
 
 template <typename f_t>
 struct max_abs_value {
-  __device__ __forceinline__ f_t operator()(f_t a, f_t b)
+  HDI f_t operator()(f_t a, f_t b)
   {
     return raft::abs(a) < raft::abs(b) ? raft::abs(b) : raft::abs(a);
   }
@@ -72,7 +72,7 @@ struct max_abs_value {
 template <typename f_t>
 struct a_sub_scalar_times_b {
   a_sub_scalar_times_b(const f_t* scalar) : scalar_{scalar} {}
-  __device__ __forceinline__ f_t operator()(f_t a, f_t b) { return a - *scalar_ * b; }
+  HDI f_t operator()(f_t a, f_t b) { return a - *scalar_ * b; }
 
   const f_t* scalar_;
 };
@@ -81,12 +81,14 @@ template <typename f_t>
 struct primal_projection {
   primal_projection(const f_t* step_size) : step_size_(step_size) {}
 
-  __device__ __forceinline__ thrust::tuple<f_t, f_t, f_t> operator()(
+  HDI thrust::tuple<f_t, f_t, f_t> operator()(
     f_t primal, f_t obj_coeff, f_t AtY, f_t lower, f_t upper)
   {
     f_t gradient = obj_coeff - AtY;
     f_t next     = primal - (*step_size_ * gradient);
     next         = raft::max<f_t>(raft::min<f_t>(next, upper), lower);
+    printf("%d primal_projection: primal=%lf, obj_coeff=%lf, AtY=%lf, lower=%lf, upper=%lf, next=%lf, next-primal=%lf, next-primal+next=%lf\n",
+           threadIdx.x, primal, obj_coeff, AtY, lower, upper, next, next - primal, next - primal + next);
     return thrust::make_tuple(next, next - primal, next - primal + next);
   }
 
@@ -97,7 +99,7 @@ struct primal_projection {
 template <typename f_t>
 struct dual_projection {
   dual_projection(const f_t* scalar) : scalar_{scalar} {}
-  __device__ __forceinline__ thrust::tuple<f_t, f_t> operator()(f_t dual,
+  HDI thrust::tuple<f_t, f_t> operator()(f_t dual,
                                                                 f_t gradient,
                                                                 f_t lower,
                                                                 f_t upper)
@@ -114,7 +116,7 @@ struct dual_projection {
 template <typename f_t>
 struct a_add_scalar_times_b {
   a_add_scalar_times_b(const f_t* scalar) : scalar_{scalar} {}
-  __device__ __forceinline__ f_t operator()(f_t a, f_t b) { return a + *scalar_ * b; }
+  HDI f_t operator()(f_t a, f_t b) { return a + *scalar_ * b; }
 
   const f_t* scalar_;
 };
@@ -122,7 +124,7 @@ struct a_add_scalar_times_b {
 template <typename f_t>
 struct a_divides_sqrt_b_bounded {
   // if b is larger than zero return a / sqrt(b) and otherwise return a
-  __device__ __forceinline__ f_t operator()(f_t a, f_t b)
+  HDI f_t operator()(f_t a, f_t b)
   {
     return b > f_t(0) ? a / raft::sqrt(b) : a;
   }
@@ -130,7 +132,7 @@ struct a_divides_sqrt_b_bounded {
 
 template <typename f_t>
 struct clamp {
-  __device__ f_t operator()(f_t value, f_t lower, f_t upper)
+  HDI f_t operator()(f_t value, f_t lower, f_t upper)
   {
     return raft::min<f_t>(raft::max<f_t>(value, lower), upper);
   }
@@ -138,7 +140,7 @@ struct clamp {
 
 template <typename f_t>
 struct combine_finite_abs_bounds {
-  __device__ __host__ f_t operator()(f_t lower, f_t upper)
+  HDI f_t operator()(f_t lower, f_t upper)
   {
     f_t val = f_t(0);
     if (isfinite(upper)) { val = raft::max<f_t>(val, raft::abs(upper)); }
@@ -166,7 +168,7 @@ template <typename f_t>
 struct violation {
   violation() {}
   violation(f_t* _scalar) {}
-  __device__ __host__ f_t operator()(f_t value, f_t lower, f_t upper)
+  HDI f_t operator()(f_t value, f_t lower, f_t upper)
   {
     if (value < lower) {
       return lower - value;
@@ -180,7 +182,7 @@ struct violation {
 template <typename f_t>
 struct max_violation {
   max_violation() {}
-  __device__ f_t operator()(const thrust::tuple<f_t, f_t, f_t>& t) const
+  HDI f_t operator()(const thrust::tuple<f_t, f_t, f_t>& t) const
   {
     const f_t value = thrust::get<0>(t);
     const f_t lower = thrust::get<1>(t);
@@ -194,7 +196,7 @@ struct max_violation {
 
 template <typename f_t>
 struct bound_value_gradient {
-  __device__ f_t operator()(f_t value, f_t lower, f_t upper)
+  HDI f_t operator()(f_t value, f_t lower, f_t upper)
   {
     if (value > f_t(0) && value < f_t(0)) { return 0; }
     return value > f_t(0) ? lower : upper;
@@ -203,7 +205,7 @@ struct bound_value_gradient {
 
 template <typename f_t>
 struct bound_value_reduced_cost_product {
-  __device__ f_t operator()(f_t value, f_t lower, f_t upper)
+  HDI f_t operator()(f_t value, f_t lower, f_t upper)
   {
     f_t bound_value = f_t(0);
     if (value > f_t(0)) {
@@ -220,7 +222,7 @@ struct bound_value_reduced_cost_product {
 
 template <typename f_t>
 struct copy_gradient_if_should_be_reduced_cost {
-  __device__ f_t operator()(f_t value, f_t bound, f_t gradient)
+  HDI f_t operator()(f_t value, f_t bound, f_t gradient)
   {
     if (gradient == f_t(0)) { return gradient; }
     if (raft::abs(value - bound) <= raft::abs(value)) { return gradient; }
@@ -230,7 +232,7 @@ struct copy_gradient_if_should_be_reduced_cost {
 
 template <typename f_t>
 struct copy_gradient_if_finite_bounds {
-  __device__ f_t operator()(f_t bound, f_t gradient)
+  HDI f_t operator()(f_t bound, f_t gradient)
   {
     if (gradient == f_t(0)) { return gradient; }
     if (isfinite(bound)) { return gradient; }
@@ -240,7 +242,7 @@ struct copy_gradient_if_finite_bounds {
 
 template <typename f_t>
 struct transform_constraint_lower_bounds {
-  __device__ f_t operator()(f_t lower, f_t upper)
+  HDI f_t operator()(f_t lower, f_t upper)
   {
     return isfinite(upper) ? -raft::myInf<f_t>() : 0;
   }
@@ -248,7 +250,7 @@ struct transform_constraint_lower_bounds {
 
 template <typename f_t>
 struct transform_constraint_upper_bounds {
-  __device__ f_t operator()(f_t lower, f_t upper)
+  HDI f_t operator()(f_t lower, f_t upper)
   {
     return isfinite(lower) ? raft::myInf<f_t>() : 0;
   }
@@ -256,7 +258,7 @@ struct transform_constraint_upper_bounds {
 
 template <typename f_t>
 struct zero_if_is_finite {
-  __device__ f_t operator()(f_t value)
+  HDI f_t operator()(f_t value)
   {
     if (isfinite(value)) { return 0; }
     return value;
@@ -265,14 +267,14 @@ struct zero_if_is_finite {
 
 template <typename f_t>
 struct negate_t {
-  __device__ f_t operator()(f_t value) { return -value; }
+  HDI f_t operator()(f_t value) { return -value; }
 };
 
 template <typename i_t, typename f_t>
 struct minus {
   __device__ minus(raft::device_span<f_t> a, raft::device_span<f_t> b) : a_(a), b_(b) {}
 
-  DI f_t operator()(i_t index) { return a_[index] - b_[index]; }
+  HDI f_t operator()(i_t index) { return a_[index] - b_[index]; }
 
   raft::device_span<f_t> a_;
   raft::device_span<f_t> b_;
@@ -282,7 +284,7 @@ template <typename i_t, typename f_t>
 struct identity {
   __device__ identity(raft::device_span<f_t> a) : a_(a) {}
 
-  DI f_t operator()(i_t index) { return a_[index]; }
+  HDI f_t operator()(i_t index) { return a_[index]; }
 
   raft::device_span<f_t> a_;
 };
@@ -295,7 +297,7 @@ struct compute_direction_and_threshold {
   {
   }
 
-  __device__ void operator()(i_t idx)
+  HDI void operator()(i_t idx)
   {
     if (view.center_point[idx] >= view.upper_bound[idx] && view.objective_vector[idx] <= f_t(0))
       return;
@@ -328,7 +330,7 @@ struct weighted_l2_if_infinite {
   {
   }
 
-  __device__ f_t operator()(i_t idx)
+  HDI f_t operator()(i_t idx)
   {
     // If this threshold value is inf, squared norm of direction (if not 0 to not participate)
     return (isinf(view.threshold[idx]))
@@ -384,13 +386,13 @@ void inline my_l2_weighted_norm(const rmm::device_uvector<f_t>& input_vector,
 
 template <typename f_t>
 struct is_nan_or_inf {
-  __device__ bool operator()(const f_t x) { return isnan(x) || isinf(x); }
+  HDI bool operator()(const f_t x) { return isnan(x) || isinf(x); }
 };
 
 // Used to compute the linf of (residual_i - rel * b/c_i)
 template <typename i_t, typename f_t>
 struct relative_residual_t {
-  __device__ f_t operator()(const thrust::tuple<f_t, f_t>& t) const
+  HDI f_t operator()(const thrust::tuple<f_t, f_t>& t) const
   {
     const f_t residual = thrust::get<0>(t);
     // Rhs for either primal (b) and dual (c)
@@ -410,7 +412,7 @@ struct relative_residual_t {
 
 template <typename f_t>
 struct abs_t {
-  __device__ f_t operator()(const f_t in) const { return raft::abs(in); }
+  HDI f_t operator()(const f_t in) const { return raft::abs(in); }
 };
 
 template <typename f_t>

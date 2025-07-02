@@ -33,6 +33,7 @@ class cusparse_view_t {
                   const problem_t<i_t, f_t>& op_problem,
                   saddle_point_state_t<i_t, f_t>& current_saddle_point_state,
                   rmm::device_uvector<f_t>& _tmp_primal,
+                  rmm::device_uvector<f_t>& _batch_tmp_primals,
                   rmm::device_uvector<f_t>& _tmp_dual,
                   rmm::device_uvector<f_t>& _potential_next_dual_solution);
 
@@ -70,9 +71,15 @@ class cusparse_view_t {
   cusparseDnVecDescr_t primal_solution;
   cusparseDnVecDescr_t dual_solution;
 
+  // cusparse view of batch solutions
+  cusparseDnMatDescr_t batch_dual_solutions;
+
   // cusparse view of gradients
   cusparseDnVecDescr_t primal_gradient;
   cusparseDnVecDescr_t dual_gradient;
+
+  // cusparse view of batch gradients
+  cusparseDnMatDescr_t batch_dual_gradients;
 
   // cusparse view of At * Y computation
   cusparseDnVecDescr_t
@@ -81,13 +88,23 @@ class cusparse_view_t {
                                   // step to save the first AtY SpMV in compute next primal
   cusparseDnVecDescr_t potential_next_dual_solution;
 
+  // cusparse view of At * Y batch computation
+  cusparseDnMatDescr_t batch_current_AtYs;
+
   // cusparse view of auxillirary space needed for some spmv computations
   cusparseDnVecDescr_t tmp_primal;
   cusparseDnVecDescr_t tmp_dual;
 
+  // cusparse view of auxillirary space needed for some spmm computations
+  cusparseDnMatDescr_t batch_tmp_primals;
+
   // reuse buffers for cusparse spmv
   rmm::device_uvector<uint8_t> buffer_non_transpose;
   rmm::device_uvector<uint8_t> buffer_transpose;
+
+  // reuse buffers for cusparse spmm
+  rmm::device_uvector<uint8_t> buffer_transpose_batch;
+  rmm::device_uvector<uint8_t> buffer_non_transpose_batch;
 
   // Ref to the A_T found in either
   // Initial problem, we use it to have an unscaled A_T
