@@ -66,17 +66,23 @@ jobs:
         id: compute-matrix
         run: |
           MATRIX=$(cat <<EOF
-          arch: [amd, arm]
+          arch: [amd64, arm64]
           cuda_ver: [12.8.0]
           python_ver: [3.12.11]
           EOF
           )
           echo "MATRIX=${MATRIX}" >> $GITHUB_OUTPUT
 
+      - name: Install gha-tools
+        run: |
+          mkdir -p /tmp/gha-tools
+          curl -s -L 'https://github.com/rapidsai/gha-tools/releases/latest/download/tools.tar.gz' | tar -xz -C /tmp/gha-tools
+          echo "/tmp/gha-tools" >> "${GITHUB_PATH}"
+
       - name: Compute cuopt version
         id: compute-cuopt-ver
         run: |
-          ver=$(git describe --tags --abbrev=0)
+          ver=$(rapids-generate-version)
           CUOPT_VER=$(echo "$ver" | sed -E 's/^v//' \
             | sed -E 's/\.0+([0-9])/\.\1/g' \
             | sed -E 's/\.0+([a-zA-Z].*)/.0\1/g' \
