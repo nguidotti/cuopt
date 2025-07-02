@@ -17,11 +17,16 @@
 ARG CUDA_VER=12.8.0
 ARG CUOPT_VER=25.8.0
 ARG PYTHON_VER=3.12.11
+ARG PYTHON_SHORT_VER=3.12
 
 FROM nvidia/cuda:${CUDA_VER}-runtime-ubuntu22.04 AS cuda-libs
 
 # Install cuOpt
 FROM nvidia/cuda:${CUDA_VER}-base-ubuntu22.04 AS python-env
+
+ARG CUDA_VER
+ARG CUOPT_VER
+ARG PYTHON_VER
 
 RUN apt-get update && apt-get install -y \
     wget \
@@ -78,12 +83,14 @@ ARG CUOPT_VERSION
 
 ENV PIP_EXTRA_INDEX_URL="https://pypi.nvidia.com https://pypi.anaconda.org/rapidsai-wheels-nightly/simple"
 
-RUN if [[ "${CUDA_VER}" == "12.8" ]]; then \
+SHELL ["/bin/bash", "-c"]
+RUN if [[ "${CUDA_VER}" =~ ^12\. ]]; then \
         cuda_suffix="cu12"; \
-        python -m pip install nvidia-cuda-runtime-cu12==12.8.0; \
-    fi
+        python -m pip install nvidia-cuda-runtime-cu12==$(echo ${CUDA_VER} | cut -d'.' -f1-2).*; \
+    fi && \
+    python -m pip install --user --no-cache-dir cuopt-server-${cuda_suffix}==${CUOPT_VER} cuopt-sh-client==${CUOPT_VER} && \
+    python -m pip list
 
-RUN python -m pip install --user --no-cache-dir cuopt-server-${cuda_suffix}==${CUOPT_VER}* cuopt-sh-client==${CUOPT_VER}*
 USER root
 
 RUN apt-get purge -y gcc git \
@@ -97,13 +104,14 @@ USER cuopt
 COPY ./LICENSE /home/cuopt/LICENSE
 COPY ./VERSION /home/cuopt/VERSION
 
-
 FROM install-env AS cuopt-final 
+
+ARG PYTHON_SHORT_VER
 
 ENV PATH="/usr/local/cuda/bin:/usr/bin:/usr/local/bin:/usr/local/nvidia/bin/:/home/cuopt/.local/lib/python3.12/site-packages/libcuopt/bin/:/home/cuopt/.local/bin:$PATH"
 ENV LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:/usr/lib/aarch64-linux-gnu:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/lib/wsl/lib:/usr/lib/wsl/lib/libnvidia-container:/usr/lib/nvidia:/usr/lib/nvidia-current:/home/cuopt/.local/lib/python3.12/site-packages/libcuopt/lib/:/home/cuopt/.local/lib/python3.12/site-packages/rapids_logger/lib64:${LD_LIBRARY_PATH}"
 # Make pip packages accessible to all users
-ENV PYTHONPATH="/home/cuopt/.local/lib/python${PYTHON_VER%.*}/site-packages:/usr/local/lib/python${PYTHON_VER%.*}/site-packages:${PYTHONPATH:-}"
+ENV PYTHONPATH="/home/cuopt/.local/lib/python${PYTHON_SHORT_VER}/site-packages:/usr/local/lib/python${PYTHON_SHORT_VER}/site-packages:${PYTHONPATH:-}"
 
 COPY --from=cuda-libs /usr/local/cuda/lib64/libnvrtc* /usr/local/cuda/lib64/
 COPY --from=cuda-libs /usr/local/cuda/lib64/libnvJitLink* /usr/local/cuda/lib64/
