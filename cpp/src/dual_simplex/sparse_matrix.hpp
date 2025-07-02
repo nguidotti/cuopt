@@ -19,6 +19,7 @@
 
 #include <dual_simplex/types.hpp>
 #include <dual_simplex/vector_math.hpp>
+#include <dual_simplex/random.hpp>
 
 #include <cassert>
 #include <cstdio>
@@ -76,6 +77,59 @@ class csc_matrix_t {
 
   // Compute || A ||_1 = max_j (sum {i = 1 to m} | A(i, j) | )
   f_t norm1() const;
+
+  f_t norm2_estimate(f_t tol = 1e-6) const
+  {
+    i_t m    = this->m;
+    i_t n    = this->n;
+    f_t norm = 0.0;
+
+    std::vector<f_t> x(n);
+    std::vector<f_t> Sx(n);
+
+    for (i_t j = 0; j < n; ++j) {
+      const i_t col_start = this->col_start[j];
+      const i_t col_end   = this->col_start[j + 1];
+      x[j]                = 0.0;
+      for (i_t p = col_start; p < col_end; ++p) {
+        x[j] += std::abs(this->x[p]);
+      }
+    }
+
+    f_t e = vector_norm2<i_t, f_t>(x);
+    if (e == 0.0) { return 0.0; }
+
+    for (i_t j = 0; j < n; ++j) {
+      x[j] /= e;
+    }
+
+    f_t e0 = 0.0;
+
+    i_t iter           = 0;
+    const i_t max_iter = 100;
+    while (std::abs(e - e0) > tol * e) {
+      e0 = e;
+      matrix_vector_multiply(*this, 1.0, x, 0.0, Sx);
+      f_t Sx_norm = vector_norm2<i_t, f_t>(Sx);
+      if (Sx_norm == 0.0) {
+        random_t<i_t> rng(0);
+        for (i_t i = 0; i < m; ++i) {
+          Sx[i] = rng.random_value(0.0, 1.0);
+        }
+        Sx_norm = vector_norm2<i_t, f_t>(Sx);
+      }
+      matrix_transpose_vector_multiply(*this, 1.0, Sx, 0.0, x);
+      f_t norm_x = vector_norm2<i_t, f_t>(x);
+      e          = norm_x / Sx_norm;
+      for (i_t j = 0; j < n; ++j) {
+        x[j] /= norm_x;
+      }
+
+      iter++;
+      if (iter > max_iter) { break; }
+    }
+    return e;
+  }
 
   i_t nz_max;                  // maximum number of entries
   i_t m;                       // number of rows

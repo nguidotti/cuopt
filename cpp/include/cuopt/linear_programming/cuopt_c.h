@@ -268,7 +268,7 @@ void cuOptDestroyPDHG(cuOptPDHG* pdhg_ptr);
  */
 cuopt_int_t cuOptGetPDHGDimensions(cuOptPDHG pdhg, cuopt_int_t* num_variables, cuopt_int_t* num_constraints);
 
-/** @brief Get the primal and dual iterates of the PDHG algorithm.
+/** @brief Get device pointers to the primal and dual iterates of the PDHG algorithm.
  *
  * @param[in] pdhg - The PDHG solver.
  *
@@ -296,7 +296,17 @@ cuopt_int_t cuOptGetPDHGDeviceIterate(cuOptPDHG pdhg, cuopt_float_t** device_x, 
 */
 cuopt_int_t cuOptGetPDHGHostIterate(cuOptPDHG pdhg, cuopt_float_t* host_x, cuopt_float_t* host_y, cuopt_float_t* host_x_prime, cuopt_float_t* host_y_prime);
 
+/** @brief Set the primal and dual iterates of the PDHG algorithm.
 
+ * @param[in] pdhg - The PDHG solver.
+ *
+ * @param[in] x - A pointer to an array of type cuopt_float_t of size num_variables that contains the primal iterate.
+ *
+ * @param[in] y - A pointer to an array of type cuopt_float_t of size num_constraints that contains the dual iterate.
+ *
+ * @return A status code indicating success or failure.
+ */
+cuopt_int_t cuOptSetPDHGIterate(cuOptPDHG pdhg, cuopt_float_t* x, cuopt_float_t* y);
 
 /** @brief Run several iterations of PDHG
  *
@@ -312,6 +322,41 @@ cuopt_int_t cuOptGetPDHGHostIterate(cuOptPDHG pdhg, cuopt_float_t* host_x, cuopt
 */
 cuopt_int_t cuOptPDHGIterations(cuOptPDHG pdhg, cuopt_int_t num_iterations, cuopt_float_t* host_primal_step_size, cuopt_float_t* host_dual_step_size);
 
+/** @brief Estimate the norm of a matrix
+ *
+ * @param[in] num_rows - The number of rows of the constraint matrix.
+ *
+ * @param[in] num_cols - The number of columns of the constraint matrix.
+ *
+ * @param[in] row_offsets - A pointer to an array of type cuopt_int_t of size num_rows + 1.
+ *
+ * @param[in] column_indices - A pointer to an array of type cuopt_int_t of size num_cols.
+ *
+ * @param[in] values - A pointer to an array of type cuopt_float_t of size num_cols.
+ *
+ * @param[out] norm_estimate_ptr - A pointer to a cuopt_float_t that will contain the norm estimate.
+ *
+ * @return A status code indicating success or failure.
+ */
+cuopt_int_t cuOptNormEstimate(cuopt_int_t num_rows,
+                              cuopt_int_t num_cols,
+                              cuopt_int_t* row_offsets,
+                              cuopt_int_t* column_indices,
+                              cuopt_float_t* values,
+                              cuopt_float_t* norm_estimate_ptr);
+/** @brief Start a timer
+ * .
+* @return a timer value
+*/
+cuopt_float_t cuOptTic();
+
+/** @brief Stop a timer.
+*
+* @param[in] tic - The timer value returned by cuOptTic.
+*
+* @return the elapsed time in seconds.
+*/
+cuopt_float_t cuOptToc(cuopt_float_t tic);
 
 /** @brief Get the number of constraints of an optimization problem.
  *

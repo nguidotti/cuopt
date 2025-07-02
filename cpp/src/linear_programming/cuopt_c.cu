@@ -24,6 +24,13 @@
 
 #include <linear_programming/solve.cuh>
 #include <linear_programming/pdhg.hpp>
+#include <linear_programming/cusparse_view.hpp>
+
+#include <raft/util/cudart_utils.hpp>
+
+
+#include <dual_simplex/sparse_matrix.hpp>
+#include <dual_simplex/tic_toc.hpp>
 
 #include <mps_parser/parser.hpp>
 
@@ -59,8 +66,27 @@ struct solution_and_stream_view_t {
 };
 
 struct pdhg_t {
+  pdhg_t(raft::handle_t* handle_ptr)
+    : problem_ptr(nullptr),
+      pdhg_solver_ptr(nullptr),
+      primal_step_size(0.0, handle_ptr->get_stream()),
+      dual_step_size(0.0, handle_ptr->get_stream()),
+      cusparse_view(nullptr),
+      step_size(0.0, handle_ptr->get_stream()),
+      primal_weight(0.0, handle_ptr->get_stream()),
+      dummy_float(0.0, handle_ptr->get_stream()),
+      dummy_int(0, handle_ptr->get_stream())
+  {
+  }
   std::unique_ptr<detail::problem_t<cuopt_int_t, cuopt_float_t>> problem_ptr;
   std::unique_ptr<detail::pdhg_solver_t<cuopt_int_t, cuopt_float_t>> pdhg_solver_ptr;
+  rmm::device_scalar<cuopt_float_t> step_size;
+  rmm::device_scalar<cuopt_float_t> primal_weight;
+  rmm::device_scalar<cuopt_float_t> primal_step_size;
+  rmm::device_scalar<cuopt_float_t> dual_step_size;
+  std::unique_ptr<detail::cusparse_view_t<cuopt_int_t, cuopt_float_t>> cusparse_view;
+  rmm::device_uvector<cuopt_float_t> dummy_float; // Needed for cusparse_view constructor
+  rmm::device_uvector<cuopt_int_t> dummy_int; // Needed for cusparse_view constructo
 };
 
 int8_t cuOptGetFloatSize() { return sizeof(cuopt_float_t); }
@@ -205,6 +231,42 @@ cuopt_int_t cuOptCreateRangedProblem(cuopt_int_t num_constraints,
   return CUOPT_SUCCESS;
 }
 
+cuopt_int_t cuOptNormEstimate(cuopt_int_t num_rows,
+                              cuopt_int_t num_cols,
+                              cuopt_int_t* row_offsets,
+                              cuopt_int_t* column_indices,
+                              cuopt_float_t* values,
+                              cuopt_float_t* norm_estimate_ptr)
+{
+  cuopt_int_t nnz = row_offsets[num_rows];
+  cuopt::linear_programming::dual_simplex::csr_matrix_t<cuopt_int_t, cuopt_float_t> A;
+
+  A.m = num_rows;
+  A.n = num_cols;
+
+  A.row_start.resize(num_rows + 1);
+  for (cuopt_int_t i = 0; i <= num_rows; i++) {
+    A.row_start[i] = row_offsets[i];
+  }
+
+  A.j.resize(nnz);
+  for (cuopt_int_t i = 0; i < nnz; i++) {
+    A.j[i] = column_indices[i];
+  }
+
+  A.x.resize(nnz);
+  for (cuopt_int_t i = 0; i < nnz; i++) {
+    A.x[i] = values[i];
+  }
+
+  cuopt::linear_programming::dual_simplex::csc_matrix_t<cuopt_int_t, cuopt_float_t> A_col(1, 1, 1);
+  A.to_compressed_col(A_col);
+
+  *norm_estimate_ptr = A_col.norm2_estimate();
+
+  return CUOPT_SUCCESS;
+}
+
 cuopt_int_t cuOptCreatePDHG(cuOptOptimizationProblem problem, cuOptPDHG* pdhg_ptr)
 {
   if (problem == nullptr) { return CUOPT_INVALID_ARGUMENT; }
@@ -213,10 +275,11 @@ cuopt_int_t cuOptCreatePDHG(cuOptOptimizationProblem problem, cuOptPDHG* pdhg_pt
     static_cast<problem_and_stream_view_t*>(problem);
 
   // Create pdhg_t with proper initialization
-  pdhg_t* pdhg = new pdhg_t();
+  pdhg_t* pdhg = new pdhg_t(problem_and_stream_view->get_handle_ptr());
 
   pdhg->problem_ptr = std::make_unique<detail::problem_t<cuopt_int_t, cuopt_float_t>>(*problem_and_stream_view->op_problem);
   pdhg->pdhg_solver_ptr = create_pdhg_solver(*problem_and_stream_view->op_problem, *pdhg->problem_ptr);
+  pdhg->cusparse_view = std::make_unique<detail::cusparse_view_t<cuopt_int_t, cuopt_float_t>>(pdhg->problem_ptr->handle_ptr, pdhg->dummy_float, pdhg->dummy_int);
   *pdhg_ptr = static_cast<cuOptPDHG>(pdhg);
   return CUOPT_SUCCESS;
 }
@@ -230,12 +293,23 @@ cuopt_int_t cuOptGetPDHGDimensions(cuOptPDHG pdhg, cuopt_int_t* num_variables, c
   return CUOPT_SUCCESS;
 }
 
-cuopt_int_t cuOptGetPDHGDeviceIterate(cuOptPDHG pdhg, cuopt_float_t** x, cuopt_float_t** y)
+cuopt_int_t cuOptSetPDHGIterate(cuOptPDHG pdhg, cuopt_float_t* x, cuopt_float_t* y)
 {
   if (pdhg == nullptr) { return CUOPT_INVALID_ARGUMENT; }
   pdhg_t* pdhg_ptr = static_cast<pdhg_t*>(pdhg);
-  *x = pdhg_ptr->pdhg_solver_ptr->get_primal_solution().data();
-  *y = pdhg_ptr->pdhg_solver_ptr->get_dual_solution().data();
+  pdhg_ptr->problem_ptr->handle_ptr->get_stream().synchronize();
+  raft::copy(pdhg_ptr->pdhg_solver_ptr->get_primal_solution().data(), x, pdhg_ptr->pdhg_solver_ptr->get_primal_solution().size(), pdhg_ptr->problem_ptr->handle_ptr->get_stream());
+  raft::copy(pdhg_ptr->pdhg_solver_ptr->get_dual_solution().data(), y, pdhg_ptr->pdhg_solver_ptr->get_dual_solution().size(), pdhg_ptr->problem_ptr->handle_ptr->get_stream());
+  pdhg_ptr->problem_ptr->handle_ptr->get_stream().synchronize();
+  return CUOPT_SUCCESS;
+}
+
+cuopt_int_t cuOptGetPDHGDeviceIterate(cuOptPDHG pdhg, cuopt_float_t** device_x, cuopt_float_t** device_y)
+{
+  if (pdhg == nullptr) { return CUOPT_INVALID_ARGUMENT; }
+  pdhg_t* pdhg_ptr = static_cast<pdhg_t*>(pdhg);
+  *device_x = pdhg_ptr->pdhg_solver_ptr->get_primal_solution().data();
+  *device_y = pdhg_ptr->pdhg_solver_ptr->get_dual_solution().data();
   return CUOPT_SUCCESS;
 }
 
@@ -253,22 +327,34 @@ cuopt_int_t cuOptGetPDHGHostIterate(cuOptPDHG pdhg, cuopt_float_t* x,  cuopt_flo
 }
 
 
-cuopt_int_t cuOptPDHGIterations(cuOptPDHG pdhg, cuopt_int_t num_iterations, cuopt_float_t* host_primal_step_size, cuopt_float_t* host_dual_step_size)
+cuopt_int_t cuOptPDHGIterations(cuOptPDHG pdhg, cuopt_int_t num_iterations, cuopt_float_t* primal_step_size, cuopt_float_t* dual_step_size)
 {
   if (pdhg == nullptr) { return CUOPT_INVALID_ARGUMENT; }
-  if (host_primal_step_size == nullptr) { return CUOPT_INVALID_ARGUMENT; }
-  if (host_dual_step_size == nullptr) { return CUOPT_INVALID_ARGUMENT; }
+  if (primal_step_size == nullptr) { return CUOPT_INVALID_ARGUMENT; }
+  if (dual_step_size == nullptr) { return CUOPT_INVALID_ARGUMENT; }
   pdhg_t* pdhg_ptr = static_cast<pdhg_t*>(pdhg);
-
-  rmm::device_scalar<cuopt_float_t> primal_step_size(*host_primal_step_size, pdhg_ptr->problem_ptr->handle_ptr->get_stream());
-  rmm::device_scalar<cuopt_float_t> dual_step_size(*host_dual_step_size, pdhg_ptr->problem_ptr->handle_ptr->get_stream());
+  raft::copy(pdhg_ptr->primal_step_size.data(), primal_step_size, 1, pdhg_ptr->problem_ptr->handle_ptr->get_stream());
+  raft::copy(pdhg_ptr->dual_step_size.data(), dual_step_size, 1, pdhg_ptr->problem_ptr->handle_ptr->get_stream());
+  pdhg_ptr->problem_ptr->handle_ptr->get_stream().synchronize();
 
   for (cuopt_int_t i = 0; i < num_iterations; i++) {
-    printf("PDHG iteration %d\n", i);
-    pdhg_ptr->pdhg_solver_ptr->take_step(primal_step_size, dual_step_size, i, false, 0);
+    pdhg_ptr->pdhg_solver_ptr->take_step(
+      pdhg_ptr->primal_step_size, pdhg_ptr->dual_step_size, 0, true, i);
+    pdhg_ptr->pdhg_solver_ptr->update_solution(*pdhg_ptr->cusparse_view);
   }
   return CUOPT_SUCCESS;
 }
+
+cuopt_float_t cuOptTic()
+{
+  return cuopt::linear_programming::dual_simplex::tic();
+}
+
+cuopt_float_t cuOptToc(cuopt_float_t tic)
+{
+  return cuopt::linear_programming::dual_simplex::toc(tic);
+}
+
 
 void cuOptDestroyPDHG(cuOptPDHG* pdhg_ptr)
 {
@@ -277,6 +363,7 @@ void cuOptDestroyPDHG(cuOptPDHG* pdhg_ptr)
   pdhg_t* pdhg = static_cast<pdhg_t*>(*pdhg_ptr);
   pdhg->pdhg_solver_ptr.reset();
   pdhg->problem_ptr.reset();
+  pdhg->cusparse_view.reset();
   delete pdhg;
   *pdhg_ptr = nullptr;
 }
@@ -285,7 +372,7 @@ void cuOptDestroyProblem(cuOptOptimizationProblem* problem_ptr)
 {
   if (problem_ptr == nullptr) { return; }
   if (*problem_ptr == nullptr) { return; }
-  // TODO: delete the optimization problem
+  delete static_cast<problem_and_stream_view_t*>(*problem_ptr)->op_problem;
   delete static_cast<problem_and_stream_view_t*>(*problem_ptr);
   *problem_ptr = nullptr;
 }

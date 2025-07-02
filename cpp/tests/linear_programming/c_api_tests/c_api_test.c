@@ -21,10 +21,13 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
 #ifdef _cplusplus
 #error "This file must be compiled as C code"
 #endif
+
+
 
 
 int check_problem(cuOptOptimizationProblem problem,
@@ -287,22 +290,83 @@ DONE:
   return status;
 }
 
-int test_pdhg(const char* filename) {
+int test_pdhg(const char* afiro_original_filename) {
   cuOptOptimizationProblem problem = NULL;
+  cuOptOptimizationProblem scaled_problem = NULL;
   cuOptPDHG pdhg = NULL;
   cuopt_int_t num_variables;
   cuopt_int_t num_constraints;
-  cuopt_float_t* device_x;
-  cuopt_float_t* device_y;
-  cuopt_float_t* host_x;
-  cuopt_float_t* host_y;
-  cuopt_float_t* host_x_prime;
-  cuopt_float_t* host_y_prime;
-  cuopt_int_t status = cuOptReadProblem(filename, &problem);
+  cuopt_float_t* device_x = NULL;
+  cuopt_float_t* device_y = NULL;
+  cuopt_float_t* host_x = NULL;
+  cuopt_float_t* host_y = NULL;
+  cuopt_float_t* host_x_prime = NULL;
+  cuopt_float_t* host_y_prime = NULL;
+  cuopt_int_t num_iterations = 15000;
+  cuopt_float_t *objective = NULL;
+  cuopt_float_t objective_value;
+  cuopt_int_t* row_offsets = NULL;
+  cuopt_int_t* column_indices = NULL;
+  cuopt_float_t* values = NULL;
+  cuopt_int_t nnz;
+
+  cuopt_int_t status = cuOptReadProblem(afiro_original_filename, &problem);
   if (status != CUOPT_SUCCESS) {
     printf("Error reading problem\n");
     goto DONE;
   }
+
+  status = cuOptGetNumConstraints(problem, &num_constraints);
+  if (status != CUOPT_SUCCESS) {
+    printf("Error getting number of constraints\n");
+    goto DONE;
+  }
+  status = cuOptGetNumVariables(problem, &num_variables);
+  if (status != CUOPT_SUCCESS) {
+    printf("Error getting number of variables\n");
+    goto DONE;
+  }
+
+  status = cuOptGetNumNonZeros(problem, &nnz);
+  if (status != CUOPT_SUCCESS) {
+    printf("Error getting number of non-zeros\n");
+    goto DONE;
+  }
+
+  row_offsets = (cuopt_int_t*)malloc((num_constraints + 1) * sizeof(cuopt_int_t));
+  column_indices = (cuopt_int_t*)malloc(nnz * sizeof(cuopt_int_t));
+  values = (cuopt_float_t*)malloc(nnz * sizeof(cuopt_float_t));
+  objective = (cuopt_float_t*)malloc(num_variables * sizeof(cuopt_float_t));
+
+  status = cuOptGetConstraintMatrix(problem, row_offsets, column_indices, values);
+  if (status != CUOPT_SUCCESS) {
+    printf("Error getting constraint matrix\n");
+    goto DONE;
+  }
+
+  status = cuOptGetObjectiveCoefficients(problem, objective);
+  if (status != CUOPT_SUCCESS) {
+    printf("Error getting objective coefficients\n");
+    goto DONE;
+  }
+
+  cuopt_float_t primal_weight =  1.0;
+  printf("primal_weight: %.2e\n", primal_weight);
+  cuopt_float_t norm_A_2 = 0.0;
+  status = cuOptNormEstimate(num_constraints, num_variables, row_offsets, column_indices, values, &norm_A_2);
+  if (status != CUOPT_SUCCESS) {
+    printf("Error estimating norm of constraint matrix\n");
+    goto DONE;
+  }
+  printf("norm_A_2: %.12e\n", norm_A_2);
+
+  cuopt_float_t step_size = 0.9 / norm_A_2;
+  cuopt_float_t primal_step_size = step_size / primal_weight;
+  cuopt_float_t dual_step_size = step_size * primal_weight;
+  printf("step_size: %.12e\n", step_size);
+  printf("primal_step: %.12e\n", primal_step_size);
+  printf("dual_step: %.12e\n", dual_step_size);
+
   status = cuOptCreatePDHG(problem, &pdhg);
   if (status != CUOPT_SUCCESS) {
     printf("Error creating PDHG\n");
@@ -311,7 +375,7 @@ int test_pdhg(const char* filename) {
 
   status = cuOptGetPDHGDimensions(pdhg, &num_variables, &num_constraints);
   if (status != CUOPT_SUCCESS) {
-    printf("Error getting PDHG dimensions\n");
+    printf("Error getting PDHG dimensions %d\n", status);
     goto DONE;
   }
   printf("PDHG dimensions: %d variables, %d constraints\n", num_variables, num_constraints);
@@ -326,43 +390,67 @@ int test_pdhg(const char* filename) {
   host_x_prime = (cuopt_float_t*)malloc(num_variables * sizeof(cuopt_float_t));
   host_y_prime = (cuopt_float_t*)malloc(num_constraints * sizeof(cuopt_float_t));
 
-  status = cuOptGetPDHGHostIterate(pdhg, host_x, host_y, host_x_prime, host_y_prime);
-  if (status != CUOPT_SUCCESS) {
-    printf("Error getting PDHG host iterate\n");
-    goto DONE;
-  }
+
   for (cuopt_int_t j = 0; j < num_variables; j++) {
-    printf("PDHG host iterate: x[%d] = %f next %f\n", j, host_x[j], host_x_prime[j]);
+    host_x[j] = 0.0;
   }
   for (cuopt_int_t j = 0; j < num_constraints; j++) {
-    printf("PDHG host iterate: y[%d] = %f next %f\n", j, host_y[j], host_y_prime[j]);
+    host_y[j] = 0.0;
   }
 
-  cuopt_float_t primal_step_size = 1e-4;
-  cuopt_float_t dual_step_size = 1e-4;
-  status = cuOptPDHGIterations(pdhg, 1, &primal_step_size, &dual_step_size);
+  status = cuOptSetPDHGIterate(pdhg, host_x, host_y);
+  if (status != CUOPT_SUCCESS) {
+    printf("Error setting PDHG iterate\n");
+    goto DONE;
+  }
+
+  cuopt_float_t tic = cuOptTic();
+
+  status = cuOptPDHGIterations(pdhg, num_iterations, &primal_step_size, &dual_step_size);
   if (status != CUOPT_SUCCESS) {
     printf("Error taking PDHG iterations\n");
     goto DONE;
   }
+
+  cuopt_float_t toc = cuOptToc(tic);
+  printf("%d PDHG iterations in %.4f seconds\n", num_iterations, toc);
+
   status = cuOptGetPDHGHostIterate(pdhg, host_x, host_y, host_x_prime, host_y_prime);
   if (status != CUOPT_SUCCESS) {
     printf("Error getting PDHG host iterate\n");
     goto DONE;
   }
 
-  printf("After 1 PDHG iteration\n");
+  printf("After %d PDHG iterations\n", num_iterations);
 
+  printf("primal solution: [");
   for (cuopt_int_t j = 0; j < num_variables; j++) {
-    printf("PDHG host iterate: x[%d] = %f next %f\n", j, host_x[j], host_x_prime[j]);
+    printf("%g, ", host_x[j]);
   }
+  printf("]\n");
+  printf("dual solution: [");
   for (cuopt_int_t j = 0; j < num_constraints; j++) {
-    printf("PDHG host iterate: y[%d] = %f next %f\n", j, host_y[j], host_y_prime[j]);
+    printf("%g, ", host_y[j]);
   }
+  printf("]\n");
 
+  objective_value = 0;
+  for (cuopt_int_t j = 0; j < num_variables; j++) {
+    objective_value += objective[j] * host_x[j];
+  }
+  printf("Objective value: %f\n", objective_value);
 DONE:
   cuOptDestroyPDHG(&pdhg);
   cuOptDestroyProblem(&problem);
+  cuOptDestroyProblem(&scaled_problem);
+  free(row_offsets);
+  free(column_indices);
+  free(values);
+  free(objective);
+  free(host_x);
+  free(host_y);
+  free(host_x_prime);
+  free(host_y_prime);
   return status;
 }
 
