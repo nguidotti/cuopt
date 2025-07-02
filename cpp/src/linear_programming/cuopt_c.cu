@@ -243,25 +243,32 @@ cuopt_int_t cuOptNormEstimate(cuopt_int_t num_rows,
 
   A.m = num_rows;
   A.n = num_cols;
+  printf("A m %d, n %d, nnz %d\n", A.m, A.n, nnz);
 
+  printf("setting row_start\n");
   A.row_start.resize(num_rows + 1);
   for (cuopt_int_t i = 0; i <= num_rows; i++) {
     A.row_start[i] = row_offsets[i];
   }
 
+  printf("setting column_indices\n");
   A.j.resize(nnz);
-  for (cuopt_int_t i = 0; i < nnz; i++) {
-    A.j[i] = column_indices[i];
+  for (cuopt_int_t p = 0; p < nnz; p++) {
+    A.j[p] = column_indices[p];
   }
 
+  printf("setting values\n");
   A.x.resize(nnz);
-  for (cuopt_int_t i = 0; i < nnz; i++) {
-    A.x[i] = values[i];
+  for (cuopt_int_t p = 0; p < nnz; p++) {
+    A.x[p] = values[p];
   }
 
+  printf("converting to compressed col\n");
   cuopt::linear_programming::dual_simplex::csc_matrix_t<cuopt_int_t, cuopt_float_t> A_col(1, 1, 1);
   A.to_compressed_col(A_col);
+  printf("A_col m %d, n %d, nnz %d\n", A_col.m, A_col.n, A_col.col_start[A_col.n]);
 
+  printf("computing norm estimate\n");
   *norm_estimate_ptr = A_col.norm2_estimate();
 
   return CUOPT_SUCCESS;
@@ -313,15 +320,13 @@ cuopt_int_t cuOptGetPDHGDeviceIterate(cuOptPDHG pdhg, cuopt_float_t** device_x, 
   return CUOPT_SUCCESS;
 }
 
-cuopt_int_t cuOptGetPDHGHostIterate(cuOptPDHG pdhg, cuopt_float_t* x,  cuopt_float_t* y, cuopt_float_t* x_prime, cuopt_float_t* y_prime)
+cuopt_int_t cuOptGetPDHGHostIterate(cuOptPDHG pdhg, cuopt_float_t* x,  cuopt_float_t* y)
 {
   if (pdhg == nullptr) { return CUOPT_INVALID_ARGUMENT; }
   pdhg_t* pdhg_ptr = static_cast<pdhg_t*>(pdhg);
   pdhg_ptr->problem_ptr->handle_ptr->get_stream().synchronize();
   raft::copy(x, pdhg_ptr->pdhg_solver_ptr->get_primal_solution().data(), pdhg_ptr->pdhg_solver_ptr->get_primal_solution().size(), pdhg_ptr->problem_ptr->handle_ptr->get_stream());
   raft::copy(y, pdhg_ptr->pdhg_solver_ptr->get_dual_solution().data(), pdhg_ptr->pdhg_solver_ptr->get_dual_solution().size(), pdhg_ptr->problem_ptr->handle_ptr->get_stream());
-  raft::copy(x_prime, pdhg_ptr->pdhg_solver_ptr->get_potential_next_primal_solution().data(), pdhg_ptr->pdhg_solver_ptr->get_potential_next_primal_solution().size(), pdhg_ptr->problem_ptr->handle_ptr->get_stream());
-  raft::copy(y_prime, pdhg_ptr->pdhg_solver_ptr->get_potential_next_dual_solution().data(), pdhg_ptr->pdhg_solver_ptr->get_potential_next_dual_solution().size(), pdhg_ptr->problem_ptr->handle_ptr->get_stream());
   pdhg_ptr->problem_ptr->handle_ptr->get_stream().synchronize();
   return CUOPT_SUCCESS;
 }

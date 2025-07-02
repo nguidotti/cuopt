@@ -288,13 +288,9 @@ cuopt_int_t cuOptGetPDHGDeviceIterate(cuOptPDHG pdhg, cuopt_float_t** device_x, 
  *
  * @param[out] host_y - A pointer to an array of type cuopt_float_t of size num_constraints that will contain the dual iterate. This is a host pointer.
  *
- * @param[out] host_x_prime - A pointer to an array of type cuopt_float_t of size num_variables that will contain the next primal iterate. This is a host pointer.
- *
- * @param[out] host_y_prime - A pointer to an array of type cuopt_float_t of size num_constraints that will contain the next dual iterate. This is a host pointer.
- *
  * @return A status code indicating success or failure.
 */
-cuopt_int_t cuOptGetPDHGHostIterate(cuOptPDHG pdhg, cuopt_float_t* host_x, cuopt_float_t* host_y, cuopt_float_t* host_x_prime, cuopt_float_t* host_y_prime);
+cuopt_int_t cuOptGetPDHGHostIterate(cuOptPDHG pdhg, cuopt_float_t* host_x, cuopt_float_t* host_y);
 
 /** @brief Set the primal and dual iterates of the PDHG algorithm.
 

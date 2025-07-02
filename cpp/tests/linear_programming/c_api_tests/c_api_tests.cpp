@@ -101,3 +101,9 @@ TEST(c_api, test_pdhg) {
   std::string filename = rapidsDatasetRootDir + "/linear_programming/" + "afiro_pdhg.mps";
   EXPECT_EQ(test_pdhg(filename.c_str()), CUOPT_SUCCESS);
 }
+
+TEST(c_api, test_pdhg_ex10) {
+  const std::string& rapidsDatasetRootDir = cuopt::test::get_rapids_dataset_root_dir();
+  std::string filename = rapidsDatasetRootDir + "/linear_programming/" + "ex10.mps";
+  EXPECT_EQ(test_pdhg(filename.c_str()), CUOPT_SUCCESS);
+}

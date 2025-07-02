@@ -21,7 +21,6 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <time.h>
 
 #ifdef _cplusplus
 #error "This file must be compiled as C code"
@@ -290,9 +289,8 @@ DONE:
   return status;
 }
 
-int test_pdhg(const char* afiro_original_filename) {
+int test_pdhg(const char* filename) {
   cuOptOptimizationProblem problem = NULL;
-  cuOptOptimizationProblem scaled_problem = NULL;
   cuOptPDHG pdhg = NULL;
   cuopt_int_t num_variables;
   cuopt_int_t num_constraints;
@@ -300,8 +298,6 @@ int test_pdhg(const char* afiro_original_filename) {
   cuopt_float_t* device_y = NULL;
   cuopt_float_t* host_x = NULL;
   cuopt_float_t* host_y = NULL;
-  cuopt_float_t* host_x_prime = NULL;
-  cuopt_float_t* host_y_prime = NULL;
   cuopt_int_t num_iterations = 15000;
   cuopt_float_t *objective = NULL;
   cuopt_float_t objective_value;
@@ -310,7 +306,9 @@ int test_pdhg(const char* afiro_original_filename) {
   cuopt_float_t* values = NULL;
   cuopt_int_t nnz;
 
-  cuopt_int_t status = cuOptReadProblem(afiro_original_filename, &problem);
+  // Read from an MPS file in the unit test.
+  // You may also create a problem from memory via cuOptCreateProblem or cuOptCreateRangedProblem.
+  cuopt_int_t status = cuOptReadProblem(filename, &problem);
   if (status != CUOPT_SUCCESS) {
     printf("Error reading problem\n");
     goto DONE;
@@ -333,6 +331,7 @@ int test_pdhg(const char* afiro_original_filename) {
     goto DONE;
   }
 
+  // Allocate memory for the constraint matrix and objective
   row_offsets = (cuopt_int_t*)malloc((num_constraints + 1) * sizeof(cuopt_int_t));
   column_indices = (cuopt_int_t*)malloc(nnz * sizeof(cuopt_int_t));
   values = (cuopt_float_t*)malloc(nnz * sizeof(cuopt_float_t));
@@ -350,6 +349,9 @@ int test_pdhg(const char* afiro_original_filename) {
     goto DONE;
   }
 
+  // Set the primal weight, step size, and primal and dual step sizes
+  // to ensure convergence of vanilla PDHG based on an estimate of the
+  // 2-norm of the constraint matrix.
   cuopt_float_t primal_weight =  1.0;
   printf("primal_weight: %.2e\n", primal_weight);
   cuopt_float_t norm_A_2 = 0.0;
@@ -373,23 +375,17 @@ int test_pdhg(const char* afiro_original_filename) {
     goto DONE;
   }
 
+  // Should be the same as the problem dimensions, but just in case get the dimensions again.
   status = cuOptGetPDHGDimensions(pdhg, &num_variables, &num_constraints);
   if (status != CUOPT_SUCCESS) {
     printf("Error getting PDHG dimensions %d\n", status);
     goto DONE;
   }
   printf("PDHG dimensions: %d variables, %d constraints\n", num_variables, num_constraints);
-  status = cuOptGetPDHGDeviceIterate(pdhg, &device_x, &device_y);
-  if (status != CUOPT_SUCCESS) {
-    printf("Error getting PDHG device iterate\n");
-    goto DONE;
-  }
+
 
   host_x = (cuopt_float_t*)malloc(num_variables * sizeof(cuopt_float_t));
   host_y = (cuopt_float_t*)malloc(num_constraints * sizeof(cuopt_float_t));
-  host_x_prime = (cuopt_float_t*)malloc(num_variables * sizeof(cuopt_float_t));
-  host_y_prime = (cuopt_float_t*)malloc(num_constraints * sizeof(cuopt_float_t));
-
 
   for (cuopt_int_t j = 0; j < num_variables; j++) {
     host_x[j] = 0.0;
@@ -415,42 +411,51 @@ int test_pdhg(const char* afiro_original_filename) {
   cuopt_float_t toc = cuOptToc(tic);
   printf("%d PDHG iterations in %.4f seconds\n", num_iterations, toc);
 
-  status = cuOptGetPDHGHostIterate(pdhg, host_x, host_y, host_x_prime, host_y_prime);
+  // Get the device pointer to the primal and dual iterates.
+  status = cuOptGetPDHGDeviceIterate(pdhg, &device_x, &device_y);
+  if (status != CUOPT_SUCCESS) {
+    printf("Error getting PDHG device iterate\n");
+    goto DONE;
+  }
+
+  // Copy the primal and dual iterates to host memory. This is just used to verify the solution.
+  // cuOptGetPDHGDeviceIterate should be used for performance.
+  status = cuOptGetPDHGHostIterate(pdhg, host_x, host_y);
   if (status != CUOPT_SUCCESS) {
     printf("Error getting PDHG host iterate\n");
     goto DONE;
   }
 
-  printf("After %d PDHG iterations\n", num_iterations);
-
-  printf("primal solution: [");
-  for (cuopt_int_t j = 0; j < num_variables; j++) {
-    printf("%g, ", host_x[j]);
+  if (num_variables < 100) {
+    printf("primal solution: [");
+    for (cuopt_int_t j = 0; j < num_variables; j++) {
+      printf("%g, ", host_x[j]);
+    }
+    printf("]\n");
   }
-  printf("]\n");
-  printf("dual solution: [");
-  for (cuopt_int_t j = 0; j < num_constraints; j++) {
-    printf("%g, ", host_y[j]);
+  if (num_constraints < 100) {
+    printf("dual solution: [");
+    for (cuopt_int_t j = 0; j < num_constraints; j++) {
+      printf("%g, ", host_y[j]);
+    }
+    printf("]\n");
   }
-  printf("]\n");
 
   objective_value = 0;
   for (cuopt_int_t j = 0; j < num_variables; j++) {
     objective_value += objective[j] * host_x[j];
   }
   printf("Objective value: %f\n", objective_value);
+
 DONE:
   cuOptDestroyPDHG(&pdhg);
   cuOptDestroyProblem(&problem);
-  cuOptDestroyProblem(&scaled_problem);
   free(row_offsets);
   free(column_indices);
   free(values);
   free(objective);
   free(host_x);
   free(host_y);
-  free(host_x_prime);
-  free(host_y_prime);
   return status;
 }
 

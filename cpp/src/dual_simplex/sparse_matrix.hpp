@@ -85,7 +85,7 @@ class csc_matrix_t {
     f_t norm = 0.0;
 
     std::vector<f_t> x(n);
-    std::vector<f_t> Sx(n);
+    std::vector<f_t> Sx(m);
 
     for (i_t j = 0; j < n; ++j) {
       const i_t col_start = this->col_start[j];
