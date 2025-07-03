@@ -23,7 +23,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh workflow run build_test_publish_images.yml \
+          gh workflow run build_test_publish_images.yml --ref pull-request/180 \
             -f branch="branch-25.08" \
             -f sha="e0dc603" \
             -f date="2025-07-02" \
