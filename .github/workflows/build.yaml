@@ -191,8 +191,8 @@ jobs:
       date: ${{ inputs.date }}
       package-name: cuopt_sh_client
       package-type: python
-  service-container:
-    if: inputs.build_type == 'nightly'
+  build-images:
+    if: inputs.build_type == 'nightly' || inputs.build_type == 'release'
     needs: [wheel-build-cuopt, wheel-build-cuopt-server]
     runs-on: ubuntu-latest
     steps:
@@ -206,7 +206,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh workflow run service_nightly.yaml \
+          gh workflow run build_test_publish_images.yml \
             -f branch=${{ inputs.branch }} \
             -f sha=${{ inputs.sha }} \
             -f date=${{ inputs.date }} \
