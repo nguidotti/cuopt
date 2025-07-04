@@ -579,17 +579,13 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(detail::problem_t<i_t, f_t>& 
     if (problem_checking) {
       raft::common::nvtx::range fun_scope("Check problem representation");
       // This is required as user might forget to set some fields
-      if (!inside_mip)
-      {
+      if (!inside_mip) {
         problem_checking_t<i_t, f_t>::check_problem_representation(*problem.original_problem_ptr);
         problem_checking_t<i_t, f_t>::check_initial_solution_representation(
           *problem.original_problem_ptr, settings);
-      }
-      else
-      {
+      } else {
         problem.check_problem_representation(true, true);
-        problem_checking_t<i_t, f_t>::check_initial_solution_representation(
-          problem, settings);
+        problem_checking_t<i_t, f_t>::check_initial_solution_representation(problem, settings);
       }
     }
     CUOPT_LOG_INFO(

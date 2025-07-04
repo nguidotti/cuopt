@@ -28,8 +28,7 @@ namespace cuopt::linear_programming {
 
 template <typename i_t, typename f_t>
 static dual_simplex::user_problem_t<i_t, f_t> cuopt_problem_to_simplex_problem(
-  detail::problem_t<i_t, f_t>& model,
-  bool inside_mip)
+  detail::problem_t<i_t, f_t>& model, bool inside_mip)
 {
   dual_simplex::user_problem_t<i_t, f_t> user_problem;
 

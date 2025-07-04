@@ -45,8 +45,7 @@ class problem_checking_t {
     const optimization_problem_t<i_t, f_t>& op_problem,
     const pdlp_solver_settings_t<i_t, f_t>& settings);
   static void check_initial_solution_representation(
-    const detail::problem_t<i_t, f_t>& problem,
-    const pdlp_solver_settings_t<i_t, f_t>& settings);
+    const detail::problem_t<i_t, f_t>& problem, const pdlp_solver_settings_t<i_t, f_t>& settings);
   static void check_initial_solution_representation(
     const optimization_problem_t<i_t, f_t>& op_problem,
     const mip_solver_settings_t<i_t, f_t>& settings);

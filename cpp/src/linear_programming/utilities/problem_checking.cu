@@ -98,26 +98,28 @@ void problem_checking_t<i_t, f_t>::check_initial_solution_representation(
   const pdlp_solver_settings_t<i_t, f_t>& settings)
 {
   if (settings.initial_primal_solution_.get() != nullptr) {
-    check_initial_primal_representation(op_problem.get_objective_coefficients(), settings.get_initial_primal_solution());
+    check_initial_primal_representation(op_problem.get_objective_coefficients(),
+                                        settings.get_initial_primal_solution());
   }
   if (settings.initial_dual_solution_.get() != nullptr) {
-        const auto& constraints = (op_problem.get_constraint_lower_bounds().is_empty())
-                                        ? op_problem.get_constraint_bounds()
-                                        : op_problem.get_constraint_lower_bounds();
+    const auto& constraints = (op_problem.get_constraint_lower_bounds().is_empty())
+                                ? op_problem.get_constraint_bounds()
+                                : op_problem.get_constraint_lower_bounds();
     check_initial_dual_representation(constraints, settings.get_initial_dual_solution());
   }
 }
 
 template <typename i_t, typename f_t>
 void problem_checking_t<i_t, f_t>::check_initial_solution_representation(
-  const detail::problem_t<i_t, f_t>& problem,
-  const pdlp_solver_settings_t<i_t, f_t>& settings)
+  const detail::problem_t<i_t, f_t>& problem, const pdlp_solver_settings_t<i_t, f_t>& settings)
 {
   if (settings.initial_primal_solution_.get() != nullptr) {
-    check_initial_primal_representation(problem.objective_coefficients, settings.get_initial_primal_solution());
+    check_initial_primal_representation(problem.objective_coefficients,
+                                        settings.get_initial_primal_solution());
   }
   if (settings.initial_dual_solution_.get() != nullptr) {
-    check_initial_dual_representation(problem.constraint_lower_bounds, settings.get_initial_dual_solution());
+    check_initial_dual_representation(problem.constraint_lower_bounds,
+                                      settings.get_initial_dual_solution());
   }
 }
 
@@ -127,7 +129,8 @@ void problem_checking_t<i_t, f_t>::check_initial_solution_representation(
   const mip_solver_settings_t<i_t, f_t>& settings)
 {
   if (settings.initial_solution_.get() != nullptr) {
-    check_initial_primal_representation(op_problem.get_objective_coefficients(), settings.get_initial_solution());
+    check_initial_primal_representation(op_problem.get_objective_coefficients(),
+                                        settings.get_initial_solution());
   }
 }
 
