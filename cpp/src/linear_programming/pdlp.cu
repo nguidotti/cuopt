@@ -131,12 +131,12 @@ pdlp_solver_t<i_t, f_t>::pdlp_solver_t(problem_t<i_t, f_t>& op_problem,
   if (settings.has_pdlp_warm_start_data()) {
     const auto& warm_start_data = settings.get_pdlp_warm_start_data();
     if (!warm_start_data.solved_by_pdlp_) {
-      CUOPT_LOG_INFO(
+      CUOPT_LOG_DEBUG(
         "Warm start data coming from a solution which was not solved by PDLP, skipping warm start");
     } else if (pdlp_hyper_params::restart_strategy ==
                static_cast<int>(
                  pdlp_restart_strategy_t<i_t, f_t>::restart_strategy_t::TRUST_REGION_RESTART)) {
-      CUOPT_LOG_INFO(
+      CUOPT_LOG_DEBUG(
         "Trying to use warm start with trust region restart (neither Stable nor Fast1), skipping "
         "warm start");
     } else {

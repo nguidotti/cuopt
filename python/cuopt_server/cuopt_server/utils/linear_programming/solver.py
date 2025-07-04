@@ -330,6 +330,7 @@ def solve(LP_data, reqId, intermediate_sender, warmstart_data, log_file):
             "last_restart_kkt_score": data.last_restart_kkt_score,
             "sum_solution_weight": data.sum_solution_weight,
             "iterations_since_last_restart": data.iterations_since_last_restart,  # noqa
+            "solved_by_pdlp": data.solved_by_pdlp,
         }
         return pdlpwarmstart_data
 

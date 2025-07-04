@@ -523,7 +523,6 @@ optimization_problem_solution_t<i_t, f_t> run_concurrent(
       sol_dual_simplex.get_termination_status() == pdlp_termination_status_t::PrimalInfeasible ||
       sol_dual_simplex.get_termination_status() == pdlp_termination_status_t::DualInfeasible) {
     CUOPT_LOG_INFO("Solved with dual simplex");
-    // TODO confirm with Akif that using the problem handle ptr is not a problem
     sol_pdlp.copy_from(problem.handle_ptr, sol_dual_simplex);
     sol_pdlp.set_solve_time(end_time);
     CUOPT_LOG_INFO("Status: %s   Objective: %.8e  Iterations: %d  Time: %.3fs",
