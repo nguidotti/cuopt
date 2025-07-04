@@ -61,37 +61,34 @@ void problem_checking_t<i_t, f_t>::check_csr_representation(
 
 template <typename i_t, typename f_t>
 void problem_checking_t<i_t, f_t>::check_initial_primal_representation(
-  const optimization_problem_t<i_t, f_t>& op_problem,
+  const rmm::device_uvector<f_t>& objective_coefficients,
   const rmm::device_uvector<f_t>& primal_initial_solution)
 {
   // Inital solution check if set
   if (!primal_initial_solution.is_empty()) {
     cuopt_expects(
-      (primal_initial_solution.size() == op_problem.get_objective_coefficients().size()),
+      (primal_initial_solution.size() == objective_coefficients.size()),
       error_type_t::ValidationError,
       "Sizes for vectors related to the variables are not the same. The initial primal variable "
       "has size %zu, while objective vector has size %zu.",
       primal_initial_solution.size(),
-      op_problem.get_objective_coefficients().size());
+      objective_coefficients.size());
   }
 }
 
 template <typename i_t, typename f_t>
 void problem_checking_t<i_t, f_t>::check_initial_dual_representation(
-  const optimization_problem_t<i_t, f_t>& op_problem,
+  const rmm::device_uvector<f_t>& constraints,
   const rmm::device_uvector<f_t>& dual_initial_solution)
 {
   if (!dual_initial_solution.is_empty()) {
-    const std::size_t n_constraints = (op_problem.get_constraint_lower_bounds().is_empty())
-                                        ? op_problem.get_constraint_bounds().size()
-                                        : op_problem.get_constraint_lower_bounds().size();
     cuopt_expects(
-      (dual_initial_solution.size() == n_constraints),
+      (dual_initial_solution.size() == constraints.size()),
       error_type_t::ValidationError,
       "Sizes for vectors related to the variables are not the same. The initial dual variable "
       "has size %zu, while constraint vector has size %zu.",
       dual_initial_solution.size(),
-      n_constraints);
+      constraints.size());
   }
 }
 
@@ -101,10 +98,26 @@ void problem_checking_t<i_t, f_t>::check_initial_solution_representation(
   const pdlp_solver_settings_t<i_t, f_t>& settings)
 {
   if (settings.initial_primal_solution_.get() != nullptr) {
-    check_initial_primal_representation(op_problem, settings.get_initial_primal_solution());
+    check_initial_primal_representation(op_problem.get_objective_coefficients(), settings.get_initial_primal_solution());
   }
   if (settings.initial_dual_solution_.get() != nullptr) {
-    check_initial_dual_representation(op_problem, settings.get_initial_dual_solution());
+        const auto& constraints = (op_problem.get_constraint_lower_bounds().is_empty())
+                                        ? op_problem.get_constraint_bounds()
+                                        : op_problem.get_constraint_lower_bounds();
+    check_initial_dual_representation(constraints, settings.get_initial_dual_solution());
+  }
+}
+
+template <typename i_t, typename f_t>
+void problem_checking_t<i_t, f_t>::check_initial_solution_representation(
+  const detail::problem_t<i_t, f_t>& problem,
+  const pdlp_solver_settings_t<i_t, f_t>& settings)
+{
+  if (settings.initial_primal_solution_.get() != nullptr) {
+    check_initial_primal_representation(problem.objective_coefficients, settings.get_initial_primal_solution());
+  }
+  if (settings.initial_dual_solution_.get() != nullptr) {
+    check_initial_dual_representation(problem.constraint_lower_bounds, settings.get_initial_dual_solution());
   }
 }
 
@@ -114,7 +127,7 @@ void problem_checking_t<i_t, f_t>::check_initial_solution_representation(
   const mip_solver_settings_t<i_t, f_t>& settings)
 {
   if (settings.initial_solution_.get() != nullptr) {
-    check_initial_primal_representation(op_problem, settings.get_initial_solution());
+    check_initial_primal_representation(op_problem.get_objective_coefficients(), settings.get_initial_solution());
   }
 }
 

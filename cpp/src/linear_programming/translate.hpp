@@ -28,7 +28,8 @@ namespace cuopt::linear_programming {
 
 template <typename i_t, typename f_t>
 static dual_simplex::user_problem_t<i_t, f_t> cuopt_problem_to_simplex_problem(
-  detail::problem_t<i_t, f_t>& model)
+  detail::problem_t<i_t, f_t>& model,
+  bool inside_mip)
 {
   dual_simplex::user_problem_t<i_t, f_t> user_problem;
 
@@ -84,13 +85,13 @@ static dual_simplex::user_problem_t<i_t, f_t> cuopt_problem_to_simplex_problem(
   user_problem.lower          = cuopt::host_copy(model.variable_lower_bounds);
   user_problem.upper          = cuopt::host_copy(model.variable_upper_bounds);
   user_problem.problem_name   = model.original_problem_ptr->get_problem_name();
-  if (model.row_names.size() > 0) {
+  if (model.row_names.size() > 0 && !inside_mip) {
     user_problem.row_names.resize(m);
     for (int i = 0; i < m; ++i) {
       user_problem.row_names[i] = model.row_names[i];
     }
   }
-  if (model.var_names.size() > 0) {
+  if (model.var_names.size() > 0 && !inside_mip) {
     user_problem.col_names.resize(n);
     for (int j = 0; j < n; ++j) {
       user_problem.col_names[j] = model.var_names[j];

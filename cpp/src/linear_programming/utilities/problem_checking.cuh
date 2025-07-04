@@ -36,13 +36,16 @@ class problem_checking_t {
   static void check_unscaled_solution(detail::problem_t<i_t, f_t>& op_problem,
                                       rmm::device_uvector<f_t> const& assignment);
   static void check_initial_primal_representation(
-    const optimization_problem_t<i_t, f_t>& op_problem,
+    const rmm::device_uvector<f_t>& op_problem,
     const rmm::device_uvector<f_t>& primal_initial_solution);
   static void check_initial_dual_representation(
-    const optimization_problem_t<i_t, f_t>& op_problem,
+    const rmm::device_uvector<f_t>& op_problem,
     const rmm::device_uvector<f_t>& dual_initial_solution);
   static void check_initial_solution_representation(
     const optimization_problem_t<i_t, f_t>& op_problem,
+    const pdlp_solver_settings_t<i_t, f_t>& settings);
+  static void check_initial_solution_representation(
+    const detail::problem_t<i_t, f_t>& problem,
     const pdlp_solver_settings_t<i_t, f_t>& settings);
   static void check_initial_solution_representation(
     const optimization_problem_t<i_t, f_t>& op_problem,

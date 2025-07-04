@@ -340,7 +340,7 @@ optimization_problem_solution_t<i_t, f_t> run_dual_simplex(
 {
   // Convert data structures to dual simplex format and back
   dual_simplex::user_problem_t<i_t, f_t> dual_simplex_problem =
-    cuopt_problem_to_simplex_problem<i_t, f_t>(problem);
+    cuopt_problem_to_simplex_problem<i_t, f_t>(problem, inside_mip);
   auto sol_dual_simplex = run_dual_simplex(dual_simplex_problem, settings, inside_mip);
   return convert_dual_simplex_sol(problem,
                                   std::get<0>(sol_dual_simplex),
@@ -491,7 +491,7 @@ optimization_problem_solution_t<i_t, f_t> run_concurrent(
   // Otherwise, CUDA API calls to the problem stream may occur in both threads and throw graph
   // capture off
   dual_simplex::user_problem_t<i_t, f_t> dual_simplex_problem =
-    cuopt_problem_to_simplex_problem<i_t, f_t>(problem);
+    cuopt_problem_to_simplex_problem<i_t, f_t>(problem, inside_mip);
   // Create a thread for dual simplex
   std::unique_ptr<
     std::tuple<dual_simplex::lp_solution_t<i_t, f_t>, dual_simplex::lp_status_t, f_t, f_t, f_t>>
@@ -579,9 +579,18 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(detail::problem_t<i_t, f_t>& 
     if (problem_checking) {
       raft::common::nvtx::range fun_scope("Check problem representation");
       // This is required as user might forget to set some fields
-      problem_checking_t<i_t, f_t>::check_problem_representation(*problem.original_problem_ptr);
-      problem_checking_t<i_t, f_t>::check_initial_solution_representation(
-        *problem.original_problem_ptr, settings);
+      if (!inside_mip)
+      {
+        problem_checking_t<i_t, f_t>::check_problem_representation(*problem.original_problem_ptr);
+        problem_checking_t<i_t, f_t>::check_initial_solution_representation(
+          *problem.original_problem_ptr, settings);
+      }
+      else
+      {
+        problem.check_problem_representation(true, true);
+        problem_checking_t<i_t, f_t>::check_initial_solution_representation(
+          problem, settings);
+      }
     }
     CUOPT_LOG_INFO(
       "Solving a problem with %d constraints %d variables (%d integers) and %d nonzeros",
