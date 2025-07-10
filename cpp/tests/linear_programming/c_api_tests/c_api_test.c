@@ -19,6 +19,8 @@
 
 #include <cuopt/linear_programming/cuopt_c.h>
 
+#include <cuda_runtime.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -289,7 +291,8 @@ DONE:
   return status;
 }
 
-int test_pdhg(const char* filename) {
+int test_pdhg(const char* filename, int use_device_step_sizes) {
+
   cuOptOptimizationProblem problem = NULL;
   cuOptPDHG pdhg = NULL;
   cuopt_int_t num_variables;
@@ -305,6 +308,7 @@ int test_pdhg(const char* filename) {
   cuopt_int_t* column_indices = NULL;
   cuopt_float_t* values = NULL;
   cuopt_int_t nnz;
+  cudaError_t err;
 
   // Read from an MPS file in the unit test.
   // You may also create a problem from memory via cuOptCreateProblem or cuOptCreateRangedProblem.
@@ -365,9 +369,50 @@ int test_pdhg(const char* filename) {
   cuopt_float_t step_size = 0.9 / norm_A_2;
   cuopt_float_t primal_step_size = step_size / primal_weight;
   cuopt_float_t dual_step_size = step_size * primal_weight;
+
   printf("step_size: %.12e\n", step_size);
   printf("primal_step: %.12e\n", primal_step_size);
   printf("dual_step: %.12e\n", dual_step_size);
+
+  cuopt_float_t* primal_step_size_ptr = NULL;
+  cuopt_float_t* dual_step_size_ptr = NULL;
+  if (use_device_step_sizes) {
+    err = cudaMalloc((void**)&primal_step_size_ptr, sizeof(cuopt_float_t));
+    if (err != cudaSuccess) {
+      printf("Error allocating device primal step size\n");
+      goto DONE;
+    }
+    err = cudaMalloc((void**)&dual_step_size_ptr, sizeof(cuopt_float_t));
+    if (err != cudaSuccess) {
+      printf("Error allocating device dual step size\n");
+      goto DONE;
+    }
+    err = cudaMemcpy(primal_step_size_ptr, &primal_step_size, sizeof(cuopt_float_t), cudaMemcpyHostToDevice);
+    if (err != cudaSuccess) {
+      printf("Error copying primal step size to device\n");
+      goto DONE;
+    }
+    err = cudaMemcpy(dual_step_size_ptr, &dual_step_size, sizeof(cuopt_float_t), cudaMemcpyHostToDevice);
+    if (err != cudaSuccess) {
+      printf("Error copying dual step size to device\n");
+      goto DONE;
+    }
+  }
+  else {
+    err = cudaMallocHost((void**)&primal_step_size_ptr, sizeof(cuopt_float_t));
+    if (err != cudaSuccess) {
+      printf("Error allocating host primal step size\n");
+      goto DONE;
+    }
+    err = cudaMallocHost((void**)&dual_step_size_ptr, sizeof(cuopt_float_t));
+    if (err != cudaSuccess) {
+      printf("Error allocating host primal step size\n");
+      goto DONE;
+    }
+    *primal_step_size_ptr = primal_step_size;
+    *dual_step_size_ptr = dual_step_size;
+  }
+
 
   status = cuOptCreatePDHG(problem, &pdhg);
   if (status != CUOPT_SUCCESS) {
@@ -402,7 +447,7 @@ int test_pdhg(const char* filename) {
 
   cuopt_float_t tic = cuOptTic();
 
-  status = cuOptPDHGIterations(pdhg, num_iterations, &primal_step_size, &dual_step_size);
+  status = cuOptPDHGIterations(pdhg, num_iterations, primal_step_size_ptr, dual_step_size_ptr);
   if (status != CUOPT_SUCCESS) {
     printf("Error taking PDHG iterations\n");
     goto DONE;
@@ -456,7 +501,35 @@ DONE:
   free(objective);
   free(host_x);
   free(host_y);
+  if (use_device_step_sizes) {
+    err = cudaFree(primal_step_size_ptr);
+    if (err != cudaSuccess) {
+      printf("Error freeing device primal step size\n");
+    }
+    err = cudaFree(dual_step_size_ptr);
+    if (err != cudaSuccess) {
+      printf("Error freeing device dual step size\n");
+    }
+  }
+  else {
+    err = cudaFreeHost(primal_step_size_ptr);
+    if (err != cudaSuccess) {
+      printf("Error freeing host primal step size\n");
+    }
+    err = cudaFreeHost(dual_step_size_ptr);
+    if (err != cudaSuccess) {
+      printf("Error freeing host dual step size\n");
+    }
+  }
   return status;
+}
+
+int test_pdhg_device(const char* filename) {
+  return test_pdhg(filename, 1);
+}
+
+int test_pdhg_host(const char* filename) {
+  return test_pdhg(filename, 0);
 }
 
 int solve_mps_file(const char* filename, double time_limit, double iteration_limit, int* termination_status_ptr, double* solve_time_ptr, int method)

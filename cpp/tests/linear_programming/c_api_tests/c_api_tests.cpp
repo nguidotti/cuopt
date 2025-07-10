@@ -96,14 +96,23 @@ TEST(c_api, test_ranged_problem)
   EXPECT_NEAR(objective, 32.0, 1e-3);
 }
 
-TEST(c_api, test_pdhg) {
+TEST(c_api, test_pdhg_host)
+{
   const std::string& rapidsDatasetRootDir = cuopt::test::get_rapids_dataset_root_dir();
   std::string filename = rapidsDatasetRootDir + "/linear_programming/" + "afiro_pdhg.mps";
-  EXPECT_EQ(test_pdhg(filename.c_str()), CUOPT_SUCCESS);
+  EXPECT_EQ(test_pdhg_host(filename.c_str()), CUOPT_SUCCESS);
 }
 
-TEST(c_api, test_pdhg_ex10) {
+TEST(c_api, test_pdhg_device)
+{
+  const std::string& rapidsDatasetRootDir = cuopt::test::get_rapids_dataset_root_dir();
+  std::string filename = rapidsDatasetRootDir + "/linear_programming/" + "afiro_pdhg.mps";
+  EXPECT_EQ(test_pdhg_device(filename.c_str()), CUOPT_SUCCESS);
+}
+
+TEST(c_api, test_pdhg_ex10)
+{
   const std::string& rapidsDatasetRootDir = cuopt::test::get_rapids_dataset_root_dir();
   std::string filename = rapidsDatasetRootDir + "/linear_programming/" + "ex10.mps";
-  EXPECT_EQ(test_pdhg(filename.c_str()), CUOPT_SUCCESS);
+  EXPECT_EQ(test_pdhg_host(filename.c_str()), CUOPT_SUCCESS);
 }
