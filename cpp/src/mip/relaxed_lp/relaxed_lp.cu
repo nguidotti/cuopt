@@ -106,16 +106,10 @@ optimization_problem_solution_t<i_t, f_t> get_relaxed_lp_solution(
   // before LP flush the logs as it takes quite some time
   cuopt::default_logger().flush();
   // Check the problem only when in assert or debug mode
-#ifdef ASSERT_MODE
-  const bool problem_checking = true;
-#else
-  const bool problem_checking = false;
-#endif
   const bool use_pdlp_solver_mode = true;
   const bool inside_mip           = true;
 
-  auto solver_response =
-    solve_lp(op_problem, settings, problem_checking, use_pdlp_solver_mode, inside_mip);
+  auto solver_response = solve_lp(op_problem, settings, use_pdlp_solver_mode, inside_mip);
 
   if (solver_response.get_primal_solution().size() != 0 &&
       solver_response.get_dual_solution().size() != 0 && save_state) {

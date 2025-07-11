@@ -324,7 +324,7 @@ def test_check_data_model_validity():
 
     data_model_obj = data_model.DataModel()
 
-    # Test if exception is thrown when A_CSR is not set
+    # Test if error is returned when A_CSR is not set
     solution = solver.Solve(data_model_obj)
     assert solution.get_error_status() == ErrorStatus.ValidationError
 
@@ -334,7 +334,7 @@ def test_check_data_model_validity():
     A_offsets = np.array([0, 1], dtype=np.int32)
     data_model_obj.set_csr_constraint_matrix(A_values, A_indices, A_offsets)
 
-    # Test if exception is thrown when b is not set
+    # Test if error is returned when b is not set
     solution = solver.Solve(data_model_obj)
     assert solution.get_error_status() == ErrorStatus.ValidationError
 
@@ -342,7 +342,7 @@ def test_check_data_model_validity():
     b = np.array([1.0], dtype=np.float64)
     data_model_obj.set_constraint_bounds(b)
 
-    # Test if exception is thrown when c is not set
+    # Test if error is returned when c is not set
     solution = solver.Solve(data_model_obj)
     assert solution.get_error_status() == ErrorStatus.ValidationError
 
@@ -353,14 +353,14 @@ def test_check_data_model_validity():
     # Set maximize
     data_model_obj.set_maximize(True)
 
-    # Test if exception is thrown when maximize is set to true
+    # Test if error is returned when maximize is set to true
     solution = solver.Solve(data_model_obj)
     assert solution.get_error_status() == ErrorStatus.ValidationError
 
     # Set maximize to correct value
     data_model_obj.set_maximize(False)
 
-    # Test if exception is thrown when row_type is not set
+    # Test if error is returned when row_type is not set
     solution = solver.Solve(data_model_obj)
     assert solution.get_error_status() == ErrorStatus.ValidationError
 
@@ -368,7 +368,7 @@ def test_check_data_model_validity():
     row_type = np.array(["E"])
     data_model_obj.set_row_types(row_type)
 
-    # Test if no exception is thrown when row_type is set
+    # Test if no error is returned when row_type is set
     solver.Solve(data_model_obj)
 
     # Set constraint_lower_bounds with np.array
@@ -379,7 +379,7 @@ def test_check_data_model_validity():
     constraint_upper_bounds = np.array([1.0], dtype=np.float64)
     data_model_obj.set_constraint_upper_bounds(constraint_upper_bounds)
 
-    # Test if no exception is thrown when upper constraints bounds are not set
+    # Test if no error is returned when upper constraints bounds are not set
     solver.Solve(data_model_obj)
 
 

@@ -561,7 +561,6 @@ optimization_problem_solution_t<i_t, f_t> solve_lp_with_method(
 template <typename i_t, typename f_t>
 optimization_problem_solution_t<i_t, f_t> solve_lp(detail::problem_t<i_t, f_t>& problem,
                                                    pdlp_solver_settings_t<i_t, f_t> const& settings,
-                                                   bool problem_checking,
                                                    bool use_pdlp_solver_mode,
                                                    bool inside_mip)
 {
@@ -575,18 +574,10 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(detail::problem_t<i_t, f_t>& 
 
     raft::common::nvtx::range fun_scope("Running solver");
 
-    if (problem_checking) {
-      raft::common::nvtx::range fun_scope("Check problem representation");
-      // This is required as user might forget to set some fields
-      if (!inside_mip) {
-        problem_checking_t<i_t, f_t>::check_problem_representation(*problem.original_problem_ptr);
-        problem_checking_t<i_t, f_t>::check_initial_solution_representation(
-          *problem.original_problem_ptr, settings);
-      } else {
-        problem.check_problem_representation(true, true);
-        problem_checking_t<i_t, f_t>::check_initial_solution_representation(problem, settings);
-      }
-    }
+    cuopt_func_call(problem.check_problem_representation(true, inside_mip));
+    using problem_checking_t = problem_checking_t<i_t, f_t>;  // Can't use "," inside a macro
+    cuopt_func_call(problem_checking_t::check_initial_solution_representation(problem, settings));
+
     CUOPT_LOG_INFO(
       "Solving a problem with %d constraints %d variables (%d integers) and %d nonzeros",
       problem.n_constraints,
@@ -632,8 +623,24 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
                                                    bool problem_checking,
                                                    bool use_pdlp_solver_mode)
 {
-  detail::problem_t<i_t, f_t> problem(op_problem);
-  return solve_lp(problem, settings, problem_checking, use_pdlp_solver_mode);
+  try {
+    if (problem_checking) {
+      raft::common::nvtx::range fun_scope("Check problem representation");
+      problem_checking_t<i_t, f_t>::check_problem_representation(op_problem);
+      problem_checking_t<i_t, f_t>::check_initial_solution_representation(op_problem, settings);
+    }
+    detail::problem_t<i_t, f_t> problem(op_problem);
+    const bool inside_mip = false;
+    return solve_lp(problem, settings, use_pdlp_solver_mode, inside_mip);
+  } catch (const cuopt::logic_error& e) {
+    CUOPT_LOG_ERROR("Error in solve_lp: %s", e.what());
+    return optimization_problem_solution_t<i_t, f_t>{e, op_problem.get_handle_ptr()->get_stream()};
+  } catch (const std::bad_alloc& e) {
+    CUOPT_LOG_ERROR("Error in solve_lp: %s", e.what());
+    return optimization_problem_solution_t<i_t, f_t>{
+      cuopt::logic_error("Memory allocation failed", cuopt::error_type_t::RuntimeError),
+      op_problem.get_handle_ptr()->get_stream()};
+  }
 }
 
 template <typename i_t, typename f_t>
@@ -727,7 +734,6 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(
   template optimization_problem_solution_t<int, F_TYPE> solve_lp(                      \
     detail::problem_t<int, F_TYPE>& problem,                                           \
     pdlp_solver_settings_t<int, F_TYPE> const& settings,                               \
-    bool problem_checking,                                                             \
     bool use_pdlp_solver_mode,                                                         \
     bool inside_mip);                                                                  \
   template optimization_problem_solution_t<int, F_TYPE> solve_lp(                      \

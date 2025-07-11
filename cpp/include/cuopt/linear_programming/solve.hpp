@@ -71,7 +71,6 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(
  * representation of a linear program
  * @param[in] settings  A pdlp_solver_settings_t<i_t, f_t> object with the settings for the PDLP
  * solver.
- * @param[in] problem_checking  If true, the problem is checked for consistency.
  * @param[in] use_pdlp_solver_modes  If true, the PDLP hyperparameters coming from the
  * pdlp_solver_mode are used (instead of the ones comming from a potential hyper-params file).
  * @param[in] inside_mip  If true, the problem is being solved in the context of a MIP.
@@ -81,7 +80,6 @@ template <typename i_t, typename f_t>
 optimization_problem_solution_t<i_t, f_t> solve_lp(
   detail::problem_t<i_t, f_t>& problem,
   pdlp_solver_settings_t<i_t, f_t> const& settings = pdlp_solver_settings_t<i_t, f_t>{},
-  bool problem_checking                            = true,
   bool use_pdlp_solver_mode                        = true,
   bool inside_mip                                  = false);
 
