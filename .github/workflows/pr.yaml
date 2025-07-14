@@ -144,7 +144,7 @@ jobs:
       node_type: "gpu-l4-latest-1"
       arch: "amd64" 
       container_image: "rapidsai/ci-conda:latest"
-      run_script: "ci/build_docs.sh"
+      script: "ci/build_docs.sh"
   #conda-notebook-tests:
   #  needs: [conda-python-build, changed-files]
   #  secrets: inherit

@@ -165,7 +165,7 @@ jobs:
       date: ${{ inputs.date }}
       arch: "amd64"
       container_image: "rapidsai/ci-conda:latest"
-      run_script: "ci/build_docs.sh"
+      script: "ci/build_docs.sh"
   wheel-build-cuopt-sh-client:
     needs: wheel-build-cuopt
     secrets: inherit
