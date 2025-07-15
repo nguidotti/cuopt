@@ -45,7 +45,9 @@ rapids-print-env
 
 rapids-logger "Build Docs"
 ./build.sh docs
-mkdir -p "${RAPIDS_DOCS_DIR}/cuopt/html"
-mv docs/cuopt/build/html/* "${RAPIDS_DOCS_DIR}/cuopt/html"
+mkdir -p "${RAPIDS_DOCS_DIR}/cuopt"
+zip -r /tmp/cuopt_docs.zip docs/cuopt/build/html/*
+mv /tmp/cuopt_docs.zip "${RAPIDS_DOCS_DIR}/cuopt/cuopt_docs.zip"
+
 
 
