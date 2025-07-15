@@ -17,6 +17,10 @@
 
 set -euo pipefail
 
+# install zip
+
+apt-get update && apt-get install -y --no-install-recommends zip
+
 rapids-logger "Create test conda environment"
 . /opt/conda/etc/profile.d/conda.sh
 
