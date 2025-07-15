@@ -43,20 +43,9 @@ export RAPIDS_DOCS_DIR
 
 rapids-print-env
 
-EXITCODE=0
-trap "EXITCODE=1" ERR
-set +e
-
 rapids-logger "Build Docs"
-
 ./build.sh docs
-
-mkdir -p "${RAPIDS_DOCS_DIR}/cudf/html"
-
+mkdir -p "${RAPIDS_DOCS_DIR}/cuopt/html"
 mv docs/cuopt/build/html/* "${RAPIDS_DOCS_DIR}/cuopt/html"
-
-exit ${EXITCODE}
-
-
 
 

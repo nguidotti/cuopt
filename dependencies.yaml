@@ -81,7 +81,7 @@ files:
         - cuda_version
         - depends_on_libcuopt
         - depends_on_cuopt
-        - depends_on_cuotp_server
+        - depends_on_cuopt_server
         - depends_on_cuopt_sh_client
         - depends_on_mps_parser
         - docs
@@ -490,7 +490,7 @@ dependencies:
           - {matrix: null, packages: [*cuopt_server_unsuffixed]}
   depends_on_cuopt_sh_client:
     common:
-      - output_types: conda
+      - output_types: [conda, requirements, pyproject]
         packages:
           - &cuopt_sh_client_unsuffixed cuopt-sh-client==25.8.*,>=0.0.0a0
       - output_types: requirements
