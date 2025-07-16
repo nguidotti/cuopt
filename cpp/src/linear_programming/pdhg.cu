@@ -122,11 +122,6 @@ void pdhg_solver_t<i_t, f_t>::compute_next_dual_solution(rmm::device_scalar<f_t>
     stream_view_);
   } else {
     // TMP: for now just copy in and out dual in the matrix to make sure SpMM is working
-    RAFT_CUDA_TRY(cudaMemcpyAsync(batch_tmp_primals_.data(),
-               tmp_primal_.data(),
-               tmp_primal_.size() * sizeof(f_t),
-               cudaMemcpyDeviceToDevice,
-               stream_view_));
     raft::sparse::detail::cusparsespmm(handle_ptr_->get_cusparse_handle(),
                CUSPARSE_OPERATION_NON_TRANSPOSE,
                CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -226,7 +221,7 @@ void pdhg_solver_t<i_t, f_t>::compute_primal_projection_with_gradient(
                           problem_ptr->variable_upper_bounds.data()),
     thrust::make_zip_iterator(potential_next_primal_solution_.data(),
                               current_saddle_point_state_.get_delta_primal().data(),
-                              tmp_primal_.data()),
+                              batch_tmp_primals_.data()),
     primal_size_h_,
     primal_projection<f_t>(primal_step_size.data()),
     stream_view_);
