@@ -47,6 +47,7 @@ pdhg_solver_t<i_t, f_t>::pdhg_solver_t(raft::handle_t const* handle_ptr,
     batch_tmp_primals_{static_cast<size_t>(problem_ptr->n_variables * (0 + 3)/*@@*/), stream_view_},
     tmp_dual_{static_cast<size_t>(problem_ptr->n_constraints), stream_view_},
     potential_next_primal_solution_{static_cast<size_t>(problem_ptr->n_variables), stream_view_},
+    batch_potential_next_primal_solution_{static_cast<size_t>(problem_ptr->n_variables * (0 + 3)/*@@*/), stream_view_},
     potential_next_dual_solution_{static_cast<size_t>(problem_ptr->n_constraints), stream_view_},
     batch_potential_next_dual_solution_{static_cast<size_t>(problem_ptr->n_constraints * (0 + 3)/*@@*/), stream_view_},
     total_pdhg_iterations_{0},
@@ -210,12 +211,12 @@ void pdhg_solver_t<i_t, f_t>::compute_primal_projection_with_gradient(
     stream_view_);
   } else {
     cub::DeviceTransform::Transform(
-    cuda::std::make_tuple(current_saddle_point_state_.get_primal_solution().data(),
+    cuda::std::make_tuple(current_saddle_point_state_.batch_primal_solutions_.data(),
                           problem_ptr->objective_coefficients.data(),
                           current_saddle_point_state_.batch_current_AtYs_.data(),
                           problem_ptr->variable_lower_bounds.data(),
                           problem_ptr->variable_upper_bounds.data()),
-    thrust::make_zip_iterator(potential_next_primal_solution_.data(),
+    thrust::make_zip_iterator(batch_potential_next_primal_solution_.data(),
                               current_saddle_point_state_.get_delta_primal().data(),
                               batch_tmp_primals_.data()),
     primal_size_h_,
@@ -311,20 +312,28 @@ void pdhg_solver_t<i_t, f_t>::update_solution(
   // It's ok because the next will be overwritten next iteration anyways
   // No need to sync, compute_step_sizes has already synced the host
 
-  std::swap(current_saddle_point_state_.primal_solution_, potential_next_primal_solution_);
   // Accepted (valid step size) next_Aty will be current Aty next PDHG iteration, saves an SpMV
   std::swap(current_saddle_point_state_.current_AtY_, current_saddle_point_state_.next_AtY_);
   if(batch_mode_) {
     std::swap(current_saddle_point_state_.batch_current_AtYs_, current_saddle_point_state_.batch_next_AtYs_);
-    raft::copy(current_saddle_point_state_.dual_solution_.data(),
+    raft::copy(current_saddle_point_state_.dual_solution_.data(), // This shouldn't exist
                batch_potential_next_dual_solution_.data(),
                current_saddle_point_state_.dual_solution_.size(),
                stream_view_);
-    raft::copy(current_saddle_point_state_.batch_dual_solutions_.data(),
+    raft::copy(current_saddle_point_state_.batch_dual_solutions_.data(), // This should be a swap
                batch_potential_next_dual_solution_.data(),
                current_saddle_point_state_.batch_dual_solutions_.size(),
                stream_view_);
+    raft::copy(current_saddle_point_state_.primal_solution_.data(), // This shouldn't exist
+               batch_potential_next_primal_solution_.data(),
+               current_saddle_point_state_.primal_solution_.size(),
+               stream_view_);
+    raft::copy(current_saddle_point_state_.batch_primal_solutions_.data(), // This should be a swap
+               batch_potential_next_primal_solution_.data(),
+               current_saddle_point_state_.batch_primal_solutions_.size(),
+               stream_view_);
   } else {
+    std::swap(current_saddle_point_state_.primal_solution_, potential_next_primal_solution_);
     std::swap(current_saddle_point_state_.dual_solution_, potential_next_dual_solution_);
   }
 
@@ -403,7 +412,11 @@ rmm::device_uvector<f_t>& pdhg_solver_t<i_t, f_t>::get_dual_tmp_resource()
 template <typename i_t, typename f_t>
 const rmm::device_uvector<f_t>& pdhg_solver_t<i_t, f_t>::get_potential_next_primal_solution() const
 {
-  return potential_next_primal_solution_;
+  if(batch_mode_) {
+    return batch_potential_next_primal_solution_;
+  } else {
+    return potential_next_primal_solution_;
+  }
 }
 
 template <typename i_t, typename f_t>

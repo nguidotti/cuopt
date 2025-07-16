@@ -1044,6 +1044,7 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(
 
   // Project initial primal solution
   if (pdlp_hyper_params::project_initial_primal) {
+    // TODO project over batch
     raft::linalg::ternaryOp(pdhg_solver_.get_primal_solution().data(),
                             pdhg_solver_.get_primal_solution().data(),
                             op_problem_scaled_.variable_lower_bounds.data(),

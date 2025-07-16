@@ -40,7 +40,8 @@ saddle_point_state_t<i_t, f_t>::saddle_point_state_t(raft::handle_t const* handl
     batch_current_AtYs_{static_cast<size_t>(primal_size_ * (0 + 3)/*@@*/), handle_ptr->get_stream()},
     batch_dual_gradients_{static_cast<size_t>(dual_size_ * (0 + 3)/*@@*/), handle_ptr->get_stream()},
     next_AtY_{static_cast<size_t>(primal_size_), handle_ptr->get_stream()},
-    batch_next_AtYs_{static_cast<size_t>(primal_size_ * (0 + 3)/*@@*/), handle_ptr->get_stream()}
+    batch_next_AtYs_{static_cast<size_t>(primal_size_ * (0 + 3)/*@@*/), handle_ptr->get_stream()},
+    batch_primal_solutions_{static_cast<size_t>(primal_size_ * (0 + 3)/*@@*/), handle_ptr->get_stream()}
 {
   EXE_CUOPT_EXPECTS(primal_size > 0, "Size of the primal problem must be larger than 0");
   EXE_CUOPT_EXPECTS(dual_size > 0, "Size of the dual problem must be larger than 0");
@@ -52,6 +53,9 @@ saddle_point_state_t<i_t, f_t>::saddle_point_state_t(raft::handle_t const* handl
     handle_ptr->get_thrust_policy(), dual_solution_.data(), dual_solution_.end(), f_t(0));
   thrust::fill(
     handle_ptr->get_thrust_policy(), batch_dual_solutions_.data(), batch_dual_solutions_.end(),
+    f_t(0));
+  thrust::fill(
+    handle_ptr->get_thrust_policy(), batch_primal_solutions_.data(), batch_primal_solutions_.end(),
     f_t(0));
 
   RAFT_CUDA_TRY(cudaMemsetAsync(

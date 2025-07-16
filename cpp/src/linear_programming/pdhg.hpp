@@ -83,6 +83,7 @@ class pdhg_solver_t {
   rmm::device_uvector<f_t> potential_next_primal_solution_;
   rmm::device_uvector<f_t> potential_next_dual_solution_;
   rmm::device_uvector<f_t> batch_potential_next_dual_solution_;
+  rmm::device_uvector<f_t> batch_potential_next_primal_solution_;
 
   cusparse_view_t<i_t, f_t> cusparse_view_;
 

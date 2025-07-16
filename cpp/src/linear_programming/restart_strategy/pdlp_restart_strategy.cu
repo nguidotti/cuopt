@@ -348,6 +348,11 @@ void pdlp_restart_strategy_t<i_t, f_t>::run_trust_region_restart(
                  dual_size_h_,
                  stream_view_);
       if(batch_mode_) {
+        // TODO copy over dual size * batch size
+        raft::copy(pdhg_solver.get_saddle_point_state().batch_primal_solutions_.data(),
+                   candidate_duality_gap_->primal_solution_.data(),
+                   primal_size_h_,
+                   stream_view_);
         raft::copy(pdhg_solver.get_saddle_point_state().batch_dual_solutions_.data(),
                    candidate_duality_gap_->dual_solution_.data(),
                    dual_size_h_,
@@ -609,6 +614,11 @@ bool pdlp_restart_strategy_t<i_t, f_t>::run_kkt_restart(
                  dual_size_h_,
                  stream_view_);
       if(batch_mode_) {
+        // TODO copy over dual size * batch size
+        raft::copy(pdhg_solver.get_saddle_point_state().batch_primal_solutions_.data(),
+                   candidate_duality_gap_->primal_solution_.data(),
+                   primal_size_h_,
+                   stream_view_);
         raft::copy(pdhg_solver.get_saddle_point_state().batch_dual_solutions_.data(),
                    candidate_duality_gap_->dual_solution_.data(),
                    dual_size_h_,
