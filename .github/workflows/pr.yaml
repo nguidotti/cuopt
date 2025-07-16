@@ -145,6 +145,7 @@ jobs:
       node_type: "gpu-l4-latest-1"
       arch: "amd64" 
       file_to_upload: "/tmp/cuopt_docs.zip"
+      artifact-name: "cuopt_docs"
       container_image: "rapidsai/ci-conda:25.08-latest"
       script: "ci/build_docs.sh"
   #conda-notebook-tests:
