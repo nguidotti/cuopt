@@ -142,7 +142,7 @@ void pdhg_solver_t<i_t, f_t>::compute_next_dual_solution(rmm::device_scalar<f_t>
 
   // All is fused in a single call to limit number of read / write in memory
   cub::DeviceTransform::Transform(
-    cuda::std::make_tuple(current_saddle_point_state_.get_dual_solution().data(),
+    cuda::std::make_tuple(current_saddle_point_state_.batch_dual_solutions_.data(),
                           current_saddle_point_state_.batch_dual_gradients_.data(),
                           problem_ptr->constraint_lower_bounds.data(),
                           problem_ptr->constraint_upper_bounds.data()),
@@ -171,10 +171,6 @@ void pdhg_solver_t<i_t, f_t>::compute_At_y()
                                                         stream_view_));
   } else {
     // TMP: for now just copy in and out dual in the matrix to make sure SpMM is working
-      raft::copy(current_saddle_point_state_.batch_dual_solutions_.data(),
-                current_saddle_point_state_.dual_solution_.data(),
-                current_saddle_point_state_.dual_solution_.size(),
-                stream_view_);
       RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmm(handle_ptr_->get_cusparse_handle(),
                                                         CUSPARSE_OPERATION_NON_TRANSPOSE,
                                                         CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -321,9 +317,13 @@ void pdhg_solver_t<i_t, f_t>::update_solution(
   if(batch_mode_) {
     std::swap(current_saddle_point_state_.batch_current_AtYs_, current_saddle_point_state_.batch_next_AtYs_);
     raft::copy(current_saddle_point_state_.dual_solution_.data(),
-    batch_potential_next_dual_solution_.data(),
-    current_saddle_point_state_.dual_solution_.size(),
-    stream_view_);
+               batch_potential_next_dual_solution_.data(),
+               current_saddle_point_state_.dual_solution_.size(),
+               stream_view_);
+    raft::copy(current_saddle_point_state_.batch_dual_solutions_.data(),
+               batch_potential_next_dual_solution_.data(),
+               current_saddle_point_state_.batch_dual_solutions_.size(),
+               stream_view_);
   } else {
     std::swap(current_saddle_point_state_.dual_solution_, potential_next_dual_solution_);
   }

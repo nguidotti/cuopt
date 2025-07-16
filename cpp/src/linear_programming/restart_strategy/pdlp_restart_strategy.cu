@@ -108,9 +108,11 @@ pdlp_restart_strategy_t<i_t, f_t>::pdlp_restart_strategy_t(
   problem_t<i_t, f_t>& op_problem,
   const cusparse_view_t<i_t, f_t>& cusparse_view,
   const i_t primal_size,
-  const i_t dual_size)
+  const i_t dual_size,
+  bool batch_mode)
   : handle_ptr_(handle_ptr),
     stream_view_(handle_ptr_->get_stream()),
+    batch_mode_(batch_mode),
     weighted_average_solution_{handle_ptr_, primal_size, dual_size},
     primal_size_h_(primal_size),
     dual_size_h_(dual_size),
@@ -345,6 +347,12 @@ void pdlp_restart_strategy_t<i_t, f_t>::run_trust_region_restart(
                  candidate_duality_gap_->dual_solution_.data(),
                  dual_size_h_,
                  stream_view_);
+      if(batch_mode_) {
+        raft::copy(pdhg_solver.get_saddle_point_state().batch_dual_solutions_.data(),
+                   candidate_duality_gap_->dual_solution_.data(),
+                   dual_size_h_,
+                   stream_view_);
+      }
       set_last_restart_was_average(true);
     } else
       set_last_restart_was_average(false);
@@ -600,6 +608,12 @@ bool pdlp_restart_strategy_t<i_t, f_t>::run_kkt_restart(
                  candidate_duality_gap_->dual_solution_.data(),
                  dual_size_h_,
                  stream_view_);
+      if(batch_mode_) {
+        raft::copy(pdhg_solver.get_saddle_point_state().batch_dual_solutions_.data(),
+                   candidate_duality_gap_->dual_solution_.data(),
+                   dual_size_h_,
+                   stream_view_);
+      }
       set_last_restart_was_average(true);
     } else
       set_last_restart_was_average(false);

@@ -101,7 +101,8 @@ class pdlp_restart_strategy_t {
                           problem_t<i_t, f_t>& op_problem,
                           const cusparse_view_t<i_t, f_t>& cusparse_view,
                           const i_t primal_size,
-                          const i_t dual_size);
+                          const i_t dual_size,
+                          bool batch_mode);
 
   // Compute kkt score on passed argument using the container tmp_kkt score and stream view
   f_t compute_kkt_score(const rmm::device_scalar<f_t>& l2_primal_residual,
@@ -247,6 +248,7 @@ class pdlp_restart_strategy_t {
 
   raft::handle_t const* handle_ptr_{nullptr};
   rmm::cuda_stream_view stream_view_;
+  bool batch_mode_{false};
 
  public:
   weighted_average_solution_t<i_t, f_t> weighted_average_solution_;
