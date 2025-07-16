@@ -54,7 +54,7 @@ class pdhg_solver_t {
 
   i_t total_pdhg_iterations_;
 
- private:
+// private:
   void compute_next_primal_dual_solution(rmm::device_scalar<f_t>& primal_step_size,
                                          i_t iterations_since_last_restart,
                                          bool last_restart_was_average,
@@ -82,6 +82,7 @@ class pdhg_solver_t {
 
   rmm::device_uvector<f_t> potential_next_primal_solution_;
   rmm::device_uvector<f_t> potential_next_dual_solution_;
+  rmm::device_uvector<f_t> batch_potential_next_dual_solution_;
 
   cusparse_view_t<i_t, f_t> cusparse_view_;
 

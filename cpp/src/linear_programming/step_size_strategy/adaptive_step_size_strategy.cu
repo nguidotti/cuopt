@@ -39,7 +39,8 @@ template <typename i_t, typename f_t>
 adaptive_step_size_strategy_t<i_t, f_t>::adaptive_step_size_strategy_t(
   raft::handle_t const* handle_ptr,
   rmm::device_scalar<f_t>* primal_weight,
-  rmm::device_scalar<f_t>* step_size)
+  rmm::device_scalar<f_t>* step_size,
+  bool batch_mode)
   : stream_pool_(parallel_stream_computation),
     dot_delta_X_(cudaEventDisableTiming),
     dot_delta_Y_(cudaEventDisableTiming),
@@ -55,7 +56,8 @@ adaptive_step_size_strategy_t<i_t, f_t>::adaptive_step_size_strategy_t(
     norm_squared_delta_dual_{stream_view_},
     reusable_device_scalar_value_1_{f_t(1.0), stream_view_},
     reusable_device_scalar_value_0_{f_t(0.0), stream_view_},
-    graph(stream_view_)
+    graph(stream_view_),
+    batch_mode_(batch_mode)
 {
 }
 
@@ -207,11 +209,13 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_step_sizes(
 {
   raft::common::nvtx::range fun_scope("compute_step_sizes");
 
-  if (!graph.is_initialized(total_pdlp_iterations)) {
-    graph.start_capture(total_pdlp_iterations);
+  //if (!graph.is_initialized(total_pdlp_iterations)) {
+  //  graph.start_capture(total_pdlp_iterations);
 
     // compute numerator and deminator of n_lim
     compute_interaction_and_movement(pdhg_solver.get_primal_tmp_resource(),
+                                     pdhg_solver.potential_next_dual_solution_,
+                                     pdhg_solver.batch_potential_next_dual_solution_,
                                      pdhg_solver.get_cusparse_view(),
                                      pdhg_solver.get_saddle_point_state());
     // Compute n_lim, n_next and decide if step size is valid
@@ -220,9 +224,9 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_step_sizes(
                                   primal_step_size.data(),
                                   dual_step_size.data(),
                                   pdhg_solver.get_d_total_pdhg_iterations().data());
-    graph.end_capture(total_pdlp_iterations);
-  }
-  graph.launch(total_pdlp_iterations);
+  //  graph.end_capture(total_pdlp_iterations);
+  //}
+  //graph.launch(total_pdlp_iterations);
   // Steam sync so that next call can see modification made to host var valid_step_size
   RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
 }
@@ -230,6 +234,8 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_step_sizes(
 template <typename i_t, typename f_t>
 void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
   rmm::device_uvector<f_t>& tmp_primal,
+  rmm::device_uvector<f_t>& potential_next_dual_solution,
+  rmm::device_uvector<f_t>& batch_potential_next_dual_solution,
   cusparse_view_t<i_t, f_t>& cusparse_view,
   saddle_point_state_t<i_t, f_t>& current_saddle_point_state)
 {
@@ -274,6 +280,7 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
   // Compute A_t @ (y' - y) = A_t @ y' - 1 * current_AtY
 
   // First compute Ay' to be reused as Ay in next PDHG iteration (if found step size if valid)
+  if (!batch_mode_) {
   RAFT_CUSPARSE_TRY(
     raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
                                        CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -294,6 +301,31 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
     current_saddle_point_state.get_primal_size(),
     raft::sub_op(),
     stream_view_);
+  } else {
+    raft::copy(batch_potential_next_dual_solution.data(),
+               potential_next_dual_solution.data(),
+               potential_next_dual_solution.size(),
+               stream_view_);
+    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmm(handle_ptr_->get_cusparse_handle(),
+                                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                       reusable_device_scalar_value_1_.data(),
+                                                       cusparse_view.A_T,
+                                                       cusparse_view.batch_potential_next_dual_solution,
+                                                       reusable_device_scalar_value_0_.data(),
+                                                       cusparse_view.batch_next_AtYs,
+                                                       CUSPARSE_SPMM_CSR_ALG3,
+                                                       (f_t*)cusparse_view.buffer_transpose_batch.data(),
+                                                       stream_view_));
+    // Compute Ay' - Ay = next_Aty - current_Aty
+    cub::DeviceTransform::Transform(
+      cuda::std::make_tuple(current_saddle_point_state.batch_next_AtYs_.data(),
+                            current_saddle_point_state.batch_current_AtYs_.data()),
+      tmp_primal.data(),
+      current_saddle_point_state.get_primal_size(),
+      raft::sub_op(),
+      stream_view_);
+    }
 
   // compute interaction (x'-x) . (A(y'-y))
   RAFT_CUBLAS_TRY(

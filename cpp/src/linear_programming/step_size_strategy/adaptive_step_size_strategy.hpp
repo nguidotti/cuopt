@@ -59,7 +59,8 @@ class adaptive_step_size_strategy_t {
 
   adaptive_step_size_strategy_t(raft::handle_t const* handle_ptr,
                                 rmm::device_scalar<f_t>* primal_weight,
-                                rmm::device_scalar<f_t>* step_size);
+                                rmm::device_scalar<f_t>* step_size,
+                                bool batch_mode);
 
   void compute_step_sizes(pdhg_solver_t<i_t, f_t>& pdhg_solver,
                           rmm::device_scalar<f_t>& primal_step_size,
@@ -79,6 +80,8 @@ class adaptive_step_size_strategy_t {
 
  private:
   void compute_interaction_and_movement(rmm::device_uvector<f_t>& tmp_primal,
+                                        rmm::device_uvector<f_t>& potential_next_dual_solution,
+                                        rmm::device_uvector<f_t>& batch_potential_next_dual_solution,
                                         cusparse_view_t<i_t, f_t>& cusparse_view,
                                         saddle_point_state_t<i_t, f_t>& current_saddle_point_state);
 
@@ -115,5 +118,7 @@ class adaptive_step_size_strategy_t {
   const rmm::device_scalar<f_t> reusable_device_scalar_value_0_;
 
   ping_pong_graph_t<i_t> graph;
+
+  bool batch_mode_;
 };
 }  // namespace cuopt::linear_programming::detail

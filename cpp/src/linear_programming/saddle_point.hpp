@@ -117,6 +117,7 @@ class saddle_point_state_t {
   rmm::device_uvector<f_t> batch_dual_solutions_;
   rmm::device_uvector<f_t> batch_current_AtYs_;
   rmm::device_uvector<f_t> batch_dual_gradients_;
+  rmm::device_uvector<f_t> batch_next_AtYs_;
 };
 
 }  // namespace cuopt::linear_programming::detail

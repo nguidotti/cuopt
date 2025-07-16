@@ -44,10 +44,11 @@ pdhg_solver_t<i_t, f_t>::pdhg_solver_t(raft::handle_t const* handle_ptr,
     dual_size_h_(problem_ptr->n_constraints),
     current_saddle_point_state_{handle_ptr_, problem_ptr->n_variables, problem_ptr->n_constraints},
     tmp_primal_{static_cast<size_t>(problem_ptr->n_variables), stream_view_},
-    batch_tmp_primals_{static_cast<size_t>(problem_ptr->n_variables * (0 + 1)/*@@*/), stream_view_},
+    batch_tmp_primals_{static_cast<size_t>(problem_ptr->n_variables * (0 + 3)/*@@*/), stream_view_},
     tmp_dual_{static_cast<size_t>(problem_ptr->n_constraints), stream_view_},
     potential_next_primal_solution_{static_cast<size_t>(problem_ptr->n_variables), stream_view_},
     potential_next_dual_solution_{static_cast<size_t>(problem_ptr->n_constraints), stream_view_},
+    batch_potential_next_dual_solution_{static_cast<size_t>(problem_ptr->n_constraints * (0 + 3)/*@@*/), stream_view_},
     total_pdhg_iterations_{0},
     cusparse_view_{handle_ptr_,
                    op_problem_scaled,
@@ -55,7 +56,8 @@ pdhg_solver_t<i_t, f_t>::pdhg_solver_t(raft::handle_t const* handle_ptr,
                    tmp_primal_,
                    batch_tmp_primals_,
                    tmp_dual_,
-                   potential_next_dual_solution_},
+                   potential_next_dual_solution_,
+                   batch_potential_next_dual_solution_},
     reusable_device_scalar_value_1_{1.0, stream_view_},
     reusable_device_scalar_value_0_{0.0, stream_view_},
     reusable_device_scalar_value_neg_1_{f_t(-1.0), stream_view_},
@@ -89,8 +91,6 @@ void pdhg_solver_t<i_t, f_t>::compute_next_dual_solution(rmm::device_scalar<f_t>
 
   // K(x'+delta_x)
   if (!batch_mode_) {
-    cudaDeviceSynchronize();
-    raft::print_device_vector("tmp_primal", tmp_primal_.data(), tmp_primal_.size(), std::cout);
   RAFT_CUSPARSE_TRY(
     raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
                                        CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -102,44 +102,6 @@ void pdhg_solver_t<i_t, f_t>::compute_next_dual_solution(rmm::device_scalar<f_t>
                                        CUSPARSE_SPMV_CSR_ALG2,
                                        (f_t*)cusparse_view_.buffer_non_transpose.data(),
                                        stream_view_));
-    cudaDeviceSynchronize();
-    raft::print_device_vector("dual_gradient", current_saddle_point_state_.get_dual_gradient().data(), current_saddle_point_state_.get_dual_gradient().size(), std::cout);
-    static int a = 0;
-    if (++a == 5) {
-      exit(0);
-    }
-  } else {
-    // TMP: for now just copy in and out dual in the matrix to make sure SpMM is working
-    cudaDeviceSynchronize();
-    raft::print_device_vector("tmp_primal", tmp_primal_.data(), tmp_primal_.size(), std::cout);
-    RAFT_CUDA_TRY(cudaMemcpyAsync(batch_tmp_primals_.data(),
-               tmp_primal_.data(),
-               tmp_primal_.size() * sizeof(f_t),
-               cudaMemcpyDeviceToDevice,
-               stream_view_));
-    raft::sparse::detail::cusparsespmm(handle_ptr_->get_cusparse_handle(),
-               CUSPARSE_OPERATION_NON_TRANSPOSE,
-               CUSPARSE_OPERATION_NON_TRANSPOSE,
-               reusable_device_scalar_value_1_.data(),
-               cusparse_view_.A,
-               cusparse_view_.batch_tmp_primals,
-               reusable_device_scalar_value_0_.data(),
-               cusparse_view_.batch_dual_gradients,
-               CUSPARSE_SPMM_CSR_ALG3,
-               (f_t*)cusparse_view_.buffer_non_transpose_batch.data(),
-               stream_view_);
-    RAFT_CUDA_TRY(cudaMemcpyAsync(current_saddle_point_state_.get_dual_gradient().data(),
-                current_saddle_point_state_.batch_dual_gradients_.data(),
-                current_saddle_point_state_.get_dual_gradient().size() * sizeof(f_t),
-                cudaMemcpyDeviceToDevice,
-                stream_view_));
-    cudaDeviceSynchronize();
-    raft::print_device_vector("dual_gradient", current_saddle_point_state_.get_dual_gradient().data(), current_saddle_point_state_.get_dual_gradient().size(), std::cout);
-    static int b = 0;
-    if (++b == 5) {
-      exit(0);
-    }
-  }
   // y - (sigma*dual_gradient)
   // max(min(0, sigma*constraint_upper+primal_product), sigma*constraint_lower+primal_product)
   // Each element of y - (sigma*dual_gradient) of the min is the critical point
@@ -158,6 +120,43 @@ void pdhg_solver_t<i_t, f_t>::compute_next_dual_solution(rmm::device_scalar<f_t>
     dual_size_h_,
     dual_projection<f_t>(dual_step_size.data()),
     stream_view_);
+  } else {
+    // TMP: for now just copy in and out dual in the matrix to make sure SpMM is working
+    RAFT_CUDA_TRY(cudaMemcpyAsync(batch_tmp_primals_.data(),
+               tmp_primal_.data(),
+               tmp_primal_.size() * sizeof(f_t),
+               cudaMemcpyDeviceToDevice,
+               stream_view_));
+    raft::sparse::detail::cusparsespmm(handle_ptr_->get_cusparse_handle(),
+               CUSPARSE_OPERATION_NON_TRANSPOSE,
+               CUSPARSE_OPERATION_NON_TRANSPOSE,
+               reusable_device_scalar_value_1_.data(),
+               cusparse_view_.A,
+               cusparse_view_.batch_tmp_primals,
+               reusable_device_scalar_value_0_.data(),
+               cusparse_view_.batch_dual_gradients,
+               CUSPARSE_SPMM_CSR_ALG3,
+               (f_t*)cusparse_view_.buffer_non_transpose_batch.data(),
+               stream_view_);
+  // y - (sigma*dual_gradient)
+  // max(min(0, sigma*constraint_upper+primal_product), sigma*constraint_lower+primal_product)
+  // Each element of y - (sigma*dual_gradient) of the min is the critical point
+  // of the respective 1D minimization problem if it's negative.
+  // Likewise the argument to the max is the critical point if
+  // positive.
+
+  // All is fused in a single call to limit number of read / write in memory
+  cub::DeviceTransform::Transform(
+    cuda::std::make_tuple(current_saddle_point_state_.get_dual_solution().data(),
+                          current_saddle_point_state_.batch_dual_gradients_.data(),
+                          problem_ptr->constraint_lower_bounds.data(),
+                          problem_ptr->constraint_upper_bounds.data()),
+    thrust::make_zip_iterator(potential_next_dual_solution_.data(),
+                              current_saddle_point_state_.get_delta_dual().data()),
+    dual_size_h_,
+    dual_projection<f_t>(dual_step_size.data()),
+    stream_view_);
+  }
 }
 
 template <typename i_t, typename f_t>
@@ -165,8 +164,6 @@ void pdhg_solver_t<i_t, f_t>::compute_At_y()
 {
   // A_t @ y
   if (!batch_mode_) {
-    cudaDeviceSynchronize();
-    raft::print_device_vector("dual_solution", current_saddle_point_state_.dual_solution_.data(), current_saddle_point_state_.dual_solution_.size(), std::cout);
     RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
                                                         CUSPARSE_OPERATION_NON_TRANSPOSE,
                                                         reusable_device_scalar_value_1_.data(),
@@ -177,33 +174,23 @@ void pdhg_solver_t<i_t, f_t>::compute_At_y()
                                                         CUSPARSE_SPMV_CSR_ALG2,
                                                         (f_t*)cusparse_view_.buffer_transpose.data(),
                                                         stream_view_));
-    cudaDeviceSynchronize();
-    raft::print_device_vector("current_AtY", current_saddle_point_state_.current_AtY_.data(), current_saddle_point_state_.current_AtY_.size(), std::cout);
   } else {
     // TMP: for now just copy in and out dual in the matrix to make sure SpMM is working
-    cudaDeviceSynchronize();
-    raft::copy(current_saddle_point_state_.batch_dual_solutions_.data(),
-               current_saddle_point_state_.dual_solution_.data(),
-               current_saddle_point_state_.dual_solution_.size(),
-               stream_view_);
-    raft::print_device_vector("dual_solution", current_saddle_point_state_.batch_dual_solutions_.data(), current_saddle_point_state_.batch_dual_solutions_.size(), std::cout);
-    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmm(handle_ptr_->get_cusparse_handle(),
-                                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
-                                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
-                                                       reusable_device_scalar_value_1_.data(),
-                                                       cusparse_view_.A_T,
-                                                       cusparse_view_.batch_dual_solutions,
-                                                       reusable_device_scalar_value_0_.data(),
-                                                       cusparse_view_.batch_current_AtYs,
-                                                       CUSPARSE_SPMM_CSR_ALG3,
-                                                       (f_t*)cusparse_view_.buffer_transpose_batch.data(),
-                                                       stream_view_));
-    raft::copy(
-current_saddle_point_state_.current_AtY_.data(),
-      current_saddle_point_state_.batch_current_AtYs_.data(),
-               current_saddle_point_state_.current_AtY_.size(), stream_view_);
-    cudaDeviceSynchronize();
-    raft::print_device_vector("current_AtY", current_saddle_point_state_.current_AtY_.data(), current_saddle_point_state_.current_AtY_.size(), std::cout);
+      raft::copy(current_saddle_point_state_.batch_dual_solutions_.data(),
+                current_saddle_point_state_.dual_solution_.data(),
+                current_saddle_point_state_.dual_solution_.size(),
+                stream_view_);
+      RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmm(handle_ptr_->get_cusparse_handle(),
+                                                        CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                        CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                        reusable_device_scalar_value_1_.data(),
+                                                        cusparse_view_.A_T,
+                                                        cusparse_view_.batch_dual_solutions,
+                                                        reusable_device_scalar_value_0_.data(),
+                                                        cusparse_view_.batch_current_AtYs,
+                                                        CUSPARSE_SPMM_CSR_ALG3,
+                                                        (f_t*)cusparse_view_.buffer_transpose_batch.data(),
+                                                        stream_view_));
   }
 }
 
@@ -217,11 +204,7 @@ void pdhg_solver_t<i_t, f_t>::compute_primal_projection_with_gradient(
   // compute delta_primal x'-x
 
   // All is fused in a single call to limit number of read / write in memory
-  raft::print_device_vector("primal_solution_pre_transform", current_saddle_point_state_.get_primal_solution().data(), current_saddle_point_state_.get_primal_solution().size(), std::cout);
-  raft::print_device_vector("objective_coefficients", problem_ptr->objective_coefficients.data(), problem_ptr->objective_coefficients.size(), std::cout);
-  raft::print_device_vector("current_AtY", current_saddle_point_state_.get_current_AtY().data(), current_saddle_point_state_.get_current_AtY().size(), std::cout);
-  raft::print_device_vector("variable_lower_bounds", problem_ptr->variable_lower_bounds.data(), problem_ptr->variable_lower_bounds.size(), std::cout);
-  raft::print_device_vector("variable_upper_bounds", problem_ptr->variable_upper_bounds.data(), problem_ptr->variable_upper_bounds.size(), std::cout);
+  if(!batch_mode_) {
   cub::DeviceTransform::Transform(
     cuda::std::make_tuple(current_saddle_point_state_.get_primal_solution().data(),
                           problem_ptr->objective_coefficients.data(),
@@ -234,7 +217,20 @@ void pdhg_solver_t<i_t, f_t>::compute_primal_projection_with_gradient(
     primal_size_h_,
     primal_projection<f_t>(primal_step_size.data()),
     stream_view_);
-    raft::print_device_vector("tmp_primal_post_transform", tmp_primal_.data(), tmp_primal_.size(), std::cout);
+  } else {
+    cub::DeviceTransform::Transform(
+    cuda::std::make_tuple(current_saddle_point_state_.get_primal_solution().data(),
+                          problem_ptr->objective_coefficients.data(),
+                          current_saddle_point_state_.batch_current_AtYs_.data(),
+                          problem_ptr->variable_lower_bounds.data(),
+                          problem_ptr->variable_upper_bounds.data()),
+    thrust::make_zip_iterator(potential_next_primal_solution_.data(),
+                              current_saddle_point_state_.get_delta_primal().data(),
+                              tmp_primal_.data()),
+    primal_size_h_,
+    primal_projection<f_t>(primal_step_size.data()),
+    stream_view_);
+  }
 }
 
 template <typename i_t, typename f_t>
@@ -328,6 +324,9 @@ void pdhg_solver_t<i_t, f_t>::update_solution(
   std::swap(current_saddle_point_state_.dual_solution_, potential_next_dual_solution_);
   // Accepted (valid step size) next_Aty will be current Aty next PDHG iteration, saves an SpMV
   std::swap(current_saddle_point_state_.current_AtY_, current_saddle_point_state_.next_AtY_);
+  if(batch_mode_) {
+    std::swap(current_saddle_point_state_.batch_current_AtYs_, current_saddle_point_state_.batch_next_AtYs_);
+  }
 
   // Forced to reinite cusparse views but that's ok, cost is marginal
   RAFT_CUSPARSE_TRY(
@@ -350,6 +349,23 @@ void pdhg_solver_t<i_t, f_t>::update_solution(
     raft::sparse::detail::cusparsecreatednvec(&cusparse_view_.dual_solution,
                                               current_saddle_point_state_.get_dual_size(),
                                               current_saddle_point_state_.dual_solution_.data()));
+
+  if(batch_mode_) {
+    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
+      &cusparse_view_.batch_current_AtYs,
+      current_saddle_point_state_.get_primal_size(),
+      (0 + 3)/*@@*/,
+      current_saddle_point_state_.get_primal_size(),
+      current_saddle_point_state_.batch_current_AtYs_.data(),
+      CUSPARSE_ORDER_COL));
+      RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
+        &cusparse_view_.batch_next_AtYs,
+        current_saddle_point_state_.get_primal_size(),
+        (0 + 3)/*@@*/,
+        current_saddle_point_state_.get_primal_size(),
+        current_saddle_point_state_.batch_next_AtYs_.data(),
+        CUSPARSE_ORDER_COL));
+ }
   RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednvec(
     &current_op_problem_evaluation_cusparse_view_.primal_solution,
     current_saddle_point_state_.get_primal_size(),

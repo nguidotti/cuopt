@@ -35,7 +35,8 @@ class cusparse_view_t {
                   rmm::device_uvector<f_t>& _tmp_primal,
                   rmm::device_uvector<f_t>& _batch_tmp_primals,
                   rmm::device_uvector<f_t>& _tmp_dual,
-                  rmm::device_uvector<f_t>& _potential_next_dual_solution);
+                  rmm::device_uvector<f_t>& _potential_next_dual_solution,
+                  rmm::device_uvector<f_t>& _batch_potential_next_dual_solution);
 
   cusparse_view_t(raft::handle_t const* handle_ptr,
                   const problem_t<i_t, f_t>& op_problem,
@@ -73,6 +74,8 @@ class cusparse_view_t {
 
   // cusparse view of batch solutions
   cusparseDnMatDescr_t batch_dual_solutions;
+  cusparseDnMatDescr_t batch_potential_next_dual_solution;
+  cusparseDnMatDescr_t batch_next_AtYs;
 
   // cusparse view of gradients
   cusparseDnVecDescr_t primal_gradient;

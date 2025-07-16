@@ -87,8 +87,6 @@ struct primal_projection {
     f_t gradient = obj_coeff - AtY;
     f_t next     = primal - (*step_size_ * gradient);
     next         = raft::max<f_t>(raft::min<f_t>(next, upper), lower);
-    printf("%d primal_projection: primal=%lf, obj_coeff=%lf, AtY=%lf, lower=%lf, upper=%lf, next=%lf, next-primal=%lf, next-primal+next=%lf\n",
-           threadIdx.x, primal, obj_coeff, AtY, lower, upper, next, next - primal, next - primal + next);
     return thrust::make_tuple(next, next - primal, next - primal + next);
   }
 
