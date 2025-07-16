@@ -302,10 +302,6 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
     raft::sub_op(),
     stream_view_);
   } else {
-    raft::copy(batch_potential_next_dual_solution.data(),
-               potential_next_dual_solution.data(),
-               potential_next_dual_solution.size(),
-               stream_view_);
     RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmm(handle_ptr_->get_cusparse_handle(),
                                                        CUSPARSE_OPERATION_NON_TRANSPOSE,
                                                        CUSPARSE_OPERATION_NON_TRANSPOSE,

@@ -146,7 +146,7 @@ void pdhg_solver_t<i_t, f_t>::compute_next_dual_solution(rmm::device_scalar<f_t>
                           current_saddle_point_state_.batch_dual_gradients_.data(),
                           problem_ptr->constraint_lower_bounds.data(),
                           problem_ptr->constraint_upper_bounds.data()),
-    thrust::make_zip_iterator(potential_next_dual_solution_.data(),
+    thrust::make_zip_iterator(batch_potential_next_dual_solution_.data(),
                               current_saddle_point_state_.get_delta_dual().data()),
     dual_size_h_,
     dual_projection<f_t>(dual_step_size.data()),
@@ -316,11 +316,16 @@ void pdhg_solver_t<i_t, f_t>::update_solution(
   // No need to sync, compute_step_sizes has already synced the host
 
   std::swap(current_saddle_point_state_.primal_solution_, potential_next_primal_solution_);
-  std::swap(current_saddle_point_state_.dual_solution_, potential_next_dual_solution_);
   // Accepted (valid step size) next_Aty will be current Aty next PDHG iteration, saves an SpMV
   std::swap(current_saddle_point_state_.current_AtY_, current_saddle_point_state_.next_AtY_);
   if(batch_mode_) {
     std::swap(current_saddle_point_state_.batch_current_AtYs_, current_saddle_point_state_.batch_next_AtYs_);
+    raft::copy(current_saddle_point_state_.dual_solution_.data(),
+    batch_potential_next_dual_solution_.data(),
+    current_saddle_point_state_.dual_solution_.size(),
+    stream_view_);
+  } else {
+    std::swap(current_saddle_point_state_.dual_solution_, potential_next_dual_solution_);
   }
 
   // Forced to reinite cusparse views but that's ok, cost is marginal
@@ -404,13 +409,21 @@ const rmm::device_uvector<f_t>& pdhg_solver_t<i_t, f_t>::get_potential_next_prim
 template <typename i_t, typename f_t>
 const rmm::device_uvector<f_t>& pdhg_solver_t<i_t, f_t>::get_potential_next_dual_solution() const
 {
-  return potential_next_dual_solution_;
+  if(batch_mode_) {
+    return batch_potential_next_dual_solution_;
+  } else {
+    return potential_next_dual_solution_;
+  }
 }
 
 template <typename i_t, typename f_t>
 rmm::device_uvector<f_t>& pdhg_solver_t<i_t, f_t>::get_potential_next_dual_solution()
 {
-  return potential_next_dual_solution_;
+  if(batch_mode_) {
+    return batch_potential_next_dual_solution_;
+  } else {
+    return potential_next_dual_solution_;
+  }
 }
 
 template <typename i_t, typename f_t>
