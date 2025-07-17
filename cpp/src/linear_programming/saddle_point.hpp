@@ -90,7 +90,7 @@ class saddle_point_state_t {
   rmm::device_uvector<f_t>& get_primal_solution();
   rmm::device_uvector<f_t>& get_dual_solution();
   rmm::device_uvector<f_t>& get_delta_primal(bool batch = false);
-  rmm::device_uvector<f_t>& get_delta_dual();
+  rmm::device_uvector<f_t>& get_delta_dual(bool batch = false);
   rmm::device_uvector<f_t>& get_primal_gradient();
   rmm::device_uvector<f_t>& get_dual_gradient();
   rmm::device_uvector<f_t>& get_current_AtY();
@@ -120,6 +120,7 @@ class saddle_point_state_t {
   rmm::device_uvector<f_t> batch_next_AtYs_;
   rmm::device_uvector<f_t> batch_primal_solutions_;
   rmm::device_uvector<f_t> batch_delta_primals_;
+  rmm::device_uvector<f_t> batch_delta_duals_;
 };
 
 }  // namespace cuopt::linear_programming::detail

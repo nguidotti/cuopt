@@ -148,7 +148,7 @@ void pdhg_solver_t<i_t, f_t>::compute_next_dual_solution(rmm::device_scalar<f_t>
                           problem_ptr->constraint_lower_bounds.data(),
                           problem_ptr->constraint_upper_bounds.data()),
     thrust::make_zip_iterator(batch_potential_next_dual_solutions_.data(),
-                              current_saddle_point_state_.get_delta_dual().data()),
+                              current_saddle_point_state_.batch_delta_duals_.data()),
     dual_size_h_,
     dual_projection<f_t>(dual_step_size.data()),
     stream_view_);
