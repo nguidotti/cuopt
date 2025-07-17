@@ -213,8 +213,8 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_step_sizes(
   //  graph.start_capture(total_pdlp_iterations);
 
     // compute numerator and deminator of n_lim
-    compute_interaction_and_movement(pdhg_solver.get_primal_tmp_resource(),
-                                     pdhg_solver.potential_next_dual_solution_,
+    compute_interaction_and_movement(pdhg_solver.get_primal_tmp_resource(batch_mode_),
+                                     pdhg_solver.potential_next_dual_solution_, // TODO shouldn't conditionnaly pass the batch or non batch potential next?
                                      pdhg_solver.batch_potential_next_dual_solutions_,
                                      pdhg_solver.get_cusparse_view(),
                                      pdhg_solver.get_saddle_point_state());
@@ -233,7 +233,7 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_step_sizes(
 
 template <typename i_t, typename f_t>
 void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
-  rmm::device_uvector<f_t>& tmp_primal,
+  rmm::device_uvector<f_t>& tmp_primal, // Conditionnaly is batch or non batch
   rmm::device_uvector<f_t>& potential_next_dual_solution,
   rmm::device_uvector<f_t>& batch_potential_next_dual_solution,
   cusparse_view_t<i_t, f_t>& cusparse_view,

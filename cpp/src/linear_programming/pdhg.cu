@@ -398,9 +398,13 @@ cusparse_view_t<i_t, f_t>& pdhg_solver_t<i_t, f_t>::get_cusparse_view()
 }
 
 template <typename i_t, typename f_t>
-rmm::device_uvector<f_t>& pdhg_solver_t<i_t, f_t>::get_primal_tmp_resource()
+rmm::device_uvector<f_t>& pdhg_solver_t<i_t, f_t>::get_primal_tmp_resource(bool batch_mode)
 {
-  return tmp_primal_;
+  if (batch_mode) {
+    return batch_tmp_primals_;
+  } else {
+    return tmp_primal_;
+  }
 }
 
 template <typename i_t, typename f_t>

@@ -35,7 +35,7 @@ class pdhg_solver_t {
 
   saddle_point_state_t<i_t, f_t>& get_saddle_point_state();
   cusparse_view_t<i_t, f_t>& get_cusparse_view();
-  rmm::device_uvector<f_t>& get_primal_tmp_resource();
+  rmm::device_uvector<f_t>& get_primal_tmp_resource(bool batch_mode = false);
   rmm::device_uvector<f_t>& get_dual_tmp_resource();
   const rmm::device_uvector<f_t>& get_potential_next_primal_solution() const;
   rmm::device_uvector<f_t>& get_potential_next_dual_solution();
