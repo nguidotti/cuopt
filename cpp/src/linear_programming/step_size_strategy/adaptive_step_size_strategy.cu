@@ -215,7 +215,7 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_step_sizes(
     // compute numerator and deminator of n_lim
     compute_interaction_and_movement(pdhg_solver.get_primal_tmp_resource(),
                                      pdhg_solver.potential_next_dual_solution_,
-                                     pdhg_solver.batch_potential_next_dual_solution_,
+                                     pdhg_solver.batch_potential_next_dual_solutions_,
                                      pdhg_solver.get_cusparse_view(),
                                      pdhg_solver.get_saddle_point_state());
     // Compute n_lim, n_next and decide if step size is valid

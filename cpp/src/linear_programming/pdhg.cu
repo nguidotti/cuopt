@@ -47,9 +47,9 @@ pdhg_solver_t<i_t, f_t>::pdhg_solver_t(raft::handle_t const* handle_ptr,
     batch_tmp_primals_{static_cast<size_t>(problem_ptr->n_variables * (0 + 3)/*@@*/), stream_view_},
     tmp_dual_{static_cast<size_t>(problem_ptr->n_constraints), stream_view_},
     potential_next_primal_solution_{static_cast<size_t>(problem_ptr->n_variables), stream_view_},
-    batch_potential_next_primal_solution_{static_cast<size_t>(problem_ptr->n_variables * (0 + 3)/*@@*/), stream_view_},
+    batch_potential_next_primal_solutions_{static_cast<size_t>(problem_ptr->n_variables * (0 + 3)/*@@*/), stream_view_},
     potential_next_dual_solution_{static_cast<size_t>(problem_ptr->n_constraints), stream_view_},
-    batch_potential_next_dual_solution_{static_cast<size_t>(problem_ptr->n_constraints * (0 + 3)/*@@*/), stream_view_},
+    batch_potential_next_dual_solutions_{static_cast<size_t>(problem_ptr->n_constraints * (0 + 3)/*@@*/), stream_view_},
     total_pdhg_iterations_{0},
     cusparse_view_{handle_ptr_,
                    op_problem_scaled,
@@ -58,7 +58,7 @@ pdhg_solver_t<i_t, f_t>::pdhg_solver_t(raft::handle_t const* handle_ptr,
                    batch_tmp_primals_,
                    tmp_dual_,
                    potential_next_dual_solution_,
-                   batch_potential_next_dual_solution_},
+                   batch_potential_next_dual_solutions_},
     reusable_device_scalar_value_1_{1.0, stream_view_},
     reusable_device_scalar_value_0_{0.0, stream_view_},
     reusable_device_scalar_value_neg_1_{f_t(-1.0), stream_view_},
@@ -147,7 +147,7 @@ void pdhg_solver_t<i_t, f_t>::compute_next_dual_solution(rmm::device_scalar<f_t>
                           current_saddle_point_state_.batch_dual_gradients_.data(),
                           problem_ptr->constraint_lower_bounds.data(),
                           problem_ptr->constraint_upper_bounds.data()),
-    thrust::make_zip_iterator(batch_potential_next_dual_solution_.data(),
+    thrust::make_zip_iterator(batch_potential_next_dual_solutions_.data(),
                               current_saddle_point_state_.get_delta_dual().data()),
     dual_size_h_,
     dual_projection<f_t>(dual_step_size.data()),
@@ -216,7 +216,7 @@ void pdhg_solver_t<i_t, f_t>::compute_primal_projection_with_gradient(
                           current_saddle_point_state_.batch_current_AtYs_.data(),
                           problem_ptr->variable_lower_bounds.data(),
                           problem_ptr->variable_upper_bounds.data()),
-    thrust::make_zip_iterator(batch_potential_next_primal_solution_.data(),
+    thrust::make_zip_iterator(batch_potential_next_primal_solutions_.data(),
                               current_saddle_point_state_.get_delta_primal().data(),
                               batch_tmp_primals_.data()),
     primal_size_h_,
@@ -317,19 +317,19 @@ void pdhg_solver_t<i_t, f_t>::update_solution(
   if(batch_mode_) {
     std::swap(current_saddle_point_state_.batch_current_AtYs_, current_saddle_point_state_.batch_next_AtYs_);
     raft::copy(current_saddle_point_state_.dual_solution_.data(), // This shouldn't exist
-               batch_potential_next_dual_solution_.data(),
+               batch_potential_next_dual_solutions_.data(),
                current_saddle_point_state_.dual_solution_.size(),
                stream_view_);
     raft::copy(current_saddle_point_state_.batch_dual_solutions_.data(), // This should be a swap
-               batch_potential_next_dual_solution_.data(),
+               batch_potential_next_dual_solutions_.data(),
                current_saddle_point_state_.batch_dual_solutions_.size(),
                stream_view_);
     raft::copy(current_saddle_point_state_.primal_solution_.data(), // This shouldn't exist
-               batch_potential_next_primal_solution_.data(),
+               batch_potential_next_primal_solutions_.data(),
                current_saddle_point_state_.primal_solution_.size(),
                stream_view_);
     raft::copy(current_saddle_point_state_.batch_primal_solutions_.data(), // This should be a swap
-               batch_potential_next_primal_solution_.data(),
+               batch_potential_next_primal_solutions_.data(),
                current_saddle_point_state_.batch_primal_solutions_.size(),
                stream_view_);
   } else {
@@ -413,7 +413,7 @@ template <typename i_t, typename f_t>
 const rmm::device_uvector<f_t>& pdhg_solver_t<i_t, f_t>::get_potential_next_primal_solution() const
 {
   if(batch_mode_) {
-    return batch_potential_next_primal_solution_;
+    return batch_potential_next_primal_solutions_;
   } else {
     return potential_next_primal_solution_;
   }
@@ -423,7 +423,7 @@ template <typename i_t, typename f_t>
 const rmm::device_uvector<f_t>& pdhg_solver_t<i_t, f_t>::get_potential_next_dual_solution() const
 {
   if(batch_mode_) {
-    return batch_potential_next_dual_solution_;
+    return batch_potential_next_dual_solutions_;
   } else {
     return potential_next_dual_solution_;
   }
@@ -433,7 +433,7 @@ template <typename i_t, typename f_t>
 rmm::device_uvector<f_t>& pdhg_solver_t<i_t, f_t>::get_potential_next_dual_solution()
 {
   if(batch_mode_) {
-    return batch_potential_next_dual_solution_;
+    return batch_potential_next_dual_solutions_;
   } else {
     return potential_next_dual_solution_;
   }
