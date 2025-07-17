@@ -108,11 +108,11 @@ class adaptive_step_size_strategy_t {
                         thrust::system::cuda::universal_host_pinned_memory_resource>>
     valid_step_size_;
 
-  rmm::device_scalar<f_t> interaction_;
-  rmm::device_scalar<f_t> movement_;
+  rmm::device_uvector<f_t> interaction_;
+  rmm::device_uvector<f_t> movement_;
 
-  rmm::device_scalar<f_t> norm_squared_delta_primal_;
-  rmm::device_scalar<f_t> norm_squared_delta_dual_;
+  rmm::device_uvector<f_t> norm_squared_delta_primal_;
+  rmm::device_uvector<f_t> norm_squared_delta_dual_;
 
   const rmm::device_scalar<f_t> reusable_device_scalar_value_1_;
   const rmm::device_scalar<f_t> reusable_device_scalar_value_0_;
