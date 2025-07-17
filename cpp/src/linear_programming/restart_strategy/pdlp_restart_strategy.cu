@@ -282,8 +282,8 @@ void pdlp_restart_strategy_t<i_t, f_t>::run_trust_region_restart(
   rmm::device_uvector<f_t>& primal_solution_avg,
   rmm::device_uvector<f_t>& dual_solution_avg,
   const i_t total_number_of_iterations,
-  rmm::device_scalar<f_t>& primal_step_size,
-  rmm::device_scalar<f_t>& dual_step_size,
+  rmm::device_uvector<f_t>& primal_step_size,
+  rmm::device_uvector<f_t>& dual_step_size,
   rmm::device_scalar<f_t>& primal_weight,
   const rmm::device_scalar<f_t>& step_size)
 {
@@ -452,8 +452,8 @@ bool pdlp_restart_strategy_t<i_t, f_t>::kkt_restart_conditions(f_t candidate_kkt
 template <typename i_t, typename f_t>
 void pdlp_restart_strategy_t<i_t, f_t>::update_distance(pdhg_solver_t<i_t, f_t>& pdhg_solver,
                                                         rmm::device_scalar<f_t>& primal_weight,
-                                                        rmm::device_scalar<f_t>& primal_step_size,
-                                                        rmm::device_scalar<f_t>& dual_step_size,
+                                                        rmm::device_uvector<f_t>& primal_step_size,
+                                                        rmm::device_uvector<f_t>& dual_step_size,
                                                         const rmm::device_scalar<f_t>& step_size)
 {
   raft::copy(current_duality_gap_.primal_solution_.data(),
@@ -484,8 +484,8 @@ bool pdlp_restart_strategy_t<i_t, f_t>::run_kkt_restart(
   rmm::device_uvector<f_t>& dual_solution_avg,
   const convergence_information_t<i_t, f_t>& current_convergence_information,
   const convergence_information_t<i_t, f_t>& average_convergence_information,
-  rmm::device_scalar<f_t>& primal_step_size,
-  rmm::device_scalar<f_t>& dual_step_size,
+  rmm::device_uvector<f_t>& primal_step_size,
+  rmm::device_uvector<f_t>& dual_step_size,
   rmm::device_scalar<f_t>& primal_weight,
   const rmm::device_scalar<f_t>& step_size,
   i_t total_number_of_iterations)
@@ -670,8 +670,8 @@ void pdlp_restart_strategy_t<i_t, f_t>::compute_restart(
   rmm::device_uvector<f_t>& primal_solution_avg,
   rmm::device_uvector<f_t>& dual_solution_avg,
   const i_t total_number_of_iterations,
-  rmm::device_scalar<f_t>& primal_step_size,
-  rmm::device_scalar<f_t>& dual_step_size,
+  rmm::device_uvector<f_t>& primal_step_size,
+  rmm::device_uvector<f_t>& dual_step_size,
   rmm::device_scalar<f_t>& primal_weight,
   const rmm::device_scalar<f_t>& step_size,
   const convergence_information_t<i_t, f_t>& current_convergence_information,
@@ -760,8 +760,8 @@ void pdlp_restart_strategy_t<i_t, f_t>::compute_new_primal_weight(
   localized_duality_gap_container_t<i_t, f_t>& duality_gap,
   rmm::device_scalar<f_t>& primal_weight,
   const rmm::device_scalar<f_t>& step_size,
-  rmm::device_scalar<f_t>& primal_step_size,
-  rmm::device_scalar<f_t>& dual_step_size)
+  rmm::device_uvector<f_t>& primal_step_size,
+  rmm::device_uvector<f_t>& dual_step_size)
 {
   raft::common::nvtx::range fun_scope("compute_new_primal_weight");
 

@@ -77,7 +77,7 @@ rmm::device_scalar<i_t>& pdhg_solver_t<i_t, f_t>::get_d_total_pdhg_iterations()
 }
 
 template <typename i_t, typename f_t>
-void pdhg_solver_t<i_t, f_t>::compute_next_dual_solution(rmm::device_scalar<f_t>& dual_step_size)
+void pdhg_solver_t<i_t, f_t>::compute_next_dual_solution(rmm::device_uvector<f_t>& dual_step_size)
 {
   raft::common::nvtx::range fun_scope("compute_next_dual_solution");
   // proj(y+sigma(b-K(2x'-x)))
@@ -150,7 +150,7 @@ void pdhg_solver_t<i_t, f_t>::compute_next_dual_solution(rmm::device_scalar<f_t>
     thrust::make_zip_iterator(batch_potential_next_dual_solutions_.data(),
                               current_saddle_point_state_.batch_delta_duals_.data()),
     dual_size_h_,
-    dual_projection<f_t>(dual_step_size.data()),
+    dual_projection<f_t>(dual_step_size.data()), // TODO different one per problem
     stream_view_);
   }
 }
@@ -188,7 +188,7 @@ void pdhg_solver_t<i_t, f_t>::compute_At_y()
 
 template <typename i_t, typename f_t>
 void pdhg_solver_t<i_t, f_t>::compute_primal_projection_with_gradient(
-  rmm::device_scalar<f_t>& primal_step_size)
+  rmm::device_uvector<f_t>& primal_step_size)
 {
   // Applying *c -* A_t @ y
   // x-(tau*primal_gradient)
@@ -220,17 +220,17 @@ void pdhg_solver_t<i_t, f_t>::compute_primal_projection_with_gradient(
                               current_saddle_point_state_.batch_delta_primals_.data(),
                               batch_tmp_primals_.data()),
     primal_size_h_,
-    primal_projection<f_t>(primal_step_size.data()),
+    primal_projection<f_t>(primal_step_size.data()), // TODO different one per problem
     stream_view_);
   }
 }
 
 template <typename i_t, typename f_t>
 void pdhg_solver_t<i_t, f_t>::compute_next_primal_dual_solution(
-  rmm::device_scalar<f_t>& primal_step_size,
+  rmm::device_uvector<f_t>& primal_step_size,
   i_t iterations_since_last_restart,
   bool last_restart_was_average,
-  rmm::device_scalar<f_t>& dual_step_size,
+  rmm::device_uvector<f_t>& dual_step_size,
   i_t total_pdlp_iterations)
 {
   raft::common::nvtx::range fun_scope("compute_next_primal_solution");
@@ -284,8 +284,8 @@ void pdhg_solver_t<i_t, f_t>::compute_next_primal_dual_solution(
 }
 
 template <typename i_t, typename f_t>
-void pdhg_solver_t<i_t, f_t>::take_step(rmm::device_scalar<f_t>& primal_step_size,
-                                        rmm::device_scalar<f_t>& dual_step_size,
+void pdhg_solver_t<i_t, f_t>::take_step(rmm::device_uvector<f_t>& primal_step_size,
+                                        rmm::device_uvector<f_t>& dual_step_size,
                                         i_t iterations_since_last_restart,
                                         bool last_restart_was_average,
                                         i_t total_pdlp_iterations)

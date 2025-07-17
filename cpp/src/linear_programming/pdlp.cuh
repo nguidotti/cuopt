@@ -142,8 +142,8 @@ class pdlp_solver_t {
   i_t primal_size_h_;
   i_t dual_size_h_;
 
-  rmm::device_scalar<f_t> primal_step_size_;
-  rmm::device_scalar<f_t> dual_step_size_;
+  rmm::device_uvector<f_t> primal_step_size_;
+  rmm::device_uvector<f_t> dual_step_size_;
 
   /**
   The primal and dual step sizes are parameterized as:

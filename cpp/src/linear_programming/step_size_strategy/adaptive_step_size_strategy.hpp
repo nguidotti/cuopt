@@ -63,12 +63,12 @@ class adaptive_step_size_strategy_t {
                                 bool batch_mode);
 
   void compute_step_sizes(pdhg_solver_t<i_t, f_t>& pdhg_solver,
-                          rmm::device_scalar<f_t>& primal_step_size,
-                          rmm::device_scalar<f_t>& dual_step_size,
+                          rmm::device_uvector<f_t>& primal_step_size,
+                          rmm::device_uvector<f_t>& dual_step_size,
                           i_t total_pdlp_iterations);
 
-  void get_primal_and_dual_stepsizes(rmm::device_scalar<f_t>& primal_step_size,
-                                     rmm::device_scalar<f_t>& dual_step_size);
+  void get_primal_and_dual_stepsizes(rmm::device_uvector<f_t>& primal_step_size,
+                                     rmm::device_uvector<f_t>& dual_step_size);
   /**
    * @brief Gets the device-side view (with raw pointers), for ease of access
    *        inside cuda kernels

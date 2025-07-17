@@ -45,8 +45,8 @@ class pdhg_solver_t {
   rmm::device_uvector<f_t>& get_primal_solution();
   rmm::device_uvector<f_t>& get_dual_solution();
 
-  void take_step(rmm::device_scalar<f_t>& primal_step_size,
-                 rmm::device_scalar<f_t>& dual_step_size,
+  void take_step(rmm::device_uvector<f_t>& primal_step_size,
+                 rmm::device_uvector<f_t>& dual_step_size,
                  i_t iterations_since_last_restart,
                  bool last_restart_was_average,
                  i_t total_pdlp_iterations);
@@ -55,15 +55,15 @@ class pdhg_solver_t {
   i_t total_pdhg_iterations_;
 
 // private:
-  void compute_next_primal_dual_solution(rmm::device_scalar<f_t>& primal_step_size,
+  void compute_next_primal_dual_solution(rmm::device_uvector<f_t>& primal_step_size,
                                          i_t iterations_since_last_restart,
                                          bool last_restart_was_average,
-                                         rmm::device_scalar<f_t>& dual_step_size,
+                                         rmm::device_uvector<f_t>& dual_step_size,
                                          i_t total_pdlp_iterations);
-  void compute_next_dual_solution(rmm::device_scalar<f_t>& dual_step_size);
+  void compute_next_dual_solution(rmm::device_uvector<f_t>& dual_step_size);
 
-  void compute_primal_projection_with_gradient(rmm::device_scalar<f_t>& primal_step_size);
-  void compute_primal_projection(rmm::device_scalar<f_t>& primal_step_size);
+  void compute_primal_projection_with_gradient(rmm::device_uvector<f_t>& primal_step_size);
+  void compute_primal_projection(rmm::device_uvector<f_t>& primal_step_size);
   void compute_At_y();
 
   raft::handle_t const* handle_ptr_{nullptr};

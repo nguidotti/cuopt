@@ -204,8 +204,8 @@ void adaptive_step_size_strategy_t<i_t, f_t>::set_valid_step_size(i_t valid)
 template <typename i_t, typename f_t>
 void adaptive_step_size_strategy_t<i_t, f_t>::compute_step_sizes(
   pdhg_solver_t<i_t, f_t>& pdhg_solver,
-  rmm::device_scalar<f_t>& primal_step_size,
-  rmm::device_scalar<f_t>& dual_step_size,
+  rmm::device_uvector<f_t>& primal_step_size,
+  rmm::device_uvector<f_t>& dual_step_size,
   i_t total_pdlp_iterations)
 {
   raft::common::nvtx::range fun_scope("compute_step_sizes");
@@ -221,9 +221,9 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_step_sizes(
                                      pdhg_solver.get_saddle_point_state());
     // Compute n_lim, n_next and decide if step size is valid
     compute_step_sizes_from_movement_and_interaction<i_t, f_t>
-      <<<1, 1, 0, stream_view_>>>(this->view(),
-                                  primal_step_size.data(),
-                                  dual_step_size.data(),
+      <<<1, 1 /*TODO one per problem*/, 0, stream_view_>>>(this->view(),
+                                  primal_step_size.data(), // TODO different one per problem
+                                  dual_step_size.data(), // TODO different one per problem
                                   pdhg_solver.get_d_total_pdhg_iterations().data());
   //  graph.end_capture(total_pdlp_iterations);
   //}
@@ -388,10 +388,10 @@ __global__ void compute_actual_stepsizes(
 
 template <typename i_t, typename f_t>
 void adaptive_step_size_strategy_t<i_t, f_t>::get_primal_and_dual_stepsizes(
-  rmm::device_scalar<f_t>& primal_step_size, rmm::device_scalar<f_t>& dual_step_size)
+  rmm::device_uvector<f_t>& primal_step_size, rmm::device_uvector<f_t>& dual_step_size)
 {
   compute_actual_stepsizes<i_t, f_t>
-    <<<1, 1, 0, stream_view_>>>(this->view(), primal_step_size.data(), dual_step_size.data());
+    <<<1, 1 /*TODO one per problem*/, 0, stream_view_>>>(this->view(), primal_step_size.data(), dual_step_size.data());
   RAFT_CUDA_TRY(cudaPeekAtLastError());
 }
 

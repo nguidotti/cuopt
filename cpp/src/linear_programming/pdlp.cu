@@ -63,8 +63,8 @@ pdlp_solver_t<i_t, f_t>::pdlp_solver_t(problem_t<i_t, f_t>& op_problem,
     unscaled_dual_avg_solution_{static_cast<size_t>(op_problem.n_constraints), stream_view_},
     primal_size_h_(op_problem.n_variables),
     dual_size_h_(op_problem.n_constraints),
-    primal_step_size_{stream_view_},
-    dual_step_size_{stream_view_},
+    primal_step_size_{(settings.batch_mode ? static_cast<size_t>((0 + 3)/*@@*/) : 1), stream_view_}, // TODO number of problems
+    dual_step_size_{(settings.batch_mode ? static_cast<size_t>((0 + 3)/*@@*/) : 1), stream_view_}, // TODO number of problems
     primal_weight_{stream_view_},
     step_size_{(f_t)pdlp_hyper_params::initial_step_size_scaling, stream_view_},
     step_size_strategy_{handle_ptr_, &primal_weight_, &step_size_, settings.batch_mode},
@@ -1066,8 +1066,8 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(
                             op_problem_scaled_.combined_bounds);
     raft::print_device_vector("Initial step_size", step_size_.data(), 1, std::cout);
     raft::print_device_vector("Initial primal_weight", primal_weight_.data(), 1, std::cout);
-    raft::print_device_vector("Initial primal_step_size", primal_step_size_.data(), 1, std::cout);
-    raft::print_device_vector("Initial dual_step_size", dual_step_size_.data(), 1, std::cout);
+    raft::print_device_vector("Initial primal_step_size", primal_step_size_.data(), primal_step_size_.size(), std::cout);
+    raft::print_device_vector("Initial dual_step_size", dual_step_size_.data(), dual_step_size_.size(), std::cout);
   }
 
   bool warm_start_was_given =
@@ -1092,8 +1092,8 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(
         std::cout << internal_solver_iterations_ << std::endl;
         raft::print_device_vector("step_size", step_size_.data(), 1, std::cout);
         raft::print_device_vector("primal_weight", primal_weight_.data(), 1, std::cout);
-        raft::print_device_vector("primal_step_size", primal_step_size_.data(), 1, std::cout);
-        raft::print_device_vector("dual_step_size", dual_step_size_.data(), 1, std::cout);
+        raft::print_device_vector("primal_step_size", primal_step_size_.data(), primal_step_size_.size(), std::cout);
+        raft::print_device_vector("dual_step_size", dual_step_size_.data(), dual_step_size_.size(), std::cout);
       }
 
       // If a warm start is given and it's the first step, the average solutions were already filled
