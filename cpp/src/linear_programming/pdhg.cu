@@ -217,7 +217,7 @@ void pdhg_solver_t<i_t, f_t>::compute_primal_projection_with_gradient(
                           problem_ptr->variable_lower_bounds.data(),
                           problem_ptr->variable_upper_bounds.data()),
     thrust::make_zip_iterator(batch_potential_next_primal_solutions_.data(),
-                              current_saddle_point_state_.get_delta_primal().data(),
+                              current_saddle_point_state_.batch_delta_primals_.data(),
                               batch_tmp_primals_.data()),
     primal_size_h_,
     primal_projection<f_t>(primal_step_size.data()),
@@ -316,19 +316,19 @@ void pdhg_solver_t<i_t, f_t>::update_solution(
   std::swap(current_saddle_point_state_.current_AtY_, current_saddle_point_state_.next_AtY_);
   if(batch_mode_) {
     std::swap(current_saddle_point_state_.batch_current_AtYs_, current_saddle_point_state_.batch_next_AtYs_);
-    raft::copy(current_saddle_point_state_.dual_solution_.data(), // This shouldn't exist
+    raft::copy(current_saddle_point_state_.dual_solution_.data(), // TODO This shouldn't exist
                batch_potential_next_dual_solutions_.data(),
                current_saddle_point_state_.dual_solution_.size(),
                stream_view_);
-    raft::copy(current_saddle_point_state_.batch_dual_solutions_.data(), // This should be a swap
+    raft::copy(current_saddle_point_state_.batch_dual_solutions_.data(), // TODO This should be a swap
                batch_potential_next_dual_solutions_.data(),
                current_saddle_point_state_.batch_dual_solutions_.size(),
                stream_view_);
-    raft::copy(current_saddle_point_state_.primal_solution_.data(), // This shouldn't exist
+    raft::copy(current_saddle_point_state_.primal_solution_.data(), // TODO This shouldn't exist
                batch_potential_next_primal_solutions_.data(),
                current_saddle_point_state_.primal_solution_.size(),
                stream_view_);
-    raft::copy(current_saddle_point_state_.batch_primal_solutions_.data(), // This should be a swap
+    raft::copy(current_saddle_point_state_.batch_primal_solutions_.data(), // TODO This should be a swap
                batch_potential_next_primal_solutions_.data(),
                current_saddle_point_state_.batch_primal_solutions_.size(),
                stream_view_);

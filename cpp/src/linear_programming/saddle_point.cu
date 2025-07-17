@@ -41,7 +41,8 @@ saddle_point_state_t<i_t, f_t>::saddle_point_state_t(raft::handle_t const* handl
     batch_dual_gradients_{static_cast<size_t>(dual_size_ * (0 + 3)/*@@*/), handle_ptr->get_stream()},
     next_AtY_{static_cast<size_t>(primal_size_), handle_ptr->get_stream()},
     batch_next_AtYs_{static_cast<size_t>(primal_size_ * (0 + 3)/*@@*/), handle_ptr->get_stream()},
-    batch_primal_solutions_{static_cast<size_t>(primal_size_ * (0 + 3)/*@@*/), handle_ptr->get_stream()}
+    batch_primal_solutions_{static_cast<size_t>(primal_size_ * (0 + 3)/*@@*/), handle_ptr->get_stream()},
+    batch_delta_primals_{static_cast<size_t>(primal_size_ * (0 + 3)/*@@*/), handle_ptr->get_stream()}
 {
   EXE_CUOPT_EXPECTS(primal_size > 0, "Size of the primal problem must be larger than 0");
   EXE_CUOPT_EXPECTS(dual_size > 0, "Size of the dual problem must be larger than 0");
@@ -51,6 +52,7 @@ saddle_point_state_t<i_t, f_t>::saddle_point_state_t(raft::handle_t const* handl
     handle_ptr->get_thrust_policy(), primal_solution_.data(), primal_solution_.end(), f_t(0));
   thrust::fill(
     handle_ptr->get_thrust_policy(), dual_solution_.data(), dual_solution_.end(), f_t(0));
+  // TODO only init in batch mode
   thrust::fill(
     handle_ptr->get_thrust_policy(), batch_dual_solutions_.data(), batch_dual_solutions_.end(),
     f_t(0));
@@ -66,8 +68,12 @@ saddle_point_state_t<i_t, f_t>::saddle_point_state_t(raft::handle_t const* handl
     primal_gradient_.data(), 0.0, sizeof(f_t) * primal_size_, handle_ptr->get_stream()));
   RAFT_CUDA_TRY(cudaMemsetAsync(
     dual_gradient_.data(), 0.0, sizeof(f_t) * dual_size_, handle_ptr->get_stream()));
-  RAFT_CUDA_TRY(cudaMemsetAsync(
+
+  // TODO only init in batch mode
+    RAFT_CUDA_TRY(cudaMemsetAsync(
     batch_dual_gradients_.data(), 0.0, sizeof(f_t) * dual_size_ * (0 + 3)/*@@*/, handle_ptr->get_stream()));
+  RAFT_CUDA_TRY(cudaMemsetAsync(
+    batch_delta_primals_.data(), 0.0, sizeof(f_t) * primal_size_ * (0 + 3)/*@@*/, handle_ptr->get_stream()));
 
   // No need to 0 init current/next AtY, they are directlty written as result of SpMV
 }
@@ -112,9 +118,13 @@ rmm::device_uvector<f_t>& saddle_point_state_t<i_t, f_t>::get_dual_solution()
 }
 
 template <typename i_t, typename f_t>
-rmm::device_uvector<f_t>& saddle_point_state_t<i_t, f_t>::get_delta_primal()
+rmm::device_uvector<f_t>& saddle_point_state_t<i_t, f_t>::get_delta_primal(bool batch)
 {
-  return delta_primal_;
+  if (batch) {
+    return batch_delta_primals_;
+  } else {
+    return delta_primal_;
+  }
 }
 
 template <typename i_t, typename f_t>

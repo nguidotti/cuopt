@@ -329,7 +329,7 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
                                     current_saddle_point_state.get_primal_size(),
                                     tmp_primal.data(),
                                     primal_stride,
-                                    current_saddle_point_state.get_delta_primal().data(),
+                                    current_saddle_point_state.get_delta_primal(true).data(), // TODO tmp
                                     primal_stride,
                                     interaction_.data(),
                                     stream_view_));
@@ -346,9 +346,9 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
   RAFT_CUBLAS_TRY(
     raft::linalg::detail::cublasdot(handle_ptr_->get_cublas_handle(),
                                     current_saddle_point_state.get_primal_size(),
-                                    current_saddle_point_state.get_delta_primal().data(),
+                                    current_saddle_point_state.get_delta_primal(true).data(), // TODO tmp
                                     primal_stride,
-                                    current_saddle_point_state.get_delta_primal().data(),
+                                    current_saddle_point_state.get_delta_primal(true).data(), // TODO tmp
                                     primal_stride,
                                     norm_squared_delta_primal_.data(),
                                     stream_pool_.get_stream(0)));
