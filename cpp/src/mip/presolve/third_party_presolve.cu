@@ -106,10 +106,22 @@ optimization_problem_t<i_t, f_t> build_optimization_problem(
   auto& constraint_matrix = papilo_problem.getConstraintMatrix();
   auto row_lower          = constraint_matrix.getLeftHandSides();
   auto row_upper          = constraint_matrix.getRightHandSides();
-  op_problem.set_constraint_lower_bounds(row_lower.data(), row_lower.size());
-  op_problem.set_constraint_upper_bounds(row_upper.data(), row_upper.size());
+
+  auto row_flags = constraint_matrix.getRowFlags();
+  for (size_t i = 0; i < row_flags.size(); i++) {
+    // Looks like the bounds are not updated correctly in papilo
+    if (row_flags[i].test(papilo::RowFlag::kLhsInf)) {
+      row_lower[i] = -std::numeric_limits<f_t>::infinity();
+    }
+    if (row_flags[i].test(papilo::RowFlag::kRhsInf)) {
+      row_upper[i] = std::numeric_limits<f_t>::infinity();
+    }
+  }
 
   auto [index_range, nrows] = constraint_matrix.getRangeInfo();
+
+  op_problem.set_constraint_lower_bounds(row_lower.data(), row_lower.size());
+  op_problem.set_constraint_upper_bounds(row_upper.data(), row_upper.size());
 
   std::vector<i_t> offsets(nrows + 1);
   // papilo indices do not start from 0 after presolve
@@ -138,6 +150,33 @@ optimization_problem_t<i_t, f_t> build_optimization_problem(
   return op_problem;
 }
 
+void check_presolve_status(const papilo::PresolveStatus& status)
+{
+  switch (status) {
+    case papilo::PresolveStatus::kUnchanged:
+      CUOPT_LOG_INFO("Presolve did not result in any changes");
+      break;
+    case papilo::PresolveStatus::kReduced: CUOPT_LOG_INFO("Presolve reduced the problem"); break;
+    case papilo::PresolveStatus::kUnbndOrInfeas:
+      CUOPT_LOG_INFO("Presolve found an unbounded or infeasible problem");
+      break;
+    case papilo::PresolveStatus::kInfeasible:
+      CUOPT_LOG_INFO("Presolve found an infeasible problem");
+      break;
+    case papilo::PresolveStatus::kUnbounded:
+      CUOPT_LOG_INFO("Presolve found an unbounded problem");
+      break;
+  }
+}
+
+void check_postsolve_status(const papilo::PostsolveStatus& status)
+{
+  switch (status) {
+    case papilo::PostsolveStatus::kOk: CUOPT_LOG_INFO("Post-solve succeeded"); break;
+    case papilo::PostsolveStatus::kFailed: CUOPT_LOG_INFO("Post-solve failed"); break;
+  }
+}
+
 #define USE_PAPILOS_PRESOLVER 1
 
 template <typename i_t, typename f_t>
@@ -160,6 +199,7 @@ optimization_problem_t<i_t, f_t> third_party_presolve_t<i_t, f_t>::apply(
 
   post_solve_storage_ = result.postsolve;
 
+  check_presolve_status(result.status);
   CUOPT_LOG_INFO("Presolved problem:: Num variables: %d Num constraints: %d, NNZ: %d",
                  papilo_problem.getNCols(),
                  papilo_problem.getNRows(),
@@ -187,7 +227,8 @@ rmm::device_uvector<f_t> third_party_presolve_t<i_t, f_t>::undo(
 
   bool is_optimal = false;
   auto status     = post_solver.undo(reduced_sol, full_sol, post_solve_storage_, is_optimal);
-  if (status != papilo::PostsolveStatus::kOk) { CUOPT_LOG_INFO("\n Post-solve failed"); }
+  check_postsolve_status(status);
+  // if (status != papilo::PostsolveStatus::kOk) { CUOPT_LOG_INFO("\n Post-solve failed"); }
 
   std::cout << "primal solution after post solve:" << std::endl;
 
