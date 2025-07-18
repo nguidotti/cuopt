@@ -711,9 +711,11 @@ __global__ void compute_new_primal_weight_kernel(
   f_t* primal_weight,
   const f_t* step_size,
   f_t* primal_step_size,
-  f_t* dual_step_size)
+  f_t* dual_step_size,
+  int batch_size)
 {
-  if (threadIdx.x + blockIdx.x * blockDim.x > 0) { return; }
+  const int id = threadIdx.x + blockIdx.x * blockDim.x;
+  if (id >= batch_size) { return; }
 
   f_t primal_distance = raft::sqrt(*duality_gap_view.primal_distance_traveled);
   f_t dual_distance   = raft::sqrt(*duality_gap_view.dual_distance_traveled);
@@ -744,8 +746,8 @@ __global__ void compute_new_primal_weight_kernel(
   *primal_weight = raft::myExp(log_primal_weight);
   cuopt_assert(!isnan(*primal_weight), "primal weight can't be nan");
   cuopt_assert(!isinf(*primal_weight), "primal weight can't be inf");
-  *primal_step_size = *step_size / *primal_weight;
-  *dual_step_size   = *step_size * *primal_weight;
+  primal_step_size[id] = *step_size / *primal_weight;
+  dual_step_size[id]   = *step_size * *primal_weight;
 #ifdef PDLP_DEBUG_MODE
   printf(
     "Compute new primal weight: primal_ratio=%lf, log_primal_weight=%lf new_primal_weight=%lf\n",
@@ -765,11 +767,14 @@ void pdlp_restart_strategy_t<i_t, f_t>::compute_new_primal_weight(
 {
   raft::common::nvtx::range fun_scope("compute_new_primal_weight");
 
-  compute_new_primal_weight_kernel<i_t, f_t><<<1, 1, 0, stream_view_>>>(duality_gap.view(),
-                                                                        primal_weight.data(),
-                                                                        step_size.data(),
-                                                                        primal_step_size.data(),
-                                                                        dual_step_size.data());
+  const int block_size = std::min(256, (batch_mode_ ? (0 + 3)/*@@*/ : 1));
+  const int num_blocks = (batch_mode_ ? cuda::ceil_div((0 + 3)/*@@*/, block_size) : 1);
+  compute_new_primal_weight_kernel<i_t, f_t><<<num_blocks, block_size, 0, stream_view_>>>(duality_gap.view(),
+                                                                                        primal_weight.data(),
+                                                                                        step_size.data(),
+                                                                                        primal_step_size.data(),
+                                                                                        dual_step_size.data(),
+                                                                                        (batch_mode_ ? (0 + 3)/*@@*/ : 1));
   RAFT_CUDA_TRY(cudaPeekAtLastError());
 }
 
@@ -2035,7 +2040,8 @@ bool pdlp_restart_strategy_t<i_t, f_t>::get_last_restart_was_average() const
     F_TYPE* primal_weight,                                                                      \
     const F_TYPE* step_size,                                                                    \
     F_TYPE* primal_step_size,                                                                   \
-    F_TYPE* dual_step_size);                                                                    \
+    F_TYPE* dual_step_size,                                                                     \
+    int batch_size);                                                                            \
                                                                                                 \
   template __global__ void compute_subgradient_kernel<int, F_TYPE>(                             \
     const typename pdlp_restart_strategy_t<int, F_TYPE>::view_t restart_strategy_view,          \

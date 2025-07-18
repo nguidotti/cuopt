@@ -95,9 +95,11 @@ __global__ void compute_step_sizes_from_movement_and_interaction(
   typename adaptive_step_size_strategy_t<i_t, f_t>::view_t step_size_strategy_view,
   f_t* primal_step_size,
   f_t* dual_step_size,
-  i_t* pdhg_iteration)
+  i_t* pdhg_iteration,
+  int batch_size)
 {
-  if (threadIdx.x + blockIdx.x * blockDim.x > 0) { return; }
+  const int id = threadIdx.x + blockIdx.x * blockDim.x;
+  if (id >= batch_size) { return; }
 
   f_t primal_weight_ = *step_size_strategy_view.primal_weight;
 
@@ -181,8 +183,9 @@ __global__ void compute_step_sizes_from_movement_and_interaction(
   printf("Compute adaptative step size: min_step_size_picked=%lf\n", step_size_);
 #endif
 
-  *primal_step_size = step_size_ / primal_weight_;
-  *dual_step_size   = step_size_ * primal_weight_;
+
+  primal_step_size[id] = step_size_ / primal_weight_;
+  dual_step_size[id]   = step_size_ * primal_weight_;
 
   *step_size_strategy_view.step_size = step_size_;
   cuopt_assert(!isnan(step_size_), "step size can't be nan");
@@ -220,11 +223,14 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_step_sizes(
                                      pdhg_solver.get_cusparse_view(),
                                      pdhg_solver.get_saddle_point_state());
     // Compute n_lim, n_next and decide if step size is valid
+    const int block_size = std::min(256, (batch_mode_ ? (0 + 3)/*@@*/ : 1));
+    const int num_blocks = (batch_mode_ ? cuda::ceil_div((0 + 3)/*@@*/, block_size) : 1);
     compute_step_sizes_from_movement_and_interaction<i_t, f_t>
-      <<<1, 1 /*TODO one per problem*/, 0, stream_view_>>>(this->view(),
-                                  primal_step_size.data(), // TODO different one per problem
-                                  dual_step_size.data(), // TODO different one per problem
-                                  pdhg_solver.get_d_total_pdhg_iterations().data());
+      <<<num_blocks, block_size, 0, stream_view_>>>(this->view(),
+                                  primal_step_size.data(),
+                                  dual_step_size.data(),
+                                  pdhg_solver.get_d_total_pdhg_iterations().data(),
+                                  (batch_mode_ ? (0 + 3)/*@@*/ : 1));
   //  graph.end_capture(total_pdlp_iterations);
   //}
   //graph.launch(total_pdlp_iterations);
@@ -282,26 +288,26 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
 
   // First compute Ay' to be reused as Ay in next PDHG iteration (if found step size if valid)
   if (!batch_mode_) {
-  RAFT_CUSPARSE_TRY(
-    raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
-                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
-                                       reusable_device_scalar_value_1_.data(),  // alpha
-                                       cusparse_view.A_T,
-                                       cusparse_view.potential_next_dual_solution,
-                                       reusable_device_scalar_value_0_.data(),  // beta
-                                       cusparse_view.next_AtY,
-                                       CUSPARSE_SPMV_CSR_ALG2,
-                                       (f_t*)cusparse_view.buffer_transpose.data(),
-                                       stream_view_));
+    RAFT_CUSPARSE_TRY(
+      raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
+                                        CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                        reusable_device_scalar_value_1_.data(),  // alpha
+                                        cusparse_view.A_T,
+                                        cusparse_view.potential_next_dual_solution,
+                                        reusable_device_scalar_value_0_.data(),  // beta
+                                        cusparse_view.next_AtY,
+                                        CUSPARSE_SPMV_CSR_ALG2,
+                                        (f_t*)cusparse_view.buffer_transpose.data(),
+                                        stream_view_));
 
-  // Compute Ay' - Ay = next_Aty - current_Aty
-  cub::DeviceTransform::Transform(
-    cuda::std::make_tuple(current_saddle_point_state.get_next_AtY().data(),
-                          current_saddle_point_state.get_current_AtY().data()),
-    tmp_primal.data(),
-    current_saddle_point_state.get_primal_size(),
-    raft::sub_op(),
-    stream_view_);
+    // Compute Ay' - Ay = next_Aty - current_Aty
+    cub::DeviceTransform::Transform(
+      cuda::std::make_tuple(current_saddle_point_state.get_next_AtY().data(),
+                            current_saddle_point_state.get_current_AtY().data()),
+      tmp_primal.data(),
+      current_saddle_point_state.get_primal_size(),
+      raft::sub_op(),
+      stream_view_);
   } else {
     RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmm(handle_ptr_->get_cusparse_handle(),
                                                        CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -319,7 +325,7 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
       cuda::std::make_tuple(current_saddle_point_state.batch_next_AtYs_.data(),
                             current_saddle_point_state.batch_current_AtYs_.data()),
       tmp_primal.data(),
-      current_saddle_point_state.get_primal_size(),
+      current_saddle_point_state.get_primal_size() * (0 + 3)/*@@*/,
       raft::sub_op(),
       stream_view_);
     }
@@ -376,22 +382,29 @@ template <typename i_t, typename f_t>
 __global__ void compute_actual_stepsizes(
   const typename adaptive_step_size_strategy_t<i_t, f_t>::view_t step_size_strategy_view,
   f_t* primal_step_size,
-  f_t* dual_step_size)
+  f_t* dual_step_size,
+  int batch_size)
 {
-  if (threadIdx.x + blockIdx.x * blockDim.x > 0) { return; }
+  const int id = threadIdx.x + blockIdx.x * blockDim.x;
+  if (id >= batch_size) { return; }
   f_t step_size_     = *step_size_strategy_view.step_size;
   f_t primal_weight_ = *step_size_strategy_view.primal_weight;
 
-  *primal_step_size = step_size_ / primal_weight_;
-  *dual_step_size   = step_size_ * primal_weight_;
+  primal_step_size[id] = step_size_ / primal_weight_;
+  dual_step_size[id]   = step_size_ * primal_weight_;
 }
 
 template <typename i_t, typename f_t>
 void adaptive_step_size_strategy_t<i_t, f_t>::get_primal_and_dual_stepsizes(
   rmm::device_uvector<f_t>& primal_step_size, rmm::device_uvector<f_t>& dual_step_size)
 {
+  const int block_size = std::min(256, (batch_mode_ ? (0 + 3)/*@@*/ : 1));
+  const int num_blocks = (batch_mode_ ? cuda::ceil_div((0 + 3)/*@@*/, block_size) : 1);
   compute_actual_stepsizes<i_t, f_t>
-    <<<1, 1 /*TODO one per problem*/, 0, stream_view_>>>(this->view(), primal_step_size.data(), dual_step_size.data());
+    <<<num_blocks, block_size, 0, stream_view_>>>(this->view(),
+                                                  primal_step_size.data(),
+                                                  dual_step_size.data(),
+                                                  (batch_mode_ ? (0 + 3)/*@@*/ : 1));
   RAFT_CUDA_TRY(cudaPeekAtLastError());
 }
 
@@ -419,13 +432,15 @@ adaptive_step_size_strategy_t<i_t, f_t>::view()
   template __global__ void compute_actual_stepsizes<int, F_TYPE>(                              \
     const typename adaptive_step_size_strategy_t<int, F_TYPE>::view_t step_size_strategy_view, \
     F_TYPE* primal_step_size,                                                                  \
-    F_TYPE* dual_step_size);                                                                   \
+    F_TYPE* dual_step_size,                                                                     \
+    int batch_size);                                                                            \
                                                                                                \
   template __global__ void compute_step_sizes_from_movement_and_interaction<int, F_TYPE>(      \
     typename adaptive_step_size_strategy_t<int, F_TYPE>::view_t step_size_strategy_view,       \
     F_TYPE * primal_step_size,                                                                 \
     F_TYPE * dual_step_size,                                                                   \
-    int* pdhg_iteration);
+    int* pdhg_iteration,                                                                         \
+    int batch_size);
 
 #if MIP_INSTANTIATE_FLOAT
 INSTANTIATE(float)
