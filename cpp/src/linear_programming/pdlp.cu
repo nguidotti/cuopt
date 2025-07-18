@@ -1267,9 +1267,11 @@ void pdlp_solver_t<i_t, f_t>::compute_initial_step_size()
 template <typename f_t>
 __global__ void compute_weights_initial_primal_weight_from_squared_norms(const f_t* b_vec_norm,
                                                                          const f_t* c_vec_norm,
-                                                                         f_t* primal_weight)
+                                                                         f_t* primal_weight,
+                                                                         int batch_size)
 {
-  if (threadIdx.x + blockIdx.x * blockDim.x > 0) { return; }
+  int idx = threadIdx.x + blockIdx.x * blockDim.x;
+  if (idx >= batch_size) { return; }
   f_t c_vec_norm_ = *c_vec_norm;
   f_t b_vec_norm_ = *b_vec_norm;
 
@@ -1280,9 +1282,9 @@ __global__ void compute_weights_initial_primal_weight_from_squared_norms(const f
            c_vec_norm_,
            pdlp_hyper_params::primal_importance);
 #endif
-    *primal_weight = pdlp_hyper_params::primal_importance * (c_vec_norm_ / b_vec_norm_);
+    primal_weight[idx] = pdlp_hyper_params::primal_importance * (c_vec_norm_ / b_vec_norm_);
   } else {
-    *primal_weight = pdlp_hyper_params::primal_importance;
+    primal_weight[idx] = pdlp_hyper_params::primal_importance;
   }
 }
 
@@ -1308,8 +1310,11 @@ void pdlp_solver_t<i_t, f_t>::compute_initial_primal_weight()
                                         c_vec_norm,
                                         stream_view_);
 
-  compute_weights_initial_primal_weight_from_squared_norms<<<1, 1, 0, stream_view_>>>(
-    b_vec_norm.data(), c_vec_norm.data(), primal_weight_.data());
+  // TODO: handle batch mode : different primal weight per batch
+  const int block_size = (settings_.batch_mode ? std::min(256, (0 + 3)/*@@*/) : 1);
+  const int grid_size = (settings_.batch_mode ? cuda::ceil_div((0 + 3)/*@@*/, block_size) : 1);
+  compute_weights_initial_primal_weight_from_squared_norms<<<grid_size, block_size, 0, stream_view_>>>(
+    b_vec_norm.data(), c_vec_norm.data(), primal_weight_.data(), settings_.batch_mode ? (0 + 3)/*@@*/ : 1);
   RAFT_CUDA_TRY(cudaPeekAtLastError());
 
   RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
@@ -1346,14 +1351,14 @@ pdlp_solver_t<i_t, f_t>::get_current_termination_strategy()
 template class pdlp_solver_t<int, float>;
 
 template __global__ void compute_weights_initial_primal_weight_from_squared_norms<float>(
-  const float* b_vec_norm, const float* c_vec_norm, float* primal_weight);
+  const float* b_vec_norm, const float* c_vec_norm, float* primal_weight, int batch_size);
 #endif
 
 #if MIP_INSTANTIATE_DOUBLE
 template class pdlp_solver_t<int, double>;
 
 template __global__ void compute_weights_initial_primal_weight_from_squared_norms<double>(
-  const double* b_vec_norm, const double* c_vec_norm, double* primal_weight);
+  const double* b_vec_norm, const double* c_vec_norm, double* primal_weight, int batch_size);
 #endif
 
 }  // namespace cuopt::linear_programming::detail

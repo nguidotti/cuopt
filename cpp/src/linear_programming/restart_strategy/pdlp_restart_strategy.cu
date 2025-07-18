@@ -712,6 +712,7 @@ __global__ void compute_new_primal_weight_kernel(
   const int id = threadIdx.x + blockIdx.x * blockDim.x;
   if (id >= batch_size) { return; }
 
+  // TODO: handle batch mode on distrance traveled
   f_t primal_distance = raft::sqrt(*duality_gap_view.primal_distance_traveled);
   f_t dual_distance   = raft::sqrt(*duality_gap_view.dual_distance_traveled);
 
@@ -738,17 +739,17 @@ __global__ void compute_new_primal_weight_kernel(
       raft::myLog(new_primal_weight_estimate) +
     (1 - pdlp_hyper_params::default_primal_weight_update_smoothing) * raft::myLog(*primal_weight);
 
-  *primal_weight = raft::myExp(log_primal_weight);
-  cuopt_assert(!isnan(*primal_weight), "primal weight can't be nan");
-  cuopt_assert(!isinf(*primal_weight), "primal weight can't be inf");
-  primal_step_size[id] = *step_size / *primal_weight;
-  dual_step_size[id]   = *step_size * *primal_weight;
+  primal_weight[id] = raft::myExp(log_primal_weight);
+  cuopt_assert(!isnan(primal_weight[id]), "primal weight can't be nan");
+  cuopt_assert(!isinf(primal_weight[id]), "primal weight can't be inf");
+  primal_step_size[id] = *step_size / primal_weight[id];
+  dual_step_size[id]   = *step_size * primal_weight[id];
 #ifdef PDLP_DEBUG_MODE
   printf(
     "Compute new primal weight: primal_ratio=%lf, log_primal_weight=%lf new_primal_weight=%lf\n",
     new_primal_weight_estimate,
     log_primal_weight,
-    *primal_weight);
+    primal_weight[id]);
 #endif
 }
 
