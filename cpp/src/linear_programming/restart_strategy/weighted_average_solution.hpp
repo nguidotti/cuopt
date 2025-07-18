@@ -34,7 +34,7 @@ class weighted_average_solution_t {
   void reset_weighted_average_solution();
   void add_current_solution_to_weighted_average_solution(const f_t* primal_solution,
                                                          const f_t* dual_solution,
-                                                         const rmm::device_scalar<f_t>& weight,
+                                                         const rmm::device_uvector<f_t>& weight,
                                                          i_t total_pdlp_iterations);
 
   void compute_averages(rmm::device_uvector<f_t>& avg_primal, rmm::device_uvector<f_t>& avg_dual);

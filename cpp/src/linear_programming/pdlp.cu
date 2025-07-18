@@ -65,8 +65,8 @@ pdlp_solver_t<i_t, f_t>::pdlp_solver_t(problem_t<i_t, f_t>& op_problem,
     dual_size_h_(op_problem.n_constraints),
     primal_step_size_{(settings.batch_mode ? static_cast<size_t>((0 + 3)/*@@*/) : 1), stream_view_}, // TODO number of problems
     dual_step_size_{(settings.batch_mode ? static_cast<size_t>((0 + 3)/*@@*/) : 1), stream_view_}, // TODO number of problems
-    primal_weight_{stream_view_},
-    step_size_{(f_t)pdlp_hyper_params::initial_step_size_scaling, stream_view_},
+    primal_weight_{(settings.batch_mode ? static_cast<size_t>((0 + 3)/*@@*/) : 1), stream_view_},
+    step_size_{(settings.batch_mode ? static_cast<size_t>((0 + 3)/*@@*/) : 1), stream_view_},
     step_size_strategy_{handle_ptr_, &primal_weight_, &step_size_, settings.batch_mode},
     pdhg_solver_{handle_ptr_, op_problem_scaled_, settings.batch_mode},
     settings_(settings, stream_view_),
@@ -120,6 +120,12 @@ pdlp_solver_t<i_t, f_t>::pdlp_solver_t(problem_t<i_t, f_t>& op_problem,
     best_primal_solution_so_far{pdlp_termination_status_t::TimeLimit, stream_view_},
     inside_mip_{false}
 {
+  // Set step_size initial scaling
+  // TODO: potentially want different initial scaling for batch mode
+  thrust::fill(
+    handle_ptr_->get_thrust_policy(), step_size_.data(), step_size_.end(), (f_t)pdlp_hyper_params::initial_step_size_scaling);
+
+  // Handle initial primal solution
   if (settings.has_initial_primal_solution()) {
     auto& primal_sol = settings.get_initial_primal_solution();
     set_initial_primal_solution(primal_sol);
@@ -129,6 +135,7 @@ pdlp_solver_t<i_t, f_t>::pdlp_solver_t(problem_t<i_t, f_t>& op_problem,
     set_initial_dual_solution(dual_sol);
   }
 
+  // TODO how to handle batch mode here?
   if (settings.get_pdlp_warm_start_data().last_restart_duality_gap_dual_solution_.size() != 0) {
     set_initial_primal_solution(settings.get_pdlp_warm_start_data().current_primal_solution_);
     set_initial_dual_solution(settings.get_pdlp_warm_start_data().current_dual_solution_);
@@ -1017,9 +1024,9 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(
   // Needs to be performed here before the below line to make sure the initial primal_weight / step
   // size are used as previous point when potentially updating them in this next call
   if (initial_step_size_.has_value())
-    step_size_.set_value_async(initial_step_size_.value(), stream_view_);
+    step_size_.set_element_async(0, initial_step_size_.value(), stream_view_);
   if (initial_primal_weight_.has_value())
-    primal_weight_.set_value_async(initial_primal_weight_.value(), stream_view_);
+    primal_weight_.set_element_async(0, initial_primal_weight_.value(), stream_view_);
   if (initial_k_.has_value()) {
     pdhg_solver_.total_pdhg_iterations_ = initial_k_.value();
     pdhg_solver_.get_d_total_pdhg_iterations().set_value_async(initial_k_.value(), stream_view_);
@@ -1191,11 +1198,12 @@ void pdlp_solver_t<i_t, f_t>::take_step(i_t total_pdlp_iterations)
 
   while (step_size_strategy_.get_valid_step_size() == 0) {
 #ifdef PDLP_DEBUG_MODE
+    RAFT_CUDA_TRY(cudaDeviceSynchronize());
     std::cout << "PDHG Iteration:\n"
-              << "    primal_weight=" << primal_weight_.value(stream_view_) << "\n"
-              << "    step_size=" << step_size_.value(stream_view_) << "\n"
-              << "    primal_step_size=" << primal_step_size_.value(stream_view_) << "\n"
-              << "    dual_step_size=" << dual_step_size_.value(stream_view_) << std::endl;
+              << "    primal_weight=" << primal_weight_.element(0, stream_view_) << "\n"
+              << "    step_size=" << step_size_.element(0, stream_view_) << std::endl;
+    raft::print_device_vector("primal_step_size", primal_step_size_.data(), primal_step_size_.size(), std::cout);
+    raft::print_device_vector("dual_step_size", dual_step_size_.data(), dual_step_size_.size(), std::cout);
 #endif
     pdhg_solver_.take_step(primal_step_size_,
                            dual_step_size_,
@@ -1310,13 +1318,15 @@ void pdlp_solver_t<i_t, f_t>::compute_initial_primal_weight()
 template <typename i_t, typename f_t>
 f_t pdlp_solver_t<i_t, f_t>::get_primal_weight_h() const
 {
-  return primal_weight_.value(stream_view_);
+  // TODO check where this is called in the context of batch
+  return primal_weight_.element(0, stream_view_);
 }
 
 template <typename i_t, typename f_t>
 f_t pdlp_solver_t<i_t, f_t>::get_step_size_h() const
 {
-  return step_size_.value(stream_view_);
+  // TODO check where this is called in the context of batch
+  return step_size_.element(0, stream_view_);
 }
 
 template <typename i_t, typename f_t>

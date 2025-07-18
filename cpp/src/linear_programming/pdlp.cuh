@@ -31,7 +31,6 @@
 
 #include <raft/core/handle.hpp>
 
-#include <rmm/device_scalar.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <optional>
@@ -157,8 +156,8 @@ class pdlp_solver_t {
   The parameter primal_weight is adjusted smoothly at each restart; to balance the
   primal and dual distances traveled since the last restart.
   */
-  rmm::device_scalar<f_t> primal_weight_;
-  rmm::device_scalar<f_t> step_size_;
+  rmm::device_uvector<f_t> primal_weight_;
+  rmm::device_uvector<f_t> step_size_;
 
   // Step size strategy
   detail::adaptive_step_size_strategy_t<i_t, f_t> step_size_strategy_;

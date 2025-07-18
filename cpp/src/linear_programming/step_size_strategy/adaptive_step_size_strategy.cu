@@ -38,8 +38,8 @@ constexpr int parallel_stream_computation = 2;
 template <typename i_t, typename f_t>
 adaptive_step_size_strategy_t<i_t, f_t>::adaptive_step_size_strategy_t(
   raft::handle_t const* handle_ptr,
-  rmm::device_scalar<f_t>* primal_weight,
-  rmm::device_scalar<f_t>* step_size,
+  rmm::device_uvector<f_t>* primal_weight,
+  rmm::device_uvector<f_t>* step_size,
   bool batch_mode)
   : stream_pool_(parallel_stream_computation),
     dot_delta_X_(cudaEventDisableTiming),

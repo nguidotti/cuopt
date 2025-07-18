@@ -73,12 +73,14 @@ template <typename i_t, typename f_t>
 void weighted_average_solution_t<i_t, f_t>::add_current_solution_to_weighted_average_solution(
   const f_t* primal_solution,
   const f_t* dual_solution,
-  const rmm::device_scalar<f_t>& weight,
+  const rmm::device_uvector<f_t>& weight,
   i_t total_pdlp_iterations)
 {
   // primalavg += primal_sol*weight     -- weight is just set to be step_size for the new solution
   // (same for primal and dual although julia repo makes it seem as though these should/could be
   // different)
+
+  // TODO: handle batch mode
 
   if (!graph.is_initialized(total_pdlp_iterations)) {
     graph.start_capture(total_pdlp_iterations);
