@@ -91,7 +91,19 @@ struct primal_projection {
   }
 
   const f_t* step_size_;
-  const f_t* scalar_;
+};
+
+// Same comment as batch_dual_projection
+template <typename f_t>
+struct batch_primal_projection {
+  HDI thrust::tuple<f_t, f_t, f_t> operator()(
+    f_t primal, f_t obj_coeff, f_t AtY, f_t lower, f_t upper, f_t step_size)
+  {
+    f_t gradient = obj_coeff - AtY;
+    f_t next     = primal - (step_size * gradient);
+    next         = raft::max<f_t>(raft::min<f_t>(next, upper), lower);
+    return thrust::make_tuple(next, next - primal, next - primal + next);
+  }
 };
 
 template <typename f_t>
@@ -118,7 +130,6 @@ struct dual_projection {
 // We could template the iterators to resuse the transform call but we would still need and if else based on the batch size since it's not a compile time constant
 template <typename f_t>
 struct batch_dual_projection {
-  batch_dual_projection() {}
   HDI thrust::tuple<f_t, f_t> operator()(f_t dual,
                                          f_t gradient,
                                          f_t lower,

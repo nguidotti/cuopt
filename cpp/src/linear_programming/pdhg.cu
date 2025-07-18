@@ -223,15 +223,29 @@ void pdhg_solver_t<i_t, f_t>::compute_primal_projection_with_gradient(
   } else {
     cub::DeviceTransform::Transform(
     cuda::std::make_tuple(current_saddle_point_state_.batch_primal_solutions_.data(),
-                          problem_ptr->objective_coefficients.data(),
+                          thrust::make_transform_iterator(
+                            thrust::make_counting_iterator(0),
+                            problem_wrapped_iterator<f_t>(problem_ptr->objective_coefficients.data(),
+                                                         primal_size_h_)),
                           current_saddle_point_state_.batch_current_AtYs_.data(),
-                          problem_ptr->variable_lower_bounds.data(),
-                          problem_ptr->variable_upper_bounds.data()),
+                          thrust::make_transform_iterator(
+                            thrust::make_counting_iterator(0),
+                            problem_wrapped_iterator<f_t>(problem_ptr->variable_lower_bounds.data(),
+                                                         primal_size_h_)),
+                          thrust::make_transform_iterator(
+                            thrust::make_counting_iterator(0),
+                            problem_wrapped_iterator<f_t>(problem_ptr->variable_upper_bounds.data(),
+                                                         primal_size_h_)),
+                          thrust::make_transform_iterator(
+                            thrust::make_counting_iterator(0),
+                            batch_wrapped_iterator<f_t>(primal_step_size.data(),
+                                                         primal_size_h_))
+                          ),
     thrust::make_zip_iterator(batch_potential_next_primal_solutions_.data(),
                               current_saddle_point_state_.batch_delta_primals_.data(),
                               batch_tmp_primals_.data()),
-    primal_size_h_,
-    primal_projection<f_t>(primal_step_size.data()), // TODO different one per problem
+    primal_size_h_ * (0 + 3)/*@@*/,
+    batch_primal_projection<f_t>(),
     stream_view_);
   }
 }
