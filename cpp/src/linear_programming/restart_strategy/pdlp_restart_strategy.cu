@@ -292,6 +292,9 @@ void pdlp_restart_strategy_t<i_t, f_t>::run_trust_region_restart(
   std::cout << "Trust region restart:" << std::endl;
 #endif
 
+  // Todo rename with the futur name
+  cuopt_expects(!batch_mode_, error_type_t::RuntimeError, "Batch mode not supported for trust region restart (Methodical1). Use KKT restart instead (Fast1, Stable2).");
+
   if (weighted_average_solution_.get_iterations_since_last_restart() == 0) {
 #ifdef PDLP_VERBOSE_MODE
     std::cout << "    No internal iteration, can't restart yet, returning:" << std::endl;
@@ -347,17 +350,6 @@ void pdlp_restart_strategy_t<i_t, f_t>::run_trust_region_restart(
                  candidate_duality_gap_->dual_solution_.data(),
                  dual_size_h_,
                  stream_view_);
-      if(batch_mode_) {
-        // TODO copy over dual size * batch size
-        raft::copy(pdhg_solver.get_saddle_point_state().batch_primal_solutions_.data(),
-                   candidate_duality_gap_->primal_solution_.data(),
-                   primal_size_h_,
-                   stream_view_);
-        raft::copy(pdhg_solver.get_saddle_point_state().batch_dual_solutions_.data(),
-                   candidate_duality_gap_->dual_solution_.data(),
-                   dual_size_h_,
-                   stream_view_);
-      }
       set_last_restart_was_average(true);
     } else
       set_last_restart_was_average(false);
@@ -614,15 +606,17 @@ bool pdlp_restart_strategy_t<i_t, f_t>::run_kkt_restart(
                  dual_size_h_,
                  stream_view_);
       if(batch_mode_) {
-        // TODO copy over dual size * batch size
-        raft::copy(pdhg_solver.get_saddle_point_state().batch_primal_solutions_.data(),
+        // TODO: temporary, eventually will have a batch candiate duality gap
+        for (int i = 0; i < (0 + 3)/*@@*/; i++) {
+          raft::copy(pdhg_solver.get_saddle_point_state().batch_primal_solutions_.data() + i * primal_size_h_,
                    candidate_duality_gap_->primal_solution_.data(),
                    primal_size_h_,
                    stream_view_);
-        raft::copy(pdhg_solver.get_saddle_point_state().batch_dual_solutions_.data(),
+          raft::copy(pdhg_solver.get_saddle_point_state().batch_dual_solutions_.data() + i * dual_size_h_,
                    candidate_duality_gap_->dual_solution_.data(),
                    dual_size_h_,
                    stream_view_);
+        }
       }
       set_last_restart_was_average(true);
     } else
