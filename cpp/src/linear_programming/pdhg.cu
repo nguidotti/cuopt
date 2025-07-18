@@ -145,12 +145,23 @@ void pdhg_solver_t<i_t, f_t>::compute_next_dual_solution(rmm::device_uvector<f_t
   cub::DeviceTransform::Transform(
     cuda::std::make_tuple(current_saddle_point_state_.batch_dual_solutions_.data(),
                           current_saddle_point_state_.batch_dual_gradients_.data(),
-                          problem_ptr->constraint_lower_bounds.data(),
-                          problem_ptr->constraint_upper_bounds.data()),
+                          thrust::make_transform_iterator(
+                            thrust::make_counting_iterator(0),
+                            problem_wrapped_iterator<f_t>(problem_ptr->constraint_lower_bounds.data(),
+                                                         dual_size_h_)),
+                          thrust::make_transform_iterator(
+                            thrust::make_counting_iterator(0),
+                            problem_wrapped_iterator<f_t>(problem_ptr->constraint_upper_bounds.data(),
+                                                         dual_size_h_)),
+                          thrust::make_transform_iterator(
+                            thrust::make_counting_iterator(0),
+                            batch_wrapped_iterator<f_t>(dual_step_size.data(),
+                                                         dual_size_h_))
+                          ),
     thrust::make_zip_iterator(batch_potential_next_dual_solutions_.data(),
                               current_saddle_point_state_.batch_delta_duals_.data()),
-    dual_size_h_,
-    dual_projection<f_t>(dual_step_size.data()), // TODO different one per problem
+    dual_size_h_ * (0 + 3)/*@@*/,
+    batch_dual_projection<f_t>(),
     stream_view_);
   }
 }

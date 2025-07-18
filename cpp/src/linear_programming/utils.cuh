@@ -111,6 +111,56 @@ struct dual_projection {
   const f_t* scalar_;
 };
 
+// Used to project the dual solution when in batch mode
+// We could reuse this functor for the non-batch case, but it would be more costly
+// In this version we use transform iterator to wrap the input around
+// This induces an extra index computation
+// We could template the iterators to resuse the transform call but we would still need and if else based on the batch size since it's not a compile time constant
+template <typename f_t>
+struct batch_dual_projection {
+  batch_dual_projection() {}
+  HDI thrust::tuple<f_t, f_t> operator()(f_t dual,
+                                         f_t gradient,
+                                         f_t lower,
+                                         f_t upper,
+                                         f_t dual_step_size)
+  {
+    f_t next = dual - (dual_step_size * gradient);
+    f_t low  = next + (dual_step_size * lower);
+    f_t up   = next + (dual_step_size * upper);
+    next     = raft::max<f_t>(low, raft::min<f_t>(up, f_t(0)));
+    return thrust::make_tuple(next, next - dual);
+  }
+};
+
+// Used to wrap the problem input around a single batch
+// This is used to iterate over the primal and dual step sizes
+// For each variable of one problem in the batch, the same primal and dual step sizes should be returned
+template <typename f_t>
+struct batch_wrapped_iterator {
+  batch_wrapped_iterator(const f_t* problem_input, int problem_size) : problem_input_(problem_input), problem_size_(problem_size) {}
+  HDI f_t operator()(int id) {
+      return problem_input_[id / problem_size_];
+  }
+
+  const f_t* problem_input_;
+  int problem_size_;
+};
+
+// Used to wrap the problem input around a problem inside the batch
+// This is used to iterate over the problem bounds
+// Every variable with the same index across problems in the batch should have the same bounds
+template <typename f_t>
+struct problem_wrapped_iterator {
+  problem_wrapped_iterator(const f_t* problem_input, int problem_size) : problem_input_(problem_input), problem_size_(problem_size) {}
+  HDI f_t operator()(int id) {
+      return problem_input_[id % problem_size_];
+  }
+
+  const f_t* problem_input_;
+  int problem_size_;
+};
+
 template <typename f_t>
 struct a_add_scalar_times_b {
   a_add_scalar_times_b(const f_t* scalar) : scalar_{scalar} {}
