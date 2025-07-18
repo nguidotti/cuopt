@@ -42,16 +42,10 @@ rapids-dependency-file-generator \
 rapids-mamba-retry env create --yes -f "${ENV_YAML_DIR}/env.yaml" -n docs
 conda activate docs
 
-RAPIDS_DOCS_DIR="$(mktemp -d)"
-export RAPIDS_DOCS_DIR
-
 rapids-print-env
 
 rapids-logger "Build Docs"
 ./build.sh docs
-mkdir -p "${RAPIDS_DOCS_DIR}/cuopt"
-zip -r /tmp/cuopt_docs.zip docs/cuopt/build/html/*
-cp /tmp/cuopt_docs.zip "${RAPIDS_DOCS_DIR}/cuopt/cuopt_docs.zip"
 
 
 
