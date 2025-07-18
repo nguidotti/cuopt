@@ -153,6 +153,10 @@ else()
   find_package(RMM REQUIRED)
   find_package(RAFT REQUIRED)
 endif()
+
+include_directories("/raid/rgandham/opt/papilo/include")
+
+
 include(${rapids-cmake-dir}/cpm/rapids_logger.cmake)
 # generate logging macros
 rapids_cpm_rapids_logger(BUILD_EXPORT_SET cuopt-exports INSTALL_EXPORT_SET cuopt-exports)

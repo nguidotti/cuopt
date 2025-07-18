@@ -1,0 +1,213 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#include <mip/mip_constants.hpp>
+#include <mip/presolve/third_party_presolve.cuh>
+#include <papilo/core/Presolve.hpp>
+#include <papilo/core/ProblemBuilder.hpp>
+#include <utilities/copy_helpers.hpp>
+
+namespace cuopt::linear_programming::detail {
+
+template <typename i_t, typename f_t>
+papilo::Problem<f_t> build_papilo_problem(const optimization_problem_t<i_t, f_t>& op_problem)
+{
+  // Build papilo problem from optimization problem
+  papilo::ProblemBuilder<f_t> builder;
+
+  // Get problem dimensions
+  const i_t num_cols = op_problem.get_n_variables();
+  const i_t num_rows = op_problem.get_n_constraints();
+  const i_t nnz      = op_problem.get_nnz();
+
+  // Set problem dimensions in builder
+  builder.reserve(nnz, num_rows, num_cols);
+
+  // Get problem data from optimization problem
+  const auto& coefficients = op_problem.get_constraint_matrix_values();
+  const auto& offsets      = op_problem.get_constraint_matrix_offsets();
+  const auto& variables    = op_problem.get_constraint_matrix_indices();
+  const auto& obj_coeffs   = op_problem.get_objective_coefficients();
+  const auto& var_lb       = op_problem.get_variable_lower_bounds();
+  const auto& var_ub       = op_problem.get_variable_upper_bounds();
+  const auto& constr_lb    = op_problem.get_constraint_lower_bounds();
+  const auto& constr_ub    = op_problem.get_constraint_upper_bounds();
+  const auto& var_types    = op_problem.get_variable_types();
+
+  // Copy data to host
+  std::vector<f_t> h_coefficients = cuopt::host_copy(coefficients);
+  std::vector<i_t> h_offsets      = cuopt::host_copy(offsets);
+  std::vector<i_t> h_variables    = cuopt::host_copy(variables);
+  std::vector<f_t> h_obj_coeffs   = cuopt::host_copy(obj_coeffs);
+  std::vector<f_t> h_var_lb       = cuopt::host_copy(var_lb);
+  std::vector<f_t> h_var_ub       = cuopt::host_copy(var_ub);
+  std::vector<f_t> h_constr_lb    = cuopt::host_copy(constr_lb);
+  std::vector<f_t> h_constr_ub    = cuopt::host_copy(constr_ub);
+  std::vector<var_t> h_var_types  = cuopt::host_copy(var_types);
+
+  builder.setNumCols(num_cols);
+  builder.setNumRows(num_rows);
+
+  builder.setObjAll(h_obj_coeffs);
+  builder.setObjOffset(op_problem.get_objective_offset());
+
+  builder.setColLbAll(h_var_lb);
+  builder.setColUbAll(h_var_ub);
+
+  for (i_t i = 0; i < num_cols; i++) {
+    builder.setColIntegral(i, h_var_types[i] == var_t::INTEGER);
+  }
+
+  builder.setRowLhsAll(h_constr_lb);
+  builder.setRowRhsAll(h_constr_ub);
+
+  // Add constraints row by row
+  for (i_t i = 0; i < num_rows; i++) {
+    // Get row entries
+    i_t row_start   = h_offsets[i];
+    i_t row_end     = h_offsets[i + 1];
+    i_t num_entries = row_end - row_start;
+    builder.addRowEntries(
+      i, num_entries, h_variables.data() + row_start, h_coefficients.data() + row_start);
+  }
+
+  return builder.build();
+}
+
+template <typename i_t, typename f_t>
+optimization_problem_t<i_t, f_t> build_optimization_problem(
+  const papilo::Problem<f_t>& papilo_problem, raft::handle_t const* handle_ptr)
+{
+  optimization_problem_t<i_t, f_t> op_problem(handle_ptr);
+
+  auto obj = papilo_problem.getObjective();
+  op_problem.set_objective_coefficients(obj.coefficients.data(), obj.coefficients.size());
+  op_problem.set_objective_offset(obj.offset);
+
+  auto col_lower = papilo_problem.getLowerBounds();
+  auto col_upper = papilo_problem.getUpperBounds();
+  op_problem.set_variable_lower_bounds(col_lower.data(), col_lower.size());
+  op_problem.set_variable_upper_bounds(col_upper.data(), col_upper.size());
+
+  auto& constraint_matrix = papilo_problem.getConstraintMatrix();
+  auto row_lower          = constraint_matrix.getLeftHandSides();
+  auto row_upper          = constraint_matrix.getRightHandSides();
+  op_problem.set_constraint_lower_bounds(row_lower.data(), row_lower.size());
+  op_problem.set_constraint_upper_bounds(row_upper.data(), row_upper.size());
+
+  auto [index_range, nrows] = constraint_matrix.getRangeInfo();
+
+  std::vector<i_t> offsets(nrows + 1);
+  // papilo indices do not start from 0 after presolve
+  size_t start = index_range[0].start;
+  for (i_t i = 0; i < nrows; i++) {
+    offsets[i] = index_range[i].start - start;
+  }
+  offsets[nrows] = index_range[nrows - 1].end - start;
+
+  i_t nnz = constraint_matrix.getNnz();
+  assert(offsets[nrows] == nnz);
+
+  const int* cols   = constraint_matrix.getConstraintMatrix().getColumns();
+  const f_t* coeffs = constraint_matrix.getConstraintMatrix().getValues();
+  op_problem.set_csr_constraint_matrix(
+    &(coeffs[start]), nnz, &(cols[start]), nnz, offsets.data(), nrows + 1);
+
+  auto col_flags = papilo_problem.getColFlags();
+  std::vector<var_t> var_types(col_flags.size());
+  for (size_t i = 0; i < col_flags.size(); i++) {
+    var_types[i] =
+      col_flags[i].test(papilo::ColFlag::kIntegral) ? var_t::INTEGER : var_t::CONTINUOUS;
+  }
+  op_problem.set_variable_types(var_types.data(), var_types.size());
+
+  return op_problem;
+}
+
+#define USE_PAPILOS_PRESOLVER 1
+
+template <typename i_t, typename f_t>
+optimization_problem_t<i_t, f_t> third_party_presolve_t<i_t, f_t>::apply(
+  optimization_problem_t<i_t, f_t>& op_problem, double time_limit)
+{
+#if USE_PAPILOS_PRESOLVER
+  papilo::Problem<f_t> papilo_problem = build_papilo_problem(op_problem);
+
+  CUOPT_LOG_INFO("Unpresolved problem:: Num variables: %d Num constraints: %d, NNZ: %d",
+                 papilo_problem.getNCols(),
+                 papilo_problem.getNRows(),
+                 papilo_problem.getConstraintMatrix().getNnz());
+
+  papilo::Presolve<f_t> presolver;
+  presolver.addDefaultPresolvers();
+  presolver.getPresolveOptions().tlim = time_limit;
+
+  auto result = presolver.apply(papilo_problem);
+
+  post_solve_storage_ = result.postsolve;
+
+  CUOPT_LOG_INFO("Presolved problem:: Num variables: %d Num constraints: %d, NNZ: %d",
+                 papilo_problem.getNCols(),
+                 papilo_problem.getNRows(),
+                 papilo_problem.getConstraintMatrix().getNnz());
+
+  return build_optimization_problem<i_t, f_t>(papilo_problem, op_problem.get_handle_ptr());
+#else
+  return op_problem;
+#endif
+}
+
+template <typename i_t, typename f_t>
+rmm::device_uvector<f_t> third_party_presolve_t<i_t, f_t>::undo(
+  rmm::device_uvector<f_t>& reduced_sol_vec)
+{
+#if USE_PAPILOS_PRESOLVER
+  auto reduced_sol_vec_h = cuopt::host_copy(reduced_sol_vec);
+
+  papilo::Solution<f_t> reduced_sol(reduced_sol_vec_h);
+  papilo::Solution<f_t> full_sol;
+
+  papilo::Message Msg{};
+  Msg.setVerbosityLevel(papilo::VerbosityLevel::kQuiet);
+  papilo::Postsolve<f_t> post_solver{Msg, post_solve_storage_.getNum()};
+
+  bool is_optimal = false;
+  auto status     = post_solver.undo(reduced_sol, full_sol, post_solve_storage_, is_optimal);
+  if (status != papilo::PostsolveStatus::kOk) { CUOPT_LOG_INFO("\n Post-solve failed"); }
+
+  std::cout << "primal solution after post solve:" << std::endl;
+
+  // FIXME: recompute objective value, mip gap, max constraint violation, etc.
+  auto full_sol_vec = cuopt::device_copy(full_sol.primal, reduced_sol_vec.stream());
+  return full_sol_vec;
+#else
+  rmm::device_uvector<f_t> full_sol_vec(reduced_sol_vec.size(), reduced_sol_vec.stream());
+  raft::copy(
+    full_sol_vec.data(), reduced_sol_vec.data(), reduced_sol_vec.size(), reduced_sol_vec.stream());
+  return full_sol_vec;
+#endif
+}
+
+#if MIP_INSTANTIATE_FLOAT
+template class third_party_presolve_t<int, float>;
+#endif
+
+#if MIP_INSTANTIATE_DOUBLE
+template class third_party_presolve_t<int, double>;
+#endif
+
+}  // namespace cuopt::linear_programming::detail

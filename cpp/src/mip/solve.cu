@@ -18,6 +18,7 @@
 #include <cuopt/error.hpp>
 
 #include <mip/mip_constants.hpp>
+#include <mip/presolve/third_party_presolve.cuh>
 #include <mip/presolve/trivial_presolve.cuh>
 #include <mip/solver.cuh>
 #include <mip/utils.cuh>
@@ -65,17 +66,9 @@ static void setup_device_symbols(rmm::cuda_stream_view stream_view)
 
 template <typename i_t, typename f_t>
 mip_solution_t<i_t, f_t> run_mip(detail::problem_t<i_t, f_t>& problem,
-                                 mip_solver_settings_t<i_t, f_t> const& settings)
+                                 mip_solver_settings_t<i_t, f_t> const& settings,
+                                 cuopt::timer_t& timer)
 {
-  const f_t time_limit =
-    settings.time_limit == 0 ? std::numeric_limits<f_t>::max() : settings.time_limit;
-  if (settings.heuristics_only && time_limit == std::numeric_limits<f_t>::max()) {
-    CUOPT_LOG_ERROR("Time limit cannot be infinity when heuristics only is set");
-    cuopt_expects(false,
-                  error_type_t::RuntimeError,
-                  "Time limit cannot be infinity when heuristics only is set");
-  }
-  auto timer                       = cuopt::timer_t(time_limit);
   auto constexpr const running_mip = true;
 
   pdlp_hyper_params::update_primal_weight_on_initial_solution = false;
@@ -96,7 +89,7 @@ mip_solution_t<i_t, f_t> run_mip(detail::problem_t<i_t, f_t>& problem,
     solution.compute_objective();  // just to ensure h_user_obj is set
     auto stats           = solver_stats_t<i_t, f_t>{};
     stats.solution_bound = solution.get_user_objective();
-    return solution.get_solution(true, stats);
+    return solution.get_solution(true, stats, false);
   }
   // problem contains unpreprocessed data
   detail::problem_t<i_t, f_t> scaled_problem(problem);
@@ -149,8 +142,8 @@ mip_solution_t<i_t, f_t> run_mip(detail::problem_t<i_t, f_t>& problem,
       "please provide a more numerically stable problem.");
   }
 
-  auto sol = scaled_sol.get_solution(is_feasible_before_scaling || is_feasible_after_unscaling,
-                                     solver.get_solver_stats());
+  auto sol = scaled_sol.get_solution(
+    is_feasible_before_scaling || is_feasible_after_unscaling, solver.get_solver_stats(), false);
   detail::print_solution(scaled_problem.handle_ptr, sol.get_solution());
   return sol;
 }
@@ -160,6 +153,15 @@ mip_solution_t<i_t, f_t> solve_mip(optimization_problem_t<i_t, f_t>& op_problem,
                                    mip_solver_settings_t<i_t, f_t> const& settings)
 {
   try {
+    const f_t time_limit =
+      settings.time_limit == 0 ? std::numeric_limits<f_t>::max() : settings.time_limit;
+    if (settings.heuristics_only && time_limit == std::numeric_limits<f_t>::max()) {
+      CUOPT_LOG_ERROR("Time limit cannot be infinity when heuristics only is set");
+      cuopt_expects(false,
+                    error_type_t::RuntimeError,
+                    "Time limit cannot be infinity when heuristics only is set");
+    }
+
     // Create log stream for file logging and add it to default logger
     init_logger_t log(settings.log_file, settings.log_to_console);
     // Init libraies before to not include it in solve time
@@ -172,8 +174,18 @@ mip_solution_t<i_t, f_t> solve_mip(optimization_problem_t<i_t, f_t>& op_problem,
     problem_checking_t<i_t, f_t>::check_problem_representation(op_problem);
     problem_checking_t<i_t, f_t>::check_initial_solution_representation(op_problem, settings);
 
+    auto timer = cuopt::timer_t(time_limit);
+    // allocate note more than 10% of the time limit to presolve.
+    // Note that this is not the presolve time, but the time limit for presolve.
+    const double presolve_time_limit = 0.1 * time_limit;
+    detail::third_party_presolve_t<i_t, f_t> presolver;
+    auto presolved_problem     = presolver.apply(op_problem, presolve_time_limit);
+    const double presolve_time = timer.elapsed_time();
+
+    CUOPT_LOG_INFO("Third party presolve time: %f", presolve_time);
+
     // have solve, problem, solution, utils etc. in common dir
-    detail::problem_t<i_t, f_t> problem(op_problem, settings.get_tolerances());
+    detail::problem_t<i_t, f_t> problem(presolved_problem, settings.get_tolerances());
     if (settings.user_problem_file != "") {
       CUOPT_LOG_INFO("Writing user problem to file: %s", settings.user_problem_file.c_str());
       problem.write_as_mps(settings.user_problem_file);
@@ -182,13 +194,30 @@ mip_solution_t<i_t, f_t> solve_mip(optimization_problem_t<i_t, f_t>& op_problem,
     // this is for PDLP, i think this should be part of pdlp solver
     setup_device_symbols(op_problem.get_handle_ptr()->get_stream());
 
-    auto sol = run_mip(problem, settings);
+    auto reduced_solution = run_mip(problem, settings, timer);
+    auto full_sol_vec     = presolver.undo(reduced_solution.get_solution());
 
+    detail::problem_t<i_t, f_t> full_problem(op_problem);
+    detail::solution_t<i_t, f_t> full_sol(full_problem);
+    full_sol.copy_new_assignment(cuopt::host_copy(full_sol_vec));
+    full_sol.compute_feasibility();
+    if (!full_sol.get_feasible()) {
+      CUOPT_LOG_WARN("The solution is not feasible after post solve");
+    }
+
+    auto full_stats = reduced_solution.get_stats();
+    // add third party presolve time to cuopt presolve time
+    full_stats.presolve_time += presolve_time;
+
+    // FIXME:: reduced_solution.get_stats() is not correct, we need to compute the stats for the
+    // full problem
+    full_sol.post_process_completed = true;  // hack
+    auto sol                        = full_sol.get_solution(true, full_stats, true);
     if (settings.sol_file != "") {
       CUOPT_LOG_INFO("Writing solution to file %s", settings.sol_file.c_str());
       sol.write_to_sol_file(settings.sol_file, op_problem.get_handle_ptr()->get_stream());
     }
-
+    sol.log_summary();
     return sol;
   } catch (const cuopt::logic_error& e) {
     CUOPT_LOG_ERROR("Error in solve_mip: %s", e.what());
