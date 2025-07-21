@@ -1023,6 +1023,7 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(
 
   // Needs to be performed here before the below line to make sure the initial primal_weight / step
   // size are used as previous point when potentially updating them in this next call
+  // TODO handle batch mode
   if (initial_step_size_.has_value())
     step_size_.set_element_async(0, initial_step_size_.value(), stream_view_);
   if (initial_primal_weight_.has_value())
@@ -1071,8 +1072,8 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(
     print_problem_info<f_t>(op_problem_scaled_.coefficients,
                             op_problem_scaled_.objective_coefficients,
                             op_problem_scaled_.combined_bounds);
-    raft::print_device_vector("Initial step_size", step_size_.data(), 1, std::cout);
-    raft::print_device_vector("Initial primal_weight", primal_weight_.data(), 1, std::cout);
+    raft::print_device_vector("Initial step_size", step_size_.data(), step_size_.size(), std::cout);
+    raft::print_device_vector("Initial primal_weight", primal_weight_.data(), primal_weight_.size(), std::cout);
     raft::print_device_vector("Initial primal_step_size", primal_step_size_.data(), primal_step_size_.size(), std::cout);
     raft::print_device_vector("Initial dual_step_size", dual_step_size_.data(), dual_step_size_.size(), std::cout);
   }
@@ -1097,8 +1098,8 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(
       if (verbose) {
         std::cout << "-------------------------------" << std::endl;
         std::cout << internal_solver_iterations_ << std::endl;
-        raft::print_device_vector("step_size", step_size_.data(), 1, std::cout);
-        raft::print_device_vector("primal_weight", primal_weight_.data(), 1, std::cout);
+        raft::print_device_vector("step_size", step_size_.data(), step_size_.size(), std::cout);
+        raft::print_device_vector("primal_weight", primal_weight_.data(), primal_weight_.size(), std::cout);
         raft::print_device_vector("primal_step_size", primal_step_size_.data(), primal_step_size_.size(), std::cout);
         raft::print_device_vector("dual_step_size", dual_step_size_.data(), dual_step_size_.size(), std::cout);
       }
@@ -1258,8 +1259,14 @@ void pdlp_solver_t<i_t, f_t>::compute_initial_step_size()
                             red_op,
                             0.0,
                             stream_view_);
-  raft::linalg::eltwiseDivideCheckZero(
-    step_size_.data(), step_size_.data(), abs_max_element.data(), 1, stream_view_);
+
+  // TODO: handle batch mode, different primal weight per thingy
+  cub::DeviceTransform::Transform(
+    step_size_.data(),
+    step_size_.data(),
+    settings_.batch_mode ? (0 + 3)/*@@*/ : 1,
+    safe_constant_div<f_t>(abs_max_element.data()),
+    stream_view_);
 
   RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
 }

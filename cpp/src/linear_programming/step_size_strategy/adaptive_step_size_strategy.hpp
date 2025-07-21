@@ -46,8 +46,8 @@ class adaptive_step_size_strategy_t {
    *       `rmm::device_uvector`
    */
   struct view_t {
-    f_t* primal_weight;
-    f_t* step_size;
+    raft::device_span<f_t> primal_weight;
+    raft::device_span<f_t> step_size;
     i_t* valid_step_size;
 
     f_t* interaction;

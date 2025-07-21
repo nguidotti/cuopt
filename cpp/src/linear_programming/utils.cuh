@@ -181,6 +181,17 @@ struct a_add_scalar_times_b {
 };
 
 template <typename f_t>
+struct safe_constant_div {
+  safe_constant_div(const f_t* scalar) : scalar_{scalar} {}
+  HDI f_t operator()(f_t a)
+  {
+    return *scalar_ != f_t(0) ? a / *scalar_ : a;
+  }
+
+  const f_t* scalar_;
+};
+
+template <typename f_t>
 struct a_divides_sqrt_b_bounded {
   // if b is larger than zero return a / sqrt(b) and otherwise return a
   HDI f_t operator()(f_t a, f_t b)

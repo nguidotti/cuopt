@@ -101,7 +101,7 @@ __global__ void compute_step_sizes_from_movement_and_interaction(
   const int id = threadIdx.x + blockIdx.x * blockDim.x;
   if (id >= batch_size) { return; }
 
-  f_t primal_weight_ = *step_size_strategy_view.primal_weight;
+  f_t primal_weight_ = step_size_strategy_view.primal_weight[id];
 
   f_t movement = pdlp_hyper_params::primal_distance_smoothing * primal_weight_ *
                    *step_size_strategy_view.norm_squared_delta_primal +
@@ -120,7 +120,7 @@ __global__ void compute_step_sizes_from_movement_and_interaction(
   }
 
   f_t interaction_ = raft::abs(*step_size_strategy_view.interaction);
-  f_t step_size_   = *step_size_strategy_view.step_size;
+  f_t step_size_   = step_size_strategy_view.step_size[id];
 
   // Increase PDHG iteration
   *pdhg_iteration += 1;
@@ -139,7 +139,8 @@ __global__ void compute_step_sizes_from_movement_and_interaction(
          iteration_coefficient_);
 #endif
 
-  if (step_size_ <= step_size_limit) {
+  // TODO: every batch should have a different step size
+  if (step_size_ <= step_size_limit && id == 0) {
     *step_size_strategy_view.valid_step_size = 1;
 
 #ifdef PDLP_DEBUG_MODE
@@ -187,7 +188,7 @@ __global__ void compute_step_sizes_from_movement_and_interaction(
   primal_step_size[id] = step_size_ / primal_weight_;
   dual_step_size[id]   = step_size_ * primal_weight_;
 
-  *step_size_strategy_view.step_size = step_size_;
+  step_size_strategy_view.step_size[id] = step_size_;
   cuopt_assert(!isnan(step_size_), "step size can't be nan");
   cuopt_assert(!isinf(step_size_), "step size can't be inf");
 }
@@ -387,8 +388,8 @@ __global__ void compute_actual_stepsizes(
 {
   const int id = threadIdx.x + blockIdx.x * blockDim.x;
   if (id >= batch_size) { return; }
-  f_t step_size_     = *step_size_strategy_view.step_size;
-  f_t primal_weight_ = *step_size_strategy_view.primal_weight;
+  f_t step_size_     = step_size_strategy_view.step_size[id];
+  f_t primal_weight_ = step_size_strategy_view.primal_weight[id];
 
   primal_step_size[id] = step_size_ / primal_weight_;
   dual_step_size[id]   = step_size_ * primal_weight_;
@@ -414,8 +415,8 @@ adaptive_step_size_strategy_t<i_t, f_t>::view()
 {
   adaptive_step_size_strategy_t<i_t, f_t>::view_t v{};
 
-  v.primal_weight   = primal_weight_->data();
-  v.step_size       = step_size_->data();
+  v.primal_weight   = raft::device_span<f_t>(primal_weight_->data(), primal_weight_->size());
+  v.step_size       = raft::device_span<f_t>(step_size_->data(), step_size_->size());
   v.valid_step_size = thrust::raw_pointer_cast(valid_step_size_.data());
 
   v.interaction = interaction_.data();

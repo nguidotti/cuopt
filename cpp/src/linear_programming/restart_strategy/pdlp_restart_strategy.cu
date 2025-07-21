@@ -742,8 +742,8 @@ __global__ void compute_new_primal_weight_kernel(
   primal_weight[id] = raft::myExp(log_primal_weight);
   cuopt_assert(!isnan(primal_weight[id]), "primal weight can't be nan");
   cuopt_assert(!isinf(primal_weight[id]), "primal weight can't be inf");
-  primal_step_size[id] = *step_size / primal_weight[id];
-  dual_step_size[id]   = *step_size * primal_weight[id];
+  primal_step_size[id] = step_size[id] / primal_weight[id];
+  dual_step_size[id]   = step_size[id] * primal_weight[id];
 #ifdef PDLP_DEBUG_MODE
   printf(
     "Compute new primal weight: primal_ratio=%lf, log_primal_weight=%lf new_primal_weight=%lf\n",
