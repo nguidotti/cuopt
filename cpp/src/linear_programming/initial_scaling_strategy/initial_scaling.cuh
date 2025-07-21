@@ -59,7 +59,8 @@ class pdlp_initial_scaling_strategy_t {
                                   rmm::device_uvector<f_t>& A_T,
                                   rmm::device_uvector<i_t>& A_T_offsets,
                                   rmm::device_uvector<i_t>& A_T_indices,
-                                  bool running_mip = false);
+                                  bool running_mip = false,
+                                  bool batch_mode = false);
 
   void scale_problem();
 
@@ -103,5 +104,6 @@ class pdlp_initial_scaling_strategy_t {
   rmm::device_uvector<i_t>& A_T_offsets_;
   rmm::device_uvector<i_t>& A_T_indices_;
   bool running_mip_;
+  bool batch_mode_;
 };
 }  // namespace cuopt::linear_programming::detail

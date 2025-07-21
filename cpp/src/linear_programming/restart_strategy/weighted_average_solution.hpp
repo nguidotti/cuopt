@@ -29,7 +29,7 @@ namespace cuopt::linear_programming::detail {
 template <typename i_t, typename f_t>
 class weighted_average_solution_t {
  public:
-  weighted_average_solution_t(raft::handle_t const* handle_ptr, i_t primal_size, i_t dual_size);
+  weighted_average_solution_t(raft::handle_t const* handle_ptr, i_t primal_size, i_t dual_size, bool batch_mode = false);
 
   void reset_weighted_average_solution();
   void add_current_solution_to_weighted_average_solution(const f_t* primal_solution,
@@ -51,12 +51,14 @@ class weighted_average_solution_t {
  public:
   rmm::device_uvector<f_t> sum_primal_solutions_;
   rmm::device_uvector<f_t> sum_dual_solutions_;
-  rmm::device_scalar<f_t> sum_primal_solution_weights_;
-  rmm::device_scalar<f_t> sum_dual_solution_weights_;
+  rmm::device_uvector<f_t> sum_primal_solution_weights_;
+  rmm::device_uvector<f_t> sum_dual_solution_weights_;
 
   i_t iterations_since_last_restart_;
 
   // Graph to capture the average computation
   ping_pong_graph_t<i_t> graph;
+
+  bool batch_mode_{false};
 };
 }  // namespace cuopt::linear_programming::detail

@@ -113,7 +113,7 @@ pdlp_restart_strategy_t<i_t, f_t>::pdlp_restart_strategy_t(
   : handle_ptr_(handle_ptr),
     stream_view_(handle_ptr_->get_stream()),
     batch_mode_(batch_mode),
-    weighted_average_solution_{handle_ptr_, primal_size, dual_size},
+    weighted_average_solution_{handle_ptr_, primal_size, dual_size, batch_mode},
     primal_size_h_(primal_size),
     dual_size_h_(dual_size),
     problem_ptr(&op_problem),
@@ -125,9 +125,21 @@ pdlp_restart_strategy_t<i_t, f_t>::pdlp_restart_strategy_t(
     dual_norm_weight_{stream_view_},
     restart_triggered_{0, stream_view_},
     candidate_is_avg_{0, stream_view_},
-    avg_duality_gap_{handle_ptr_, primal_size, dual_size},
-    current_duality_gap_{handle_ptr_, primal_size, dual_size},
-    last_restart_duality_gap_{handle_ptr_, primal_size, dual_size},
+    avg_duality_gap_{handle_ptr_,
+      (is_KKT_restart<i_t, f_t>() ?
+        (batch_mode ? (0 + 3)/*@@*/ : 1) * primal_size : primal_size),
+      (is_KKT_restart<i_t, f_t>() ?
+        (batch_mode ? (0 + 3)/*@@*/ : 1) * dual_size : dual_size)},
+    current_duality_gap_{handle_ptr_,
+      (is_KKT_restart<i_t, f_t>() ?
+        (batch_mode ? (0 + 3)/*@@*/ : 1) * primal_size : primal_size),
+      (is_KKT_restart<i_t, f_t>() ?
+        (batch_mode ? (0 + 3)/*@@*/ : 1) * dual_size : dual_size)},
+    last_restart_duality_gap_{handle_ptr_,
+      (is_KKT_restart<i_t, f_t>() ?
+        (batch_mode ? (0 + 3)/*@@*/ : 1) * primal_size : primal_size),
+      (is_KKT_restart<i_t, f_t>() ?
+        (batch_mode ? (0 + 3)/*@@*/ : 1) * dual_size : dual_size)},
     // If KKT restart, call the empty cusparse_view constructor
     avg_duality_gap_cusparse_view_{
       (is_KKT_restart<i_t, f_t>())
@@ -567,11 +579,11 @@ bool pdlp_restart_strategy_t<i_t, f_t>::run_kkt_restart(
 
       raft::copy(avg_duality_gap_.primal_solution_.data(),
                  primal_solution_avg.data(),
-                 primal_size_h_,
+                 primal_solution_avg.size(),
                  stream_view_);
       raft::copy(avg_duality_gap_.dual_solution_.data(),
                  dual_solution_avg.data(),
-                 dual_size_h_,
+                 dual_solution_avg.size(),
                  stream_view_);
       candidate_duality_gap_ = &avg_duality_gap_;
     } else {
@@ -580,12 +592,12 @@ bool pdlp_restart_strategy_t<i_t, f_t>::run_kkt_restart(
       std::cout << "    KKT no restart to average" << std::endl;
 #endif
       raft::copy(current_duality_gap_.primal_solution_.data(),
-                 pdhg_solver.get_saddle_point_state().get_primal_solution().data(),
-                 primal_size_h_,
+                 pdhg_solver.get_saddle_point_state().get_primal_solution(batch_mode_).data(), // TODO this should be just primal solution
+                 pdhg_solver.get_saddle_point_state().get_primal_solution(batch_mode_).size(),
                  stream_view_);
       raft::copy(current_duality_gap_.dual_solution_.data(),
-                 pdhg_solver.get_saddle_point_state().get_dual_solution().data(),
-                 dual_size_h_,
+                 pdhg_solver.get_saddle_point_state().get_dual_solution(batch_mode_).data(),
+                 pdhg_solver.get_saddle_point_state().get_dual_solution(batch_mode_).size(),
                  stream_view_);
       candidate_duality_gap_ = &current_duality_gap_;
     }
@@ -607,17 +619,14 @@ bool pdlp_restart_strategy_t<i_t, f_t>::run_kkt_restart(
                  dual_size_h_,
                  stream_view_);
       if(batch_mode_) {
-        // TODO: temporary, eventually will have a batch candiate duality gap
-        for (int i = 0; i < (0 + 3)/*@@*/; i++) {
-          raft::copy(pdhg_solver.get_saddle_point_state().batch_primal_solutions_.data() + i * primal_size_h_,
-                   candidate_duality_gap_->primal_solution_.data(),
-                   primal_size_h_,
-                   stream_view_);
-          raft::copy(pdhg_solver.get_saddle_point_state().batch_dual_solutions_.data() + i * dual_size_h_,
-                   candidate_duality_gap_->dual_solution_.data(),
-                   dual_size_h_,
-                   stream_view_);
-        }
+        raft::copy(pdhg_solver.get_saddle_point_state().batch_primal_solutions_.data(),
+                  candidate_duality_gap_->primal_solution_.data(),
+                  candidate_duality_gap_->primal_solution_.size(),
+                  stream_view_);
+        raft::copy(pdhg_solver.get_saddle_point_state().batch_dual_solutions_.data(),
+                  candidate_duality_gap_->dual_solution_.data()  ,
+                  candidate_duality_gap_->dual_solution_.size(),
+                  stream_view_);
       }
       set_last_restart_was_average(true);
     } else
@@ -783,6 +792,8 @@ void pdlp_restart_strategy_t<i_t, f_t>::distance_squared_moved_from_last_restart
   i_t stride,
   rmm::device_scalar<f_t>& distance_moved)
 {
+  // TODO batch mode
+
   raft::common::nvtx::range fun_scope("distance_squared_moved_from_last_restart_period");
 #ifdef PDLP_DEBUG_MODE
   rmm::device_scalar<f_t> debuga{stream_view_};
@@ -1733,6 +1744,7 @@ void pdlp_restart_strategy_t<i_t, f_t>::compute_distance_traveled_from_last_rest
 
   // distance_traveled = primal_distance * 0.5 * primal_weight
   // + dual_distance * 0.5 / primal_weight
+  // TODO batch mode
   compute_distance_traveled_last_restart_kernel<i_t, f_t><<<1, 1, 0, stream_view_>>>(
     duality_gap.view(), primal_weight.data(), duality_gap.distance_traveled_.data());
   RAFT_CUDA_TRY(cudaPeekAtLastError());

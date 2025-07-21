@@ -43,7 +43,9 @@ pdlp_initial_scaling_strategy_t<i_t, f_t>::pdlp_initial_scaling_strategy_t(
   rmm::device_uvector<f_t>& A_T,
   rmm::device_uvector<i_t>& A_T_offsets,
   rmm::device_uvector<i_t>& A_T_indices,
-  bool running_mip)
+  bool running_mip,
+  bool batch_mode
+)
   : handle_ptr_(handle_ptr),
     stream_view_(handle_ptr_->get_stream()),
     primal_size_h_(op_problem_scaled.n_variables),
@@ -57,7 +59,8 @@ pdlp_initial_scaling_strategy_t<i_t, f_t>::pdlp_initial_scaling_strategy_t(
     iteration_constraint_matrix_scaling_{static_cast<size_t>(dual_size_h_), stream_view_},
     iteration_variable_scaling_{static_cast<size_t>(primal_size_h_), stream_view_},
     cummulative_constraint_matrix_scaling_{static_cast<size_t>(dual_size_h_), stream_view_},
-    cummulative_variable_scaling_{static_cast<size_t>(primal_size_h_), stream_view_}
+    cummulative_variable_scaling_{static_cast<size_t>(primal_size_h_), stream_view_},
+    batch_mode_(batch_mode)
 {
   raft::common::nvtx::range fun_scope("Initializing initial_scaling_strategy");
 #ifdef PDLP_DEBUG_MODE
@@ -461,25 +464,38 @@ void pdlp_initial_scaling_strategy_t<i_t, f_t>::unscale_solutions(
   rmm::device_uvector<f_t>& primal_solution, rmm::device_uvector<f_t>& dual_solution) const
 {
   // if there are some tails in the solution, don't scale that
-  cuopt_expects(primal_solution.size() == static_cast<size_t>(primal_size_h_),
+  // TODO tmp change in the condition
+  cuopt_expects(primal_solution.size() == static_cast<size_t>(primal_size_h_) || primal_solution.size() == static_cast<size_t>((0 + 3)/*@@*/) * static_cast<size_t>(primal_size_h_),
                 error_type_t::RuntimeError,
                 "Unscale primal didn't get a vector of size primal");
   // unscale avg solutions
-  raft::linalg::eltwiseMultiply(primal_solution.data(),
-                                primal_solution.data(),
-                                cummulative_variable_scaling_.data(),
-                                primal_size_h_,
-                                stream_view_);
+  cub::DeviceTransform::Transform(cuda::std::make_tuple(primal_solution.data(),
+                                  thrust::make_transform_iterator(
+                                    thrust::make_counting_iterator(0),
+                                    problem_wrapped_iterator<f_t>(cummulative_variable_scaling_.data(), primal_size_h_)
+                                    )
+                                  ),
+                                  primal_solution.data(),
+                                  (batch_mode_ ? static_cast<size_t>((0 + 3)/*@@*/) : 1) * primal_size_h_,
+                                  mul_op<f_t>(),
+                                  stream_view_);
 
   if (dual_solution.size()) {
-    cuopt_expects(dual_solution.size() == static_cast<size_t>(dual_size_h_),
+    // TODO tmp change in the condition
+    cuopt_expects(dual_solution.size() == static_cast<size_t>(dual_size_h_) || dual_solution.size() == static_cast<size_t>((0 + 3)/*@@*/) * static_cast<size_t>(dual_size_h_),
                   error_type_t::RuntimeError,
                   "Unscale dual didn't get a vector of size dual");
-    raft::linalg::eltwiseMultiply(dual_solution.data(),
-                                  dual_solution.data(),
-                                  cummulative_constraint_matrix_scaling_.data(),
-                                  dual_size_h_,
-                                  stream_view_);
+    cub::DeviceTransform::Transform(cuda::std::make_tuple(
+                                      dual_solution.data(),
+                                      thrust::make_transform_iterator(
+                                        thrust::make_counting_iterator(0),
+                                        problem_wrapped_iterator<f_t>(cummulative_constraint_matrix_scaling_.data(), dual_size_h_)
+                                      )
+                                    ),
+                                    dual_solution.data(),
+                                    (batch_mode_ ? static_cast<size_t>((0 + 3)/*@@*/) : 1) * dual_size_h_,
+                                    mul_op<f_t>(),
+                                    stream_view_);
   }
 }
 

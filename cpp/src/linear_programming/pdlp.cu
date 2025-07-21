@@ -59,8 +59,8 @@ pdlp_solver_t<i_t, f_t>::pdlp_solver_t(problem_t<i_t, f_t>& op_problem,
     problem_ptr(&op_problem),
     op_problem_scaled_(
       op_problem, false),  // False to call the PDLP custom version of the problem copy constructor
-    unscaled_primal_avg_solution_{static_cast<size_t>(op_problem.n_variables), stream_view_},
-    unscaled_dual_avg_solution_{static_cast<size_t>(op_problem.n_constraints), stream_view_},
+    unscaled_primal_avg_solution_{(settings.batch_mode ? static_cast<size_t>((0 + 3)/*@@*/) : 1) * static_cast<size_t>(op_problem.n_variables), stream_view_},
+    unscaled_dual_avg_solution_{(settings.batch_mode ? static_cast<size_t>((0 + 3)/*@@*/) : 1) * static_cast<size_t>(op_problem.n_constraints), stream_view_},
     primal_size_h_(op_problem.n_variables),
     dual_size_h_(op_problem.n_constraints),
     primal_step_size_{(settings.batch_mode ? static_cast<size_t>((0 + 3)/*@@*/) : 1), stream_view_}, // TODO number of problems
@@ -77,7 +77,8 @@ pdlp_solver_t<i_t, f_t>::pdlp_solver_t(problem_t<i_t, f_t>& op_problem,
                               pdhg_solver_,
                               op_problem_scaled_.reverse_coefficients,
                               op_problem_scaled_.reverse_offsets,
-                              op_problem_scaled_.reverse_constraints},
+                              op_problem_scaled_.reverse_constraints,
+                              settings.batch_mode},
     average_op_problem_evaluation_cusparse_view_{handle_ptr_,
                                                  op_problem,
                                                  unscaled_primal_avg_solution_,
@@ -180,9 +181,9 @@ pdlp_solver_t<i_t, f_t>::pdlp_solver_t(problem_t<i_t, f_t>& op_problem,
                stream_view_);
 
     const auto value = settings.get_pdlp_warm_start_data().sum_solution_weight_;
-    restart_strategy_.weighted_average_solution_.sum_primal_solution_weights_.set_value_async(
+    restart_strategy_.weighted_average_solution_.sum_primal_solution_weights_.set_element_async(0,
       value, stream_view_);
-    restart_strategy_.weighted_average_solution_.sum_dual_solution_weights_.set_value_async(
+    restart_strategy_.weighted_average_solution_.sum_dual_solution_weights_.set_element_async(0,
       value, stream_view_);
     restart_strategy_.weighted_average_solution_.iterations_since_last_restart_ =
       settings.get_pdlp_warm_start_data().iterations_since_last_restart_;
@@ -476,23 +477,62 @@ void pdlp_solver_t<i_t, f_t>::record_best_primal_so_far(
 template <typename i_t, typename f_t>
 pdlp_warm_start_data_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::get_filled_warmed_start_data()
 {
+  // TODO tmp
+  rmm::device_uvector<f_t> tmp_sum_primal_solutions((settings_.batch_mode ? primal_size_h_ : 0), stream_view_);
+  rmm::device_uvector<f_t> tmp_sum_dual_solutions((settings_.batch_mode ? dual_size_h_ : 0), stream_view_);
+  rmm::device_uvector<f_t> tmp_unscaled_primal_avg_solution((settings_.batch_mode ? primal_size_h_ : 0), stream_view_);
+  rmm::device_uvector<f_t> tmp_unscaled_dual_avg_solution((settings_.batch_mode ? dual_size_h_ : 0), stream_view_);
+  rmm::device_uvector<f_t> tmp_last_restart_duality_gap_primal_solution((settings_.batch_mode ? primal_size_h_ : 0), stream_view_);
+  rmm::device_uvector<f_t> tmp_last_restart_duality_gap_dual_solution((settings_.batch_mode ? dual_size_h_ : 0), stream_view_);
+  if (settings_.batch_mode) {
+  tmp_sum_primal_solutions.resize(primal_size_h_, stream_view_);
+  tmp_sum_dual_solutions.resize(dual_size_h_, stream_view_);
+  tmp_unscaled_primal_avg_solution.resize(primal_size_h_, stream_view_);
+  tmp_unscaled_dual_avg_solution.resize(dual_size_h_, stream_view_);
+  tmp_last_restart_duality_gap_primal_solution.resize(primal_size_h_, stream_view_);
+  tmp_last_restart_duality_gap_dual_solution.resize(dual_size_h_, stream_view_);
+  raft::copy(tmp_sum_primal_solutions.data(),
+             restart_strategy_.weighted_average_solution_.sum_primal_solutions_.data(),
+             primal_size_h_,
+             stream_view_);
+  raft::copy(tmp_sum_dual_solutions.data(),
+             restart_strategy_.weighted_average_solution_.sum_dual_solutions_.data(),
+             dual_size_h_,
+             stream_view_);
+  raft::copy(tmp_unscaled_primal_avg_solution.data(),
+             unscaled_primal_avg_solution_.data(),
+             primal_size_h_,
+             stream_view_);
+  raft::copy(tmp_unscaled_dual_avg_solution.data(),
+             unscaled_dual_avg_solution_.data(),
+             dual_size_h_,
+             stream_view_);
+  raft::copy(tmp_last_restart_duality_gap_primal_solution.data(),
+             restart_strategy_.last_restart_duality_gap_.primal_solution_.data(),
+             primal_size_h_,
+             stream_view_);
+  raft::copy(tmp_last_restart_duality_gap_dual_solution.data(),
+             restart_strategy_.last_restart_duality_gap_.dual_solution_.data(),
+             dual_size_h_,
+             stream_view_);
+  }
   return pdlp_warm_start_data_t<i_t, f_t>(
     pdhg_solver_.get_primal_solution(),
     pdhg_solver_.get_dual_solution(),
-    unscaled_primal_avg_solution_,
-    unscaled_dual_avg_solution_,
+    (settings_.batch_mode ? tmp_unscaled_primal_avg_solution : unscaled_primal_avg_solution_),
+    (settings_.batch_mode ? tmp_unscaled_dual_avg_solution : unscaled_dual_avg_solution_),
     pdhg_solver_.get_saddle_point_state().get_current_AtY(),
-    restart_strategy_.weighted_average_solution_.sum_primal_solutions_,
-    restart_strategy_.weighted_average_solution_.sum_dual_solutions_,
-    restart_strategy_.last_restart_duality_gap_.primal_solution_,
-    restart_strategy_.last_restart_duality_gap_.dual_solution_,
+    (settings_.batch_mode ? tmp_sum_primal_solutions : restart_strategy_.weighted_average_solution_.sum_primal_solutions_),
+    (settings_.batch_mode ? tmp_sum_dual_solutions : restart_strategy_.weighted_average_solution_.sum_dual_solutions_),
+    (settings_.batch_mode ? tmp_last_restart_duality_gap_primal_solution : restart_strategy_.last_restart_duality_gap_.primal_solution_),
+    (settings_.batch_mode ? tmp_last_restart_duality_gap_dual_solution : restart_strategy_.last_restart_duality_gap_.dual_solution_),
     get_primal_weight_h(),
     get_step_size_h(),
     total_pdlp_iterations_,
     pdhg_solver_.total_pdhg_iterations_,
     restart_strategy_.last_candidate_kkt_score,
     restart_strategy_.last_restart_kkt_score,
-    restart_strategy_.weighted_average_solution_.sum_primal_solution_weights_.value(stream_view_),
+    restart_strategy_.weighted_average_solution_.sum_primal_solution_weights_.element(0, stream_view_), // TODO handle batch
     restart_strategy_.weighted_average_solution_.iterations_since_last_restart_);
 }
 
@@ -1222,8 +1262,9 @@ void pdlp_solver_t<i_t, f_t>::take_step(i_t total_pdlp_iterations)
   // Valid state found, update internal solution state
   // Average is being added asynchronously on the GPU while the solution is being updated on the CPU
   restart_strategy_.add_current_solution_to_average_solution(
-    pdhg_solver_.get_potential_next_primal_solution().data(),
-    pdhg_solver_.get_potential_next_dual_solution().data(),
+    // TODO should be the same vector just wider
+    (settings_.batch_mode ? pdhg_solver_.get_batch_potential_next_primal_solutions().data() : pdhg_solver_.get_potential_next_primal_solution().data()),
+    (settings_.batch_mode ? pdhg_solver_.get_batch_potential_next_dual_solutions().data() : pdhg_solver_.get_potential_next_dual_solution().data()),
     step_size_,
     total_pdlp_iterations);
   pdhg_solver_.update_solution(current_op_problem_evaluation_cusparse_view_);

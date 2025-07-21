@@ -109,15 +109,23 @@ i_t saddle_point_state_t<i_t, f_t>::get_dual_size() const
 }
 
 template <typename i_t, typename f_t>
-rmm::device_uvector<f_t>& saddle_point_state_t<i_t, f_t>::get_primal_solution()
+rmm::device_uvector<f_t>& saddle_point_state_t<i_t, f_t>::get_primal_solution(bool batch)
 {
-  return primal_solution_;
+  if (batch) {
+    return batch_primal_solutions_;
+  } else {
+    return primal_solution_;
+  }
 }
 
 template <typename i_t, typename f_t>
-rmm::device_uvector<f_t>& saddle_point_state_t<i_t, f_t>::get_dual_solution()
+rmm::device_uvector<f_t>& saddle_point_state_t<i_t, f_t>::get_dual_solution(bool batch)
 {
-  return dual_solution_;
+  if (batch) {
+    return batch_dual_solutions_;
+  } else {
+    return dual_solution_;
+  }
 }
 
 template <typename i_t, typename f_t>

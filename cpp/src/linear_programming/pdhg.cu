@@ -182,7 +182,7 @@ void pdhg_solver_t<i_t, f_t>::compute_At_y()
                                                         (f_t*)cusparse_view_.buffer_transpose.data(),
                                                         stream_view_));
   } else {
-    // TMP: for now just copy in and out dual in the matrix to make sure SpMM is working
+    // TODO: for batch mode if only a single one has restarted to average most likely faster to recompute the whole thing
       RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmm(handle_ptr_->get_cusparse_handle(),
                                                         CUSPARSE_OPERATION_NON_TRANSPOSE,
                                                         CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -449,6 +449,12 @@ const rmm::device_uvector<f_t>& pdhg_solver_t<i_t, f_t>::get_potential_next_prim
 }
 
 template <typename i_t, typename f_t>
+const rmm::device_uvector<f_t>& pdhg_solver_t<i_t, f_t>::get_batch_potential_next_primal_solutions() const
+{
+  return batch_potential_next_primal_solutions_;
+}
+
+template <typename i_t, typename f_t>
 const rmm::device_uvector<f_t>& pdhg_solver_t<i_t, f_t>::get_potential_next_dual_solution() const
 {
   if(batch_mode_) {
@@ -466,6 +472,12 @@ rmm::device_uvector<f_t>& pdhg_solver_t<i_t, f_t>::get_potential_next_dual_solut
   } else {
     return potential_next_dual_solution_;
   }
+}
+
+template <typename i_t, typename f_t>
+const rmm::device_uvector<f_t>& pdhg_solver_t<i_t, f_t>::get_batch_potential_next_dual_solutions() const
+{
+  return batch_potential_next_dual_solutions_;
 }
 
 template <typename i_t, typename f_t>

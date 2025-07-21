@@ -172,6 +172,24 @@ struct problem_wrapped_iterator {
   int problem_size_;
 };
 
+// This is to have pass by copy instead of const reference which usually works better with cub::DeviceTransform to use TMA
+template <typename f_t>
+struct sub_op {
+  HDI f_t operator()(f_t a, f_t b) const
+  {
+    return a - b;
+  }
+};
+
+template <typename f_t>
+struct mul_op {
+  HDI f_t operator()(f_t a, f_t b) const
+  {
+    return a * b;
+  }
+};
+
+
 template <typename f_t>
 struct a_add_scalar_times_b {
   a_add_scalar_times_b(const f_t* scalar) : scalar_{scalar} {}
@@ -181,10 +199,24 @@ struct a_add_scalar_times_b {
 };
 
 template <typename f_t>
+struct batch_a_add_scalar_times_b {
+  HDI f_t operator()(f_t a, f_t b, f_t scalar) { return a + scalar * b; }
+};
+
+template <typename f_t>
+struct batch_safe_div {
+  HDI f_t operator()(f_t a, f_t b) { 
+    cuopt_assert(b != f_t(0), "Division by zero");
+    return b != f_t(0) ? a / b : a; 
+  }
+};
+
+template <typename f_t>
 struct safe_constant_div {
   safe_constant_div(const f_t* scalar) : scalar_{scalar} {}
   HDI f_t operator()(f_t a)
   {
+    cuopt_assert(*scalar_ != f_t(0), "Division by zero");
     return *scalar_ != f_t(0) ? a / *scalar_ : a;
   }
 

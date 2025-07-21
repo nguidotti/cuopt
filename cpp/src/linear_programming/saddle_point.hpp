@@ -87,8 +87,8 @@ class saddle_point_state_t {
 
   i_t get_primal_size() const;
   i_t get_dual_size() const;
-  rmm::device_uvector<f_t>& get_primal_solution();
-  rmm::device_uvector<f_t>& get_dual_solution();
+  rmm::device_uvector<f_t>& get_primal_solution(bool batch = false);
+  rmm::device_uvector<f_t>& get_dual_solution(bool batch = false);
   rmm::device_uvector<f_t>& get_delta_primal(bool batch = false);
   rmm::device_uvector<f_t>& get_delta_dual(bool batch = false);
   rmm::device_uvector<f_t>& get_primal_gradient();
