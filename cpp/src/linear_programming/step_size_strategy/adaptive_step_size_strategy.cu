@@ -49,10 +49,9 @@ adaptive_step_size_strategy_t<i_t, f_t>::adaptive_step_size_strategy_t(
     stream_view_(handle_ptr_->get_stream()),
     primal_weight_(primal_weight),
     step_size_(step_size),
-    valid_step_size_(1),
     // This should just use a "number of problems" parameter (and be one for non batch)
+    valid_step_size_((batch_mode_ ? static_cast<size_t>((0 + 3)/*@@*/) : 1)),
     interaction_{(batch_mode_ ? static_cast<size_t>((0 + 3)/*@@*/) : 1), stream_view_},
-    movement_{(batch_mode_ ? static_cast<size_t>((0 + 3)/*@@*/) : 1), stream_view_},
     norm_squared_delta_primal_{(batch_mode_ ? static_cast<size_t>((0 + 3)/*@@*/) : 1), stream_view_},
     norm_squared_delta_dual_{(batch_mode_ ? static_cast<size_t>((0 + 3)/*@@*/) : 1), stream_view_},
     reusable_device_scalar_value_1_{f_t(1.0), stream_view_},
@@ -112,14 +111,14 @@ __global__ void compute_step_sizes_from_movement_and_interaction(
   printf("-compute_step_sizes_from_movement_and_interaction:\n");
 #endif
   if (movement <= 0 || movement >= divergent_movement<f_t>) {
-    *step_size_strategy_view.valid_step_size = -1;
+    step_size_strategy_view.valid_step_size[id] = -1;
 #ifdef PDLP_DEBUG_MODE
     printf("  Movement is %lf. Done or numerical error has happened\n", movement);
 #endif
     return;
   }
 
-  f_t interaction_ = raft::abs(*step_size_strategy_view.interaction);
+  f_t interaction_ = raft::abs(step_size_strategy_view.interaction[id]);
   f_t step_size_   = step_size_strategy_view.step_size[id];
 
   // Increase PDHG iteration
@@ -141,7 +140,7 @@ __global__ void compute_step_sizes_from_movement_and_interaction(
 
   // TODO: every batch should have a different step size
   if (step_size_ <= step_size_limit && id == 0) {
-    *step_size_strategy_view.valid_step_size = 1;
+    step_size_strategy_view.valid_step_size[id] = 1;
 
 #ifdef PDLP_DEBUG_MODE
     printf("    Step size is smaller\n");
@@ -417,13 +416,12 @@ adaptive_step_size_strategy_t<i_t, f_t>::view()
 
   v.primal_weight   = raft::device_span<f_t>(primal_weight_->data(), primal_weight_->size());
   v.step_size       = raft::device_span<f_t>(step_size_->data(), step_size_->size());
-  v.valid_step_size = thrust::raw_pointer_cast(valid_step_size_.data());
+  v.valid_step_size = raft::device_span<i_t>(thrust::raw_pointer_cast(valid_step_size_.data()), valid_step_size_.size());
 
-  v.interaction = interaction_.data();
-  v.movement    = movement_.data();
+  v.interaction = raft::device_span<f_t>(interaction_.data(), interaction_.size());
 
-  v.norm_squared_delta_primal = norm_squared_delta_primal_.data();
-  v.norm_squared_delta_dual   = norm_squared_delta_dual_.data();
+  v.norm_squared_delta_primal = norm_squared_delta_primal_.data(); // TODO will have to be a span
+  v.norm_squared_delta_dual   = norm_squared_delta_dual_.data(); // TODO will have to be a span
 
   return v;
 }

@@ -48,10 +48,9 @@ class adaptive_step_size_strategy_t {
   struct view_t {
     raft::device_span<f_t> primal_weight;
     raft::device_span<f_t> step_size;
-    i_t* valid_step_size;
+    raft::device_span<i_t> valid_step_size;
 
-    f_t* interaction;
-    f_t* movement;
+    raft::device_span<f_t> interaction;
 
     f_t* norm_squared_delta_primal;
     f_t* norm_squared_delta_dual;
@@ -109,7 +108,6 @@ class adaptive_step_size_strategy_t {
     valid_step_size_;
 
   rmm::device_uvector<f_t> interaction_;
-  rmm::device_uvector<f_t> movement_;
 
   rmm::device_uvector<f_t> norm_squared_delta_primal_;
   rmm::device_uvector<f_t> norm_squared_delta_dual_;
