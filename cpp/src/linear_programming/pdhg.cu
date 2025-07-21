@@ -42,7 +42,7 @@ pdhg_solver_t<i_t, f_t>::pdhg_solver_t(raft::handle_t const* handle_ptr,
     problem_ptr(&op_problem_scaled),
     primal_size_h_(problem_ptr->n_variables),
     dual_size_h_(problem_ptr->n_constraints),
-    current_saddle_point_state_{handle_ptr_, problem_ptr->n_variables, problem_ptr->n_constraints},
+    current_saddle_point_state_{handle_ptr_, problem_ptr->n_variables, problem_ptr->n_constraints, batch_mode},
     tmp_primal_{static_cast<size_t>(problem_ptr->n_variables), stream_view_},
     batch_tmp_primals_{static_cast<size_t>(problem_ptr->n_variables * (0 + 3)/*@@*/), stream_view_},
     tmp_dual_{static_cast<size_t>(problem_ptr->n_constraints), stream_view_},
@@ -143,7 +143,7 @@ void pdhg_solver_t<i_t, f_t>::compute_next_dual_solution(rmm::device_uvector<f_t
 
   // All is fused in a single call to limit number of read / write in memory
   cub::DeviceTransform::Transform(
-    cuda::std::make_tuple(current_saddle_point_state_.batch_dual_solutions_.data(),
+    cuda::std::make_tuple(current_saddle_point_state_.get_dual_solution().data(),
                           current_saddle_point_state_.batch_dual_gradients_.data(),
                           thrust::make_transform_iterator(
                             thrust::make_counting_iterator(0),
@@ -222,7 +222,7 @@ void pdhg_solver_t<i_t, f_t>::compute_primal_projection_with_gradient(
     stream_view_);
   } else {
     cub::DeviceTransform::Transform(
-    cuda::std::make_tuple(current_saddle_point_state_.batch_primal_solutions_.data(),
+    cuda::std::make_tuple(current_saddle_point_state_.get_primal_solution().data(),
                           thrust::make_transform_iterator(
                             thrust::make_counting_iterator(0),
                             problem_wrapped_iterator<f_t>(problem_ptr->objective_coefficients.data(),
@@ -345,17 +345,9 @@ void pdhg_solver_t<i_t, f_t>::update_solution(
                batch_potential_next_dual_solutions_.data(),
                current_saddle_point_state_.dual_solution_.size(),
                stream_view_);
-    raft::copy(current_saddle_point_state_.batch_dual_solutions_.data(), // TODO This should be a swap
-               batch_potential_next_dual_solutions_.data(),
-               current_saddle_point_state_.batch_dual_solutions_.size(),
-               stream_view_);
     raft::copy(current_saddle_point_state_.primal_solution_.data(), // TODO This shouldn't exist
                batch_potential_next_primal_solutions_.data(),
                current_saddle_point_state_.primal_solution_.size(),
-               stream_view_);
-    raft::copy(current_saddle_point_state_.batch_primal_solutions_.data(), // TODO This should be a swap
-               batch_potential_next_primal_solutions_.data(),
-               current_saddle_point_state_.batch_primal_solutions_.size(),
                stream_view_);
   } else {
     std::swap(current_saddle_point_state_.primal_solution_, potential_next_primal_solution_);

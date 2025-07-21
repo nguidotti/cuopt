@@ -205,9 +205,9 @@ struct batch_a_add_scalar_times_b {
 
 template <typename f_t>
 struct batch_safe_div {
-  HDI f_t operator()(f_t a, f_t b) { 
+  HDI f_t operator()(f_t a, f_t b) {
     cuopt_assert(b != f_t(0), "Division by zero");
-    return b != f_t(0) ? a / b : a; 
+    return b != f_t(0) ? a / b : a;
   }
 };
 

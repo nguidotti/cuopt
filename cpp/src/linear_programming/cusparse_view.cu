@@ -227,13 +227,14 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
     op_problem_scaled.n_constraints,
     current_saddle_point_state.get_dual_solution().data()));
 
+  // TODO batch mode
   if (true) {
     RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
       &batch_dual_solutions,
       op_problem_scaled.n_constraints,
       (0 + 3)/*@@*/,
       op_problem_scaled.n_constraints,
-      current_saddle_point_state.batch_dual_solutions_.data(),
+      current_saddle_point_state.get_dual_solution().data(),
       CUSPARSE_ORDER_COL));
     RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
       &batch_current_AtYs,

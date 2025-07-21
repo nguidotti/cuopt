@@ -916,6 +916,7 @@ void pdlp_solver_t<i_t, f_t>::update_primal_dual_solutions(
 #endif
 
   // Copy the initial solution in pdhg as a first solution
+  // TODO batch mode
   if (primal) {
     raft::copy(pdhg_solver_.get_primal_solution().data(),
                primal.value()->data(),
@@ -1093,13 +1094,19 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(
   // Project initial primal solution
   if (pdlp_hyper_params::project_initial_primal) {
     // TODO project over batch
-    raft::linalg::ternaryOp(pdhg_solver_.get_primal_solution().data(),
-                            pdhg_solver_.get_primal_solution().data(),
-                            op_problem_scaled_.variable_lower_bounds.data(),
-                            op_problem_scaled_.variable_upper_bounds.data(),
-                            primal_size_h_,
-                            clamp<f_t>(),
-                            stream_view_);
+    cub::DeviceTransform::Transform(cuda::std::make_tuple(pdhg_solver_.get_primal_solution().data(),
+                                                          thrust::make_transform_iterator(
+                                                            thrust::make_counting_iterator(0),
+                                                            problem_wrapped_iterator<f_t>(op_problem_scaled_.variable_lower_bounds.data(), primal_size_h_)
+                                                          ),
+                                                          thrust::make_transform_iterator(
+                                                            thrust::make_counting_iterator(0),
+                                                            problem_wrapped_iterator<f_t>(op_problem_scaled_.variable_upper_bounds.data(), primal_size_h_)
+                                                          )),
+                                  pdhg_solver_.get_primal_solution().data(),
+                                  (settings_.batch_mode ? (0 + 3)/*@@*/ : 1) * primal_size_h_,
+                                  clamp<f_t>(),
+                                  stream_view_);
   }
 
   if (verbose) {
@@ -1157,11 +1164,11 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(
         if (internal_solver_iterations_ <= 1) {
           raft::copy(unscaled_primal_avg_solution_.data(),
                      pdhg_solver_.get_primal_solution().data(),
-                     primal_size_h_,
+                     pdhg_solver_.get_primal_solution().size(),
                      stream_view_);
           raft::copy(unscaled_dual_avg_solution_.data(),
                      pdhg_solver_.get_dual_solution().data(),
-                     dual_size_h_,
+                     pdhg_solver_.get_dual_solution().size(),
                      stream_view_);
         } else {
           restart_strategy_.get_average_solutions(unscaled_primal_avg_solution_,

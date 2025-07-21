@@ -415,16 +415,24 @@ void pdlp_initial_scaling_strategy_t<i_t, f_t>::scale_solutions(
   rmm::device_uvector<f_t>& primal_solution, rmm::device_uvector<f_t>& dual_solution) const
 {
   // scale solutions
-  raft::linalg::eltwiseDivideCheckZero(primal_solution.data(),
+  cub::DeviceTransform::Transform(cuda::std::make_tuple(primal_solution.data(),
+                                       thrust::make_transform_iterator(
+                                         thrust::make_counting_iterator(0),
+                                         problem_wrapped_iterator<f_t>(cummulative_variable_scaling_.data(), primal_size_h_)
+                                       )),
                                        primal_solution.data(),
-                                       cummulative_variable_scaling_.data(),
-                                       primal_size_h_,
+                                       primal_solution.size(),
+                                       batch_safe_div<f_t>(),
                                        stream_view_);
   if (dual_solution.size()) {
-    raft::linalg::eltwiseDivideCheckZero(dual_solution.data(),
-                                         dual_solution.data(),
-                                         cummulative_constraint_matrix_scaling_.data(),
-                                         dual_size_h_,
+    cub::DeviceTransform::Transform(cuda::std::make_tuple(dual_solution.data(),
+                                       thrust::make_transform_iterator(
+                                         thrust::make_counting_iterator(0),
+                                         problem_wrapped_iterator<f_t>(cummulative_constraint_matrix_scaling_.data(), dual_size_h_)
+                                       )),
+                                       dual_solution.data(),
+                                       dual_solution.size(),
+                                       batch_safe_div<f_t>(),
                                          stream_view_);
   }
 }
@@ -476,7 +484,7 @@ void pdlp_initial_scaling_strategy_t<i_t, f_t>::unscale_solutions(
                                     )
                                   ),
                                   primal_solution.data(),
-                                  (batch_mode_ ? static_cast<size_t>((0 + 3)/*@@*/) : 1) * primal_size_h_,
+                                  primal_solution.size(),
                                   mul_op<f_t>(),
                                   stream_view_);
 
@@ -493,7 +501,7 @@ void pdlp_initial_scaling_strategy_t<i_t, f_t>::unscale_solutions(
                                       )
                                     ),
                                     dual_solution.data(),
-                                    (batch_mode_ ? static_cast<size_t>((0 + 3)/*@@*/) : 1) * dual_size_h_,
+                                    dual_solution.size(),
                                     mul_op<f_t>(),
                                     stream_view_);
   }

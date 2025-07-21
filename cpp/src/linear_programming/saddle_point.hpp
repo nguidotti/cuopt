@@ -69,7 +69,7 @@ class saddle_point_state_t {
    *
    * @throws cuopt::logic_error if the problem sizes are not larger than 0.
    */
-  saddle_point_state_t(raft::handle_t const* handle_ptr, i_t primal_size, i_t dual_size);
+  saddle_point_state_t(raft::handle_t const* handle_ptr, i_t primal_size, i_t dual_size, bool batch_mode);
 
   /**
    * @brief Copies the values of the solutions in another saddle_point_state_t
@@ -87,8 +87,8 @@ class saddle_point_state_t {
 
   i_t get_primal_size() const;
   i_t get_dual_size() const;
-  rmm::device_uvector<f_t>& get_primal_solution(bool batch = false);
-  rmm::device_uvector<f_t>& get_dual_solution(bool batch = false);
+  rmm::device_uvector<f_t>& get_primal_solution();
+  rmm::device_uvector<f_t>& get_dual_solution();
   rmm::device_uvector<f_t>& get_delta_primal(bool batch = false);
   rmm::device_uvector<f_t>& get_delta_dual(bool batch = false);
   rmm::device_uvector<f_t>& get_primal_gradient();
@@ -114,13 +114,13 @@ class saddle_point_state_t {
   rmm::device_uvector<f_t> next_AtY_;
 
   // TODO comment : eventually should be the same vectors as above but bigger
-  rmm::device_uvector<f_t> batch_dual_solutions_;
   rmm::device_uvector<f_t> batch_current_AtYs_;
   rmm::device_uvector<f_t> batch_dual_gradients_;
   rmm::device_uvector<f_t> batch_next_AtYs_;
-  rmm::device_uvector<f_t> batch_primal_solutions_;
   rmm::device_uvector<f_t> batch_delta_primals_;
   rmm::device_uvector<f_t> batch_delta_duals_;
+
+  bool batch_mode_;
 };
 
 }  // namespace cuopt::linear_programming::detail

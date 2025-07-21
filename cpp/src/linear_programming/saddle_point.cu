@@ -26,12 +26,12 @@ namespace cuopt::linear_programming::detail {
 template <typename i_t, typename f_t>
 saddle_point_state_t<i_t, f_t>::saddle_point_state_t(raft::handle_t const* handle_ptr,
                                                      i_t primal_size,
-                                                     i_t dual_size)
+                                                     i_t dual_size,
+                                                     bool batch_mode)
   : primal_size_{primal_size},
     dual_size_{dual_size},
     primal_solution_{static_cast<size_t>(primal_size_), handle_ptr->get_stream()},
     dual_solution_{static_cast<size_t>(dual_size_), handle_ptr->get_stream()},
-    batch_dual_solutions_{static_cast<size_t>(dual_size_ * (0 + 3)/*@@*/), handle_ptr->get_stream()},
     delta_primal_{static_cast<size_t>(primal_size_), handle_ptr->get_stream()},
     delta_dual_{static_cast<size_t>(dual_size_), handle_ptr->get_stream()},
     primal_gradient_{static_cast<size_t>(primal_size_), handle_ptr->get_stream()},
@@ -41,7 +41,6 @@ saddle_point_state_t<i_t, f_t>::saddle_point_state_t(raft::handle_t const* handl
     batch_dual_gradients_{static_cast<size_t>(dual_size_ * (0 + 3)/*@@*/), handle_ptr->get_stream()},
     next_AtY_{static_cast<size_t>(primal_size_), handle_ptr->get_stream()},
     batch_next_AtYs_{static_cast<size_t>(primal_size_ * (0 + 3)/*@@*/), handle_ptr->get_stream()},
-    batch_primal_solutions_{static_cast<size_t>(primal_size_ * (0 + 3)/*@@*/), handle_ptr->get_stream()},
     batch_delta_primals_{static_cast<size_t>(primal_size_ * (0 + 3)/*@@*/), handle_ptr->get_stream()},
     batch_delta_duals_{static_cast<size_t>(dual_size_ * (0 + 3)/*@@*/), handle_ptr->get_stream()}
 {
@@ -53,13 +52,6 @@ saddle_point_state_t<i_t, f_t>::saddle_point_state_t(raft::handle_t const* handl
     handle_ptr->get_thrust_policy(), primal_solution_.data(), primal_solution_.end(), f_t(0));
   thrust::fill(
     handle_ptr->get_thrust_policy(), dual_solution_.data(), dual_solution_.end(), f_t(0));
-  // TODO only init in batch mode
-  thrust::fill(
-    handle_ptr->get_thrust_policy(), batch_dual_solutions_.data(), batch_dual_solutions_.end(),
-    f_t(0));
-  thrust::fill(
-    handle_ptr->get_thrust_policy(), batch_primal_solutions_.data(), batch_primal_solutions_.end(),
-    f_t(0));
 
   RAFT_CUDA_TRY(cudaMemsetAsync(
     delta_primal_.data(), 0.0, sizeof(f_t) * primal_size_, handle_ptr->get_stream()));
@@ -109,23 +101,15 @@ i_t saddle_point_state_t<i_t, f_t>::get_dual_size() const
 }
 
 template <typename i_t, typename f_t>
-rmm::device_uvector<f_t>& saddle_point_state_t<i_t, f_t>::get_primal_solution(bool batch)
+rmm::device_uvector<f_t>& saddle_point_state_t<i_t, f_t>::get_primal_solution()
 {
-  if (batch) {
-    return batch_primal_solutions_;
-  } else {
-    return primal_solution_;
-  }
+  return primal_solution_;
 }
 
 template <typename i_t, typename f_t>
-rmm::device_uvector<f_t>& saddle_point_state_t<i_t, f_t>::get_dual_solution(bool batch)
+rmm::device_uvector<f_t>& saddle_point_state_t<i_t, f_t>::get_dual_solution()
 {
-  if (batch) {
-    return batch_dual_solutions_;
-  } else {
-    return dual_solution_;
-  }
+  return dual_solution_;
 }
 
 template <typename i_t, typename f_t>
