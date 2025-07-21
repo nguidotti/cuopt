@@ -18,6 +18,7 @@
 #include <cuopt/linear_programming/pdlp/pdlp_hyper_params.cuh>
 #include <linear_programming/pdlp_constants.hpp>
 #include <linear_programming/step_size_strategy/adaptive_step_size_strategy.hpp>
+#include <linear_programming/utils.cuh>
 #include <mip/mip_constants.hpp>
 
 #include <raft/sparse/detail/cusparse_macros.h>
@@ -50,10 +51,10 @@ adaptive_step_size_strategy_t<i_t, f_t>::adaptive_step_size_strategy_t(
     primal_weight_(primal_weight),
     step_size_(step_size),
     // This should just use a "number of problems" parameter (and be one for non batch)
-    valid_step_size_((batch_mode_ ? static_cast<size_t>((0 + 3)/*@@*/) : 1)),
-    interaction_{(batch_mode_ ? static_cast<size_t>((0 + 3)/*@@*/) : 1), stream_view_},
-    norm_squared_delta_primal_{(batch_mode_ ? static_cast<size_t>((0 + 3)/*@@*/) : 1), stream_view_},
-    norm_squared_delta_dual_{(batch_mode_ ? static_cast<size_t>((0 + 3)/*@@*/) : 1), stream_view_},
+    valid_step_size_((batch_mode ? static_cast<size_t>((0 + 3)/*@@*/) : 1)),
+    interaction_{(batch_mode ? static_cast<size_t>((0 + 3)/*@@*/) : 1), stream_view_},
+    norm_squared_delta_primal_{(batch_mode ? static_cast<size_t>((0 + 3)/*@@*/) : 1), stream_view_},
+    norm_squared_delta_dual_{(batch_mode ? static_cast<size_t>((0 + 3)/*@@*/) : 1), stream_view_},
     reusable_device_scalar_value_1_{f_t(1.0), stream_view_},
     reusable_device_scalar_value_0_{f_t(0.0), stream_view_},
     graph(stream_view_),
@@ -306,7 +307,7 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
                             current_saddle_point_state.get_current_AtY().data()),
       tmp_primal.data(),
       current_saddle_point_state.get_primal_size(),
-      raft::sub_op(),
+      sub_op<f_t>(),
       stream_view_);
   } else {
     RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmm(handle_ptr_->get_cusparse_handle(),
@@ -326,7 +327,7 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
                             current_saddle_point_state.batch_current_AtYs_.data()),
       tmp_primal.data(),
       current_saddle_point_state.get_primal_size() * (0 + 3)/*@@*/,
-      raft::sub_op(),
+      sub_op<f_t>(),
       stream_view_);
     }
 
