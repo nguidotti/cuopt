@@ -162,8 +162,7 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
   rmm::device_uvector<f_t>& _tmp_primal,
   rmm::device_uvector<f_t>& _batch_tmp_primals,
   rmm::device_uvector<f_t>& _tmp_dual,
-  rmm::device_uvector<f_t>& _potential_next_dual_solution,
-  rmm::device_uvector<f_t>& _batch_potential_next_dual_solution)
+  rmm::device_uvector<f_t>& _potential_next_dual_solution)
   : handle_ptr_(handle_ptr),
     A{},
     A_T{},
@@ -262,7 +261,7 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
       op_problem_scaled.n_constraints,
       (0 + 3)/*@@*/,
       op_problem_scaled.n_constraints,
-      _batch_potential_next_dual_solution.data(),
+      _potential_next_dual_solution.data(),
       CUSPARSE_ORDER_COL));
     RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
       &batch_next_AtYs,

@@ -1287,9 +1287,8 @@ void pdlp_solver_t<i_t, f_t>::take_step(i_t total_pdlp_iterations)
   // Valid state found, update internal solution state
   // Average is being added asynchronously on the GPU while the solution is being updated on the CPU
   restart_strategy_.add_current_solution_to_average_solution(
-    // TODO should be the same vector just wider
-    (settings_.batch_mode ? pdhg_solver_.get_batch_potential_next_primal_solutions().data() : pdhg_solver_.get_potential_next_primal_solution().data()),
-    (settings_.batch_mode ? pdhg_solver_.get_batch_potential_next_dual_solutions().data() : pdhg_solver_.get_potential_next_dual_solution().data()),
+    pdhg_solver_.get_potential_next_primal_solution().data(),
+    pdhg_solver_.get_potential_next_dual_solution().data(),
     step_size_,
     total_pdlp_iterations);
   pdhg_solver_.update_solution(current_op_problem_evaluation_cusparse_view_);

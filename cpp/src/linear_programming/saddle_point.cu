@@ -34,6 +34,7 @@ saddle_point_state_t<i_t, f_t>::saddle_point_state_t(raft::handle_t const* handl
     dual_solution_{batch_mode ? static_cast<size_t>(dual_size_ * (0 + 3)/*@@*/) : static_cast<size_t>(dual_size_), handle_ptr->get_stream()},
     delta_primal_{batch_mode ? static_cast<size_t>(primal_size_ * (0 + 3)/*@@*/) : static_cast<size_t>(primal_size_), handle_ptr->get_stream()},
     delta_dual_{batch_mode ? static_cast<size_t>(dual_size_ * (0 + 3)/*@@*/) : static_cast<size_t>(dual_size_), handle_ptr->get_stream()},
+    // Primal gradient is only used in trust region restart mode which does not support batch mode
     primal_gradient_{static_cast<size_t>(primal_size_), handle_ptr->get_stream()},
     dual_gradient_{batch_mode ? static_cast<size_t>(dual_size_ * (0 + 3)/*@@*/) : static_cast<size_t>(dual_size_), handle_ptr->get_stream()},
     current_AtY_{batch_mode ? static_cast<size_t>(primal_size_ * (0 + 3)/*@@*/) : static_cast<size_t>(primal_size_), handle_ptr->get_stream()},

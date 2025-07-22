@@ -46,10 +46,8 @@ pdhg_solver_t<i_t, f_t>::pdhg_solver_t(raft::handle_t const* handle_ptr,
     tmp_primal_{static_cast<size_t>(problem_ptr->n_variables), stream_view_},
     batch_tmp_primals_{static_cast<size_t>(problem_ptr->n_variables * (0 + 3)/*@@*/), stream_view_},
     tmp_dual_{static_cast<size_t>(problem_ptr->n_constraints), stream_view_},
-    potential_next_primal_solution_{static_cast<size_t>(problem_ptr->n_variables), stream_view_},
-    batch_potential_next_primal_solutions_{static_cast<size_t>(problem_ptr->n_variables * (0 + 3)/*@@*/), stream_view_},
-    potential_next_dual_solution_{static_cast<size_t>(problem_ptr->n_constraints), stream_view_},
-    batch_potential_next_dual_solutions_{static_cast<size_t>(problem_ptr->n_constraints * (0 + 3)/*@@*/), stream_view_},
+    potential_next_primal_solution_{(batch_mode ? static_cast<size_t>(problem_ptr->n_variables * (0 + 3)/*@@*/) : static_cast<size_t>(problem_ptr->n_variables)), stream_view_},
+    potential_next_dual_solution_{(batch_mode ? static_cast<size_t>(problem_ptr->n_constraints * (0 + 3)/*@@*/) : static_cast<size_t>(problem_ptr->n_constraints)), stream_view_},
     total_pdhg_iterations_{0},
     cusparse_view_{handle_ptr_,
                    op_problem_scaled,
@@ -57,8 +55,7 @@ pdhg_solver_t<i_t, f_t>::pdhg_solver_t(raft::handle_t const* handle_ptr,
                    tmp_primal_,
                    batch_tmp_primals_,
                    tmp_dual_,
-                   potential_next_dual_solution_,
-                   batch_potential_next_dual_solutions_},
+                   potential_next_dual_solution_},
     reusable_device_scalar_value_1_{1.0, stream_view_},
     reusable_device_scalar_value_0_{0.0, stream_view_},
     reusable_device_scalar_value_neg_1_{f_t(-1.0), stream_view_},
@@ -158,7 +155,7 @@ void pdhg_solver_t<i_t, f_t>::compute_next_dual_solution(rmm::device_uvector<f_t
                             batch_wrapped_iterator<f_t>(dual_step_size.data(),
                                                          dual_size_h_))
                           ),
-    thrust::make_zip_iterator(batch_potential_next_dual_solutions_.data(),
+    thrust::make_zip_iterator(potential_next_dual_solution_.data(),
                               current_saddle_point_state_.get_delta_dual().data()),
     dual_size_h_ * (0 + 3)/*@@*/,
     batch_dual_projection<f_t>(),
@@ -241,7 +238,7 @@ void pdhg_solver_t<i_t, f_t>::compute_primal_projection_with_gradient(
                             batch_wrapped_iterator<f_t>(primal_step_size.data(),
                                                          primal_size_h_))
                           ),
-    thrust::make_zip_iterator(batch_potential_next_primal_solutions_.data(),
+    thrust::make_zip_iterator(potential_next_primal_solution_.data(),
                               current_saddle_point_state_.get_delta_primal().data(),
                               batch_tmp_primals_.data()),
     primal_size_h_ * (0 + 3)/*@@*/,
@@ -339,21 +336,11 @@ void pdhg_solver_t<i_t, f_t>::update_solution(
 
   // Accepted (valid step size) next_Aty will be current Aty next PDHG iteration, saves an SpMV
   std::swap(current_saddle_point_state_.current_AtY_, current_saddle_point_state_.next_AtY_);
-  if(batch_mode_) {
-    raft::copy(current_saddle_point_state_.dual_solution_.data(), // TODO This shouldn't exist
-               batch_potential_next_dual_solutions_.data(),
-               current_saddle_point_state_.dual_solution_.size(),
-               stream_view_);
-    raft::copy(current_saddle_point_state_.primal_solution_.data(), // TODO This shouldn't exist
-               batch_potential_next_primal_solutions_.data(),
-               current_saddle_point_state_.primal_solution_.size(),
-               stream_view_);
-  } else {
-    std::swap(current_saddle_point_state_.primal_solution_, potential_next_primal_solution_);
-    std::swap(current_saddle_point_state_.dual_solution_, potential_next_dual_solution_);
-  }
+  std::swap(current_saddle_point_state_.primal_solution_, potential_next_primal_solution_);
+  std::swap(current_saddle_point_state_.dual_solution_, potential_next_dual_solution_);
 
   // Forced to reinite cusparse views but that's ok, cost is marginal
+  // TODO do I need that in batch mode?
   RAFT_CUSPARSE_TRY(
     raft::sparse::detail::cusparsecreatednvec(&cusparse_view_.current_AtY,
                                               current_saddle_point_state_.get_primal_size(),
@@ -390,6 +377,13 @@ void pdhg_solver_t<i_t, f_t>::update_solution(
         current_saddle_point_state_.get_primal_size(),
         current_saddle_point_state_.get_next_AtY().data(),
         CUSPARSE_ORDER_COL));
+    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
+          &cusparse_view_.batch_potential_next_dual_solution,
+          current_saddle_point_state_.get_dual_size(),
+          (0 + 3)/*@@*/,
+          current_saddle_point_state_.get_dual_size(),
+          potential_next_dual_solution_.data(),
+          CUSPARSE_ORDER_COL));
  }
   RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednvec(
     &current_op_problem_evaluation_cusparse_view_.primal_solution,
@@ -432,43 +426,19 @@ rmm::device_uvector<f_t>& pdhg_solver_t<i_t, f_t>::get_dual_tmp_resource()
 template <typename i_t, typename f_t>
 const rmm::device_uvector<f_t>& pdhg_solver_t<i_t, f_t>::get_potential_next_primal_solution() const
 {
-  if(batch_mode_) {
-    return batch_potential_next_primal_solutions_;
-  } else {
-    return potential_next_primal_solution_;
-  }
-}
-
-template <typename i_t, typename f_t>
-const rmm::device_uvector<f_t>& pdhg_solver_t<i_t, f_t>::get_batch_potential_next_primal_solutions() const
-{
-  return batch_potential_next_primal_solutions_;
+  return potential_next_primal_solution_;
 }
 
 template <typename i_t, typename f_t>
 const rmm::device_uvector<f_t>& pdhg_solver_t<i_t, f_t>::get_potential_next_dual_solution() const
 {
-  if(batch_mode_) {
-    return batch_potential_next_dual_solutions_;
-  } else {
-    return potential_next_dual_solution_;
-  }
+  return potential_next_dual_solution_;
 }
 
 template <typename i_t, typename f_t>
 rmm::device_uvector<f_t>& pdhg_solver_t<i_t, f_t>::get_potential_next_dual_solution()
 {
-  if(batch_mode_) {
-    return batch_potential_next_dual_solutions_;
-  } else {
-    return potential_next_dual_solution_;
-  }
-}
-
-template <typename i_t, typename f_t>
-const rmm::device_uvector<f_t>& pdhg_solver_t<i_t, f_t>::get_batch_potential_next_dual_solutions() const
-{
-  return batch_potential_next_dual_solutions_;
+  return potential_next_dual_solution_;
 }
 
 template <typename i_t, typename f_t>

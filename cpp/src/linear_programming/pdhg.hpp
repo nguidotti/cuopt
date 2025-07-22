@@ -40,8 +40,6 @@ class pdhg_solver_t {
   const rmm::device_uvector<f_t>& get_potential_next_primal_solution() const;
   rmm::device_uvector<f_t>& get_potential_next_dual_solution();
   const rmm::device_uvector<f_t>& get_potential_next_dual_solution() const;
-  const rmm::device_uvector<f_t>& get_batch_potential_next_primal_solutions() const;
-  const rmm::device_uvector<f_t>& get_batch_potential_next_dual_solutions() const;
   i_t get_total_pdhg_iterations();
   rmm::device_scalar<i_t>& get_d_total_pdhg_iterations();
   rmm::device_uvector<f_t>& get_primal_solution();
@@ -84,9 +82,6 @@ class pdhg_solver_t {
 
   rmm::device_uvector<f_t> potential_next_primal_solution_;
   rmm::device_uvector<f_t> potential_next_dual_solution_;
-  // TODO comment
-  rmm::device_uvector<f_t> batch_potential_next_dual_solutions_;
-  rmm::device_uvector<f_t> batch_potential_next_primal_solutions_;
 
   cusparse_view_t<i_t, f_t> cusparse_view_;
 
