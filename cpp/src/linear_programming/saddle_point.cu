@@ -36,11 +36,9 @@ saddle_point_state_t<i_t, f_t>::saddle_point_state_t(raft::handle_t const* handl
     delta_dual_{batch_mode ? static_cast<size_t>(dual_size_ * (0 + 3)/*@@*/) : static_cast<size_t>(dual_size_), handle_ptr->get_stream()},
     primal_gradient_{static_cast<size_t>(primal_size_), handle_ptr->get_stream()},
     dual_gradient_{static_cast<size_t>(dual_size_), handle_ptr->get_stream()},
-    current_AtY_{static_cast<size_t>(primal_size_), handle_ptr->get_stream()},
-    batch_current_AtYs_{static_cast<size_t>(primal_size_ * (0 + 3)/*@@*/), handle_ptr->get_stream()},
+    current_AtY_{batch_mode ? static_cast<size_t>(primal_size_ * (0 + 3)/*@@*/) : static_cast<size_t>(primal_size_), handle_ptr->get_stream()},
     batch_dual_gradients_{static_cast<size_t>(dual_size_ * (0 + 3)/*@@*/), handle_ptr->get_stream()},
-    next_AtY_{static_cast<size_t>(primal_size_), handle_ptr->get_stream()},
-    batch_next_AtYs_{static_cast<size_t>(primal_size_ * (0 + 3)/*@@*/), handle_ptr->get_stream()}
+    next_AtY_{batch_mode ? static_cast<size_t>(primal_size_ * (0 + 3)/*@@*/) : static_cast<size_t>(primal_size_), handle_ptr->get_stream()}
 {
   EXE_CUOPT_EXPECTS(primal_size > 0, "Size of the primal problem must be larger than 0");
   EXE_CUOPT_EXPECTS(dual_size > 0, "Size of the dual problem must be larger than 0");

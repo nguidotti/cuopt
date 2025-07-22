@@ -114,9 +114,7 @@ class saddle_point_state_t {
   rmm::device_uvector<f_t> next_AtY_;
 
   // TODO comment : eventually should be the same vectors as above but bigger
-  rmm::device_uvector<f_t> batch_current_AtYs_;
   rmm::device_uvector<f_t> batch_dual_gradients_;
-  rmm::device_uvector<f_t> batch_next_AtYs_;
 
   bool batch_mode_;
 };

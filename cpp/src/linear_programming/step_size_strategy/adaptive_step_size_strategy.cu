@@ -323,8 +323,8 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
                                                        stream_view_));
     // Compute Ay' - Ay = next_Aty - current_Aty
     cub::DeviceTransform::Transform(
-      cuda::std::make_tuple(current_saddle_point_state.batch_next_AtYs_.data(),
-                            current_saddle_point_state.batch_current_AtYs_.data()),
+      cuda::std::make_tuple(current_saddle_point_state.get_next_AtY().data(),
+                            current_saddle_point_state.get_current_AtY().data()),
       tmp_primal.data(),
       current_saddle_point_state.get_primal_size() * (0 + 3)/*@@*/,
       sub_op<f_t>(),

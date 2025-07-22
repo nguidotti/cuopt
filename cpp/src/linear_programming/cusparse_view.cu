@@ -241,7 +241,7 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
       op_problem_scaled.n_variables,
       (0 + 3)/*@@*/,
       op_problem_scaled.n_variables,
-      current_saddle_point_state.batch_current_AtYs_.data(),
+      current_saddle_point_state.get_current_AtY().data(),
       CUSPARSE_ORDER_COL));
     RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
       &batch_tmp_primals,
@@ -269,7 +269,7 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
       op_problem_scaled.n_variables,
       (0 + 3)/*@@*/,
       op_problem_scaled.n_variables,
-      current_saddle_point_state.batch_next_AtYs_.data(),
+      current_saddle_point_state.get_next_AtY().data(),
       CUSPARSE_ORDER_COL));
   }
 

@@ -227,7 +227,7 @@ void pdhg_solver_t<i_t, f_t>::compute_primal_projection_with_gradient(
                             thrust::make_counting_iterator(0),
                             problem_wrapped_iterator<f_t>(problem_ptr->objective_coefficients.data(),
                                                          primal_size_h_)),
-                          current_saddle_point_state_.batch_current_AtYs_.data(),
+                          current_saddle_point_state_.get_current_AtY().data(),
                           thrust::make_transform_iterator(
                             thrust::make_counting_iterator(0),
                             problem_wrapped_iterator<f_t>(problem_ptr->variable_lower_bounds.data(),
@@ -340,7 +340,6 @@ void pdhg_solver_t<i_t, f_t>::update_solution(
   // Accepted (valid step size) next_Aty will be current Aty next PDHG iteration, saves an SpMV
   std::swap(current_saddle_point_state_.current_AtY_, current_saddle_point_state_.next_AtY_);
   if(batch_mode_) {
-    std::swap(current_saddle_point_state_.batch_current_AtYs_, current_saddle_point_state_.batch_next_AtYs_);
     raft::copy(current_saddle_point_state_.dual_solution_.data(), // TODO This shouldn't exist
                batch_potential_next_dual_solutions_.data(),
                current_saddle_point_state_.dual_solution_.size(),
@@ -382,14 +381,14 @@ void pdhg_solver_t<i_t, f_t>::update_solution(
       current_saddle_point_state_.get_primal_size(),
       (0 + 3)/*@@*/,
       current_saddle_point_state_.get_primal_size(),
-      current_saddle_point_state_.batch_current_AtYs_.data(),
+      current_saddle_point_state_.get_current_AtY().data(),
       CUSPARSE_ORDER_COL));
       RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
         &cusparse_view_.batch_next_AtYs,
         current_saddle_point_state_.get_primal_size(),
         (0 + 3)/*@@*/,
         current_saddle_point_state_.get_primal_size(),
-        current_saddle_point_state_.batch_next_AtYs_.data(),
+        current_saddle_point_state_.get_next_AtY().data(),
         CUSPARSE_ORDER_COL));
  }
   RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednvec(
