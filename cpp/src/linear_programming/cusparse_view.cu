@@ -160,7 +160,6 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
   const problem_t<i_t, f_t>& op_problem_scaled,
   saddle_point_state_t<i_t, f_t>& current_saddle_point_state,
   rmm::device_uvector<f_t>& _tmp_primal,
-  rmm::device_uvector<f_t>& _batch_tmp_primals,
   rmm::device_uvector<f_t>& _tmp_dual,
   rmm::device_uvector<f_t>& _potential_next_dual_solution)
   : handle_ptr_(handle_ptr),
@@ -247,7 +246,7 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
       op_problem_scaled.n_variables,
       (0 + 3)/*@@*/,
       op_problem_scaled.n_variables,
-      _batch_tmp_primals.data(),
+      _tmp_primal.data(),
       CUSPARSE_ORDER_COL));
     RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
       &batch_dual_gradients,

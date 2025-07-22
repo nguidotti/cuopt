@@ -43,8 +43,7 @@ pdhg_solver_t<i_t, f_t>::pdhg_solver_t(raft::handle_t const* handle_ptr,
     primal_size_h_(problem_ptr->n_variables),
     dual_size_h_(problem_ptr->n_constraints),
     current_saddle_point_state_{handle_ptr_, problem_ptr->n_variables, problem_ptr->n_constraints, batch_mode},
-    tmp_primal_{static_cast<size_t>(problem_ptr->n_variables), stream_view_},
-    batch_tmp_primals_{static_cast<size_t>(problem_ptr->n_variables * (0 + 3)/*@@*/), stream_view_},
+    tmp_primal_{(batch_mode ? static_cast<size_t>(problem_ptr->n_variables * (0 + 3)/*@@*/) : static_cast<size_t>(problem_ptr->n_variables)), stream_view_},
     tmp_dual_{static_cast<size_t>(problem_ptr->n_constraints), stream_view_},
     potential_next_primal_solution_{(batch_mode ? static_cast<size_t>(problem_ptr->n_variables * (0 + 3)/*@@*/) : static_cast<size_t>(problem_ptr->n_variables)), stream_view_},
     potential_next_dual_solution_{(batch_mode ? static_cast<size_t>(problem_ptr->n_constraints * (0 + 3)/*@@*/) : static_cast<size_t>(problem_ptr->n_constraints)), stream_view_},
@@ -53,7 +52,6 @@ pdhg_solver_t<i_t, f_t>::pdhg_solver_t(raft::handle_t const* handle_ptr,
                    op_problem_scaled,
                    current_saddle_point_state_,
                    tmp_primal_,
-                   batch_tmp_primals_,
                    tmp_dual_,
                    potential_next_dual_solution_},
     reusable_device_scalar_value_1_{1.0, stream_view_},
@@ -240,7 +238,7 @@ void pdhg_solver_t<i_t, f_t>::compute_primal_projection_with_gradient(
                           ),
     thrust::make_zip_iterator(potential_next_primal_solution_.data(),
                               current_saddle_point_state_.get_delta_primal().data(),
-                              batch_tmp_primals_.data()),
+                              tmp_primal_.data()),
     primal_size_h_ * (0 + 3)/*@@*/,
     batch_primal_projection<f_t>(),
     stream_view_);
@@ -415,13 +413,9 @@ cusparse_view_t<i_t, f_t>& pdhg_solver_t<i_t, f_t>::get_cusparse_view()
 }
 
 template <typename i_t, typename f_t>
-rmm::device_uvector<f_t>& pdhg_solver_t<i_t, f_t>::get_primal_tmp_resource(bool batch_mode)
+rmm::device_uvector<f_t>& pdhg_solver_t<i_t, f_t>::get_primal_tmp_resource()
 {
-  if (batch_mode) {
-    return batch_tmp_primals_;
-  } else {
-    return tmp_primal_;
-  }
+  return tmp_primal_;
 }
 
 template <typename i_t, typename f_t>

@@ -33,7 +33,6 @@ class cusparse_view_t {
                   const problem_t<i_t, f_t>& op_problem,
                   saddle_point_state_t<i_t, f_t>& current_saddle_point_state,
                   rmm::device_uvector<f_t>& _tmp_primal,
-                  rmm::device_uvector<f_t>& _batch_tmp_primals,
                   rmm::device_uvector<f_t>& _tmp_dual,
                   rmm::device_uvector<f_t>& _potential_next_dual_solution);
 
