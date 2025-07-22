@@ -159,7 +159,7 @@ void pdhg_solver_t<i_t, f_t>::compute_next_dual_solution(rmm::device_uvector<f_t
                                                          dual_size_h_))
                           ),
     thrust::make_zip_iterator(batch_potential_next_dual_solutions_.data(),
-                              current_saddle_point_state_.batch_delta_duals_.data()),
+                              current_saddle_point_state_.get_delta_dual().data()),
     dual_size_h_ * (0 + 3)/*@@*/,
     batch_dual_projection<f_t>(),
     stream_view_);
@@ -242,7 +242,7 @@ void pdhg_solver_t<i_t, f_t>::compute_primal_projection_with_gradient(
                                                          primal_size_h_))
                           ),
     thrust::make_zip_iterator(batch_potential_next_primal_solutions_.data(),
-                              current_saddle_point_state_.batch_delta_primals_.data(),
+                              current_saddle_point_state_.get_delta_primal().data(),
                               batch_tmp_primals_.data()),
     primal_size_h_ * (0 + 3)/*@@*/,
     batch_primal_projection<f_t>(),
