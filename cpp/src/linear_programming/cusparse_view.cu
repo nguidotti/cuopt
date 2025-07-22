@@ -255,7 +255,7 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
       op_problem_scaled.n_constraints,
       (0 + 3)/*@@*/,
       op_problem_scaled.n_constraints,
-      current_saddle_point_state.batch_dual_gradients_.data(),
+      current_saddle_point_state.get_dual_gradient().data(),
       CUSPARSE_ORDER_COL));
     RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
       &batch_potential_next_dual_solution,

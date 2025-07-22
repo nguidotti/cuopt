@@ -144,7 +144,7 @@ void pdhg_solver_t<i_t, f_t>::compute_next_dual_solution(rmm::device_uvector<f_t
   // All is fused in a single call to limit number of read / write in memory
   cub::DeviceTransform::Transform(
     cuda::std::make_tuple(current_saddle_point_state_.get_dual_solution().data(),
-                          current_saddle_point_state_.batch_dual_gradients_.data(),
+                          current_saddle_point_state_.get_dual_gradient().data(),
                           thrust::make_transform_iterator(
                             thrust::make_counting_iterator(0),
                             problem_wrapped_iterator<f_t>(problem_ptr->constraint_lower_bounds.data(),

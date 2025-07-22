@@ -35,9 +35,8 @@ saddle_point_state_t<i_t, f_t>::saddle_point_state_t(raft::handle_t const* handl
     delta_primal_{batch_mode ? static_cast<size_t>(primal_size_ * (0 + 3)/*@@*/) : static_cast<size_t>(primal_size_), handle_ptr->get_stream()},
     delta_dual_{batch_mode ? static_cast<size_t>(dual_size_ * (0 + 3)/*@@*/) : static_cast<size_t>(dual_size_), handle_ptr->get_stream()},
     primal_gradient_{static_cast<size_t>(primal_size_), handle_ptr->get_stream()},
-    dual_gradient_{static_cast<size_t>(dual_size_), handle_ptr->get_stream()},
+    dual_gradient_{batch_mode ? static_cast<size_t>(dual_size_ * (0 + 3)/*@@*/) : static_cast<size_t>(dual_size_), handle_ptr->get_stream()},
     current_AtY_{batch_mode ? static_cast<size_t>(primal_size_ * (0 + 3)/*@@*/) : static_cast<size_t>(primal_size_), handle_ptr->get_stream()},
-    batch_dual_gradients_{static_cast<size_t>(dual_size_ * (0 + 3)/*@@*/), handle_ptr->get_stream()},
     next_AtY_{batch_mode ? static_cast<size_t>(primal_size_ * (0 + 3)/*@@*/) : static_cast<size_t>(primal_size_), handle_ptr->get_stream()}
 {
   EXE_CUOPT_EXPECTS(primal_size > 0, "Size of the primal problem must be larger than 0");
@@ -57,10 +56,6 @@ saddle_point_state_t<i_t, f_t>::saddle_point_state_t(raft::handle_t const* handl
     primal_gradient_.data(), 0.0, sizeof(f_t) * primal_size_, handle_ptr->get_stream()));
   RAFT_CUDA_TRY(cudaMemsetAsync(
     dual_gradient_.data(), 0.0, sizeof(f_t) * dual_size_, handle_ptr->get_stream()));
-
-  // TODO only init in batch mode
-    RAFT_CUDA_TRY(cudaMemsetAsync(
-    batch_dual_gradients_.data(), 0.0, sizeof(f_t) * dual_size_ * (0 + 3)/*@@*/, handle_ptr->get_stream()));
 
   // No need to 0 init current/next AtY, they are directlty written as result of SpMV
 }
