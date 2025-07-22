@@ -478,6 +478,8 @@ template <typename i_t, typename f_t>
 pdlp_warm_start_data_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::get_filled_warmed_start_data()
 {
   // TODO tmp
+  rmm::device_uvector<f_t> tmp_primal_solution((settings_.batch_mode ? primal_size_h_ : 0), stream_view_);
+  rmm::device_uvector<f_t> tmp_dual_solution((settings_.batch_mode ? dual_size_h_ : 0), stream_view_);
   rmm::device_uvector<f_t> tmp_sum_primal_solutions((settings_.batch_mode ? primal_size_h_ : 0), stream_view_);
   rmm::device_uvector<f_t> tmp_sum_dual_solutions((settings_.batch_mode ? dual_size_h_ : 0), stream_view_);
   rmm::device_uvector<f_t> tmp_unscaled_primal_avg_solution((settings_.batch_mode ? primal_size_h_ : 0), stream_view_);
@@ -485,12 +487,22 @@ pdlp_warm_start_data_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::get_filled_warmed_star
   rmm::device_uvector<f_t> tmp_last_restart_duality_gap_primal_solution((settings_.batch_mode ? primal_size_h_ : 0), stream_view_);
   rmm::device_uvector<f_t> tmp_last_restart_duality_gap_dual_solution((settings_.batch_mode ? dual_size_h_ : 0), stream_view_);
   if (settings_.batch_mode) {
+  tmp_primal_solution.resize(primal_size_h_, stream_view_);
+  tmp_dual_solution.resize(dual_size_h_, stream_view_);
   tmp_sum_primal_solutions.resize(primal_size_h_, stream_view_);
   tmp_sum_dual_solutions.resize(dual_size_h_, stream_view_);
   tmp_unscaled_primal_avg_solution.resize(primal_size_h_, stream_view_);
   tmp_unscaled_dual_avg_solution.resize(dual_size_h_, stream_view_);
   tmp_last_restart_duality_gap_primal_solution.resize(primal_size_h_, stream_view_);
   tmp_last_restart_duality_gap_dual_solution.resize(dual_size_h_, stream_view_);
+  raft::copy(tmp_primal_solution.data(),
+             pdhg_solver_.get_primal_solution().data(),
+             pdhg_solver_.get_primal_solution().size(),
+             stream_view_);
+  raft::copy(tmp_dual_solution.data(),
+             pdhg_solver_.get_dual_solution().data(),
+             pdhg_solver_.get_dual_solution().size(),
+             stream_view_);
   raft::copy(tmp_sum_primal_solutions.data(),
              restart_strategy_.weighted_average_solution_.sum_primal_solutions_.data(),
              primal_size_h_,
@@ -517,8 +529,8 @@ pdlp_warm_start_data_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::get_filled_warmed_star
              stream_view_);
   }
   return pdlp_warm_start_data_t<i_t, f_t>(
-    pdhg_solver_.get_primal_solution(),
-    pdhg_solver_.get_dual_solution(),
+    (settings_.batch_mode ? tmp_primal_solution : pdhg_solver_.get_primal_solution()),
+    (settings_.batch_mode ? tmp_dual_solution : pdhg_solver_.get_dual_solution()),
     (settings_.batch_mode ? tmp_unscaled_primal_avg_solution : unscaled_primal_avg_solution_),
     (settings_.batch_mode ? tmp_unscaled_dual_avg_solution : unscaled_dual_avg_solution_),
     pdhg_solver_.get_saddle_point_state().get_current_AtY(),

@@ -30,8 +30,8 @@ saddle_point_state_t<i_t, f_t>::saddle_point_state_t(raft::handle_t const* handl
                                                      bool batch_mode)
   : primal_size_{primal_size},
     dual_size_{dual_size},
-    primal_solution_{static_cast<size_t>(primal_size_), handle_ptr->get_stream()},
-    dual_solution_{static_cast<size_t>(dual_size_), handle_ptr->get_stream()},
+    primal_solution_{batch_mode ? static_cast<size_t>(primal_size_ * (0 + 3)/*@@*/) : static_cast<size_t>(primal_size_), handle_ptr->get_stream()},
+    dual_solution_{batch_mode ? static_cast<size_t>(dual_size_ * (0 + 3)/*@@*/) : static_cast<size_t>(dual_size_), handle_ptr->get_stream()},
     delta_primal_{static_cast<size_t>(primal_size_), handle_ptr->get_stream()},
     delta_dual_{static_cast<size_t>(dual_size_), handle_ptr->get_stream()},
     primal_gradient_{static_cast<size_t>(primal_size_), handle_ptr->get_stream()},
