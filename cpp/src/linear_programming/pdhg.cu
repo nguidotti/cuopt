@@ -384,6 +384,13 @@ void pdhg_solver_t<i_t, f_t>::update_solution(
           current_saddle_point_state_.get_dual_size(),
           potential_next_dual_solution_.data(),
           CUSPARSE_ORDER_COL));
+    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
+            &cusparse_view_.batch_dual_solutions,
+            current_saddle_point_state_.get_dual_size(),
+            (0 + 3)/*@@*/,
+            current_saddle_point_state_.get_dual_size(),
+            current_saddle_point_state_.get_dual_solution().data(),
+            CUSPARSE_ORDER_COL));
  }
   RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednvec(
     &current_op_problem_evaluation_cusparse_view_.primal_solution,
