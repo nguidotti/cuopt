@@ -31,13 +31,13 @@ constexpr bool fj_only_run = false;
 
 namespace cuopt::linear_programming::detail {
 
-constexpr int max_var_diff                    = diversity_config_t::max_var_diff;
-constexpr size_t max_solutions                = diversity_config_t::max_solutions;
-constexpr double initial_infeasibility_weight = diversity_config_t::initial_infeasibility_weight;
-constexpr double default_time_limit           = diversity_config_t::default_time_limit;
-constexpr int initial_island_size             = diversity_config_t::initial_island_size;
-constexpr int maximum_island_size             = diversity_config_t::maximum_island_size;
-constexpr bool use_avg_diversity              = diversity_config_t::use_avg_diversity;
+const int max_var_diff                    = diversity_config_t::max_var_diff;
+const size_t max_solutions                = diversity_config_t::max_solutions;
+const double initial_infeasibility_weight = diversity_config_t::initial_infeasibility_weight;
+const double default_time_limit           = diversity_config_t::default_time_limit;
+const int initial_island_size             = diversity_config_t::initial_island_size;
+const int maximum_island_size             = diversity_config_t::maximum_island_size;
+const bool use_avg_diversity              = diversity_config_t::use_avg_diversity;
 
 size_t fp_recombiner_config_t::max_n_of_vars_from_other =
   fp_recombiner_config_t::initial_n_of_vars_from_other;
@@ -112,8 +112,8 @@ bool diversity_manager_t<i_t, f_t>::run_local_search(solution_t<i_t, f_t>& solut
                                                      timer_t& timer,
                                                      ls_config_t<i_t, f_t>& ls_config)
 {
-  // i_t ls_mab_option = mab_ls.select_mab_option();
-  // mab_ls_config_t<i_t, f_t>::get_local_search_and_lm_from_config(ls_mab_option, ls_config);
+  i_t ls_mab_option = mab_ls.select_mab_option();
+  mab_ls_config_t<i_t, f_t>::get_local_search_and_lm_from_config(ls_mab_option, ls_config);
   assignment_hash_map.insert(solution);
   constexpr i_t skip_solutions_threshold = 3;
   if (assignment_hash_map.check_skip_solution(solution, skip_solutions_threshold)) { return false; }
@@ -410,8 +410,8 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
   if (check_b_b_preemption()) { return population.best_feasible(); }
   // before probing cache or LP, run FJ to generate initial primal feasible solution
   if (!from_dir) { generate_quick_feasible_solution(); }
-  constexpr f_t time_ratio_of_probing_cache = diversity_config_t::time_ratio_of_probing_cache;
-  constexpr f_t max_time_on_probing         = diversity_config_t::max_time_on_probing;
+  const f_t time_ratio_of_probing_cache = diversity_config_t::time_ratio_of_probing_cache;
+  const f_t max_time_on_probing         = diversity_config_t::max_time_on_probing;
   f_t time_for_probing_cache =
     std::min(max_time_on_probing, time_limit * time_ratio_of_probing_cache);
   timer_t probing_timer{time_for_probing_cache};
@@ -496,7 +496,7 @@ template <typename i_t, typename f_t>
 void diversity_manager_t<i_t, f_t>::diversity_step()
 {
   // TODO when the solver is faster, increase this number
-  constexpr i_t max_iterations_without_improvement =
+  const i_t max_iterations_without_improvement =
     diversity_config_t::max_iterations_without_improvement;
   bool improved = true;
   while (improved) {
