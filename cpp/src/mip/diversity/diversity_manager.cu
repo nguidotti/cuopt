@@ -216,7 +216,7 @@ void diversity_manager_t<i_t, f_t>::add_user_given_solutions(
       cuopt_func_call(sol.test_variable_bounds(true));
       CUOPT_LOG_INFO("Adding initial solution success! feas %d objective %f excess %f",
                      is_feasible,
-                     sol.get_objective(),
+                     sol.get_user_objective(),
                      sol.get_total_excess());
       population.run_solution_callbacks(sol);
       initial_sol_vector.emplace_back(std::move(sol));
@@ -226,7 +226,7 @@ void diversity_manager_t<i_t, f_t>::add_user_given_solutions(
     Assignment size %lu \
     initial solution size %lu",
         sol.assignment.size(),
-        init_sol->size());
+        init_sol_assignment.size());
     }
   }
 }
@@ -796,12 +796,12 @@ void diversity_manager_t<i_t, f_t>::set_simplex_solution(const std::vector<f_t>&
 {
   CUOPT_LOG_DEBUG("Setting simplex solution with objective %f", objective);
   using sol_t = solution_t<i_t, f_t>;
+  RAFT_CUDA_TRY(cudaSetDevice(context.handle_ptr->get_device()));
   cuopt_func_call(sol_t new_sol(*problem_ptr));
   cuopt_func_call(new_sol.copy_new_assignment(solution));
   cuopt_func_call(new_sol.compute_feasibility());
   cuopt_assert(integer_equal(new_sol.get_user_objective(), objective, 1e-3), "Objective mismatch");
   std::lock_guard<std::mutex> lock(relaxed_solution_mutex);
-  RAFT_CUDA_TRY(cudaSetDevice(context.handle_ptr->get_device()));
   simplex_solution_exists = true;
   global_concurrent_halt.store(1, std::memory_order_release);
   // it is safe to use lp_optimal_solution while executing the copy operation
