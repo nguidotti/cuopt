@@ -39,8 +39,9 @@ struct mab_ls_config_t {
 
   static void get_local_search_and_lm_from_config(i_t config_id, ls_config_t<i_t, f_t>& ls_config)
   {
-    ls_method_t local_search = ls_method_t(config_id % n_of_ls);
-    ls_config.ls_method      = local_search;
+    ls_method_t local_search                      = ls_method_t(config_id % n_of_ls);
+    ls_config.ls_method                           = local_search;
+    mab_ls_config_t<i_t, f_t>::last_ls_mab_option = config_id;
   }
 
   // static void get_local_search_and_lm_from_config(i_t config_id, ls_config_t<i_t, f_t>&
@@ -73,7 +74,8 @@ struct ls_work_normalized_reward_t {
     2, 1, 0.5, 0.25};
   ls_work_normalized_reward_t(int option_id) : option_id(option_id) {}
 
-  double operator()(double factor) const { return factor * reward_per_option[option_id]; }
+  double operator()(double factor) const { return factor; }
+  // double operator()(double factor) const { return factor * reward_per_option[option_id]; }
 };
 
 struct recombiner_work_normalized_reward_t {
