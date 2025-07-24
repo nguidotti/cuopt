@@ -113,10 +113,12 @@ bool local_search_t<i_t, f_t>::run_local_search(solution_t<i_t, f_t>& solution,
   } else if (ls_config.ls_method == ls_method_t::FJ_ANNEALING) {
     rd = ls_method_t::FJ_ANNEALING;
   }
-  if (rd == ls_method_t::FJ_LINE_SEGMENT && lp_optimal_exists) {
-    is_feas = run_fj_line_segment(solution, timer, ls_config);
+  if (rd == ls_method_t::FJ_LINE_SEGMENT) {
+    if (lp_optimal_exists) { is_feas = run_fj_line_segment(solution, timer, ls_config); }
+    is_feas = run_fj_annealing(solution, timer, ls_config);
   } else {
     is_feas = run_fj_annealing(solution, timer, ls_config);
+    if (lp_optimal_exists) { is_feas = run_fj_line_segment(solution, timer, ls_config); }
   }
   return is_feas;
 }

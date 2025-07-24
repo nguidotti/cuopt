@@ -744,11 +744,11 @@ diversity_manager_t<i_t, f_t>::recombine_and_local_search(solution_t<i_t, f_t>& 
     population.best().get_quality(population.weights),
     offspring_qual,
     recombiner_work_normalized_reward_t(recombine_stats.get_last_recombiner_time()));
-  mab_ls.add_mab_reward(mab_ls_config_t<i_t, f_t>::last_ls_mab_option,
-                        best_quality_of_parents,
-                        population.best_feasible().get_quality(population.weights),
-                        offspring_qual,
-                        ls_work_normalized_reward_t(mab_ls_config_t<i_t, f_t>::last_lm_config));
+  // mab_ls.add_mab_reward(mab_ls_config_t<i_t, f_t>::last_ls_mab_option,
+  //                       best_quality_of_parents,
+  //                       population.best_feasible().get_quality(population.weights),
+  //                       offspring_qual,
+  //                       ls_work_normalized_reward_t(mab_ls_config_t<i_t, f_t>::last_lm_config));
   if (context.settings.benchmark_info_ptr != nullptr) {
     check_better_than_both(offspring, sol1, sol2);
     check_better_than_both(lp_offspring, sol1, sol2);
