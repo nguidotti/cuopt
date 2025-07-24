@@ -57,6 +57,8 @@ function(ConfigureTest CMAKE_TEST_NAME)
         GTest::gmock_main
         GTest::gtest
         GTest::gtest_main
+        # TBB::tbb
+        papilo-core
         ${CUOPT_PRIVATE_CUDA_LIBS}
     )
 

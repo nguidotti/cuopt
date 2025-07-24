@@ -123,6 +123,11 @@ if(NOT DISABLE_OPENMP)
   endif()
 endif()
 
+# find_package(TBB REQUIRED)
+# if(TBB_FOUND)
+#   message(VERBOSE "cuOpt: TBB found in ${TBB_INCLUDE_DIRS}")
+# endif()
+
 # Debug options
 if(CMAKE_BUILD_TYPE MATCHES Debug)
   message(STATUS "Building with debugging flags")
@@ -154,8 +159,15 @@ else()
   find_package(RAFT REQUIRED)
 endif()
 
-include_directories("/raid/rgandham/opt/papilo/include")
+# include_directories("/home/hugo/rapids/papilo/include")
 
+FetchContent_Declare(
+  papilo
+  GIT_REPOSITORY "git@github.com:scipopt/papilo.git"
+  GIT_TAG "main"
+)
+
+FetchContent_MakeAvailable(papilo)
 
 include(${rapids-cmake-dir}/cpm/rapids_logger.cmake)
 # generate logging macros
@@ -328,6 +340,7 @@ target_link_libraries(cuopt_cli
   PUBLIC
   cuopt
   OpenMP::OpenMP_CXX
+  # TBB::tbb
 )
 set_property(TARGET cuopt_cli PROPERTY INSTALL_RPATH "$ORIGIN/../${lib_dir}")
 
@@ -347,5 +360,7 @@ if(BUILD_BENCHMARKS)
     PUBLIC
     cuopt
     OpenMP::OpenMP_CXX
+    # TBB::tbb
+    papilo-core
   )
 endif()
