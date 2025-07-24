@@ -99,9 +99,11 @@ diversity_manager_t<i_t, f_t>::diversity_manager_t(mip_solver_context_t<i_t, f_t
         CUOPT_LOG_WARN("Failed to parse CUOPT_CONFIG_ID environment variable: %s", e.what());
       }
     }
-    run_only_ls_recombiner = config_id == 0;
-    run_only_bp_recombiner = config_id == 1;
-    run_only_fp_recombiner = config_id == 2;
+    diversity_config_t::halve_population                   = config_id % 2;
+    int next_config                                        = config_id / 2;
+    diversity_config_t::lp_run_time_if_feasible            = next_config % 2 == 0 ? 15 : 5;
+    next_config                                            = next_config / 2;
+    diversity_config_t::max_iterations_without_improvement = next_config % 2 == 0 ? 15 : 50;
   }
 }
 
