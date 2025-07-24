@@ -34,6 +34,9 @@ target_link_libraries(cuopttestutils
     GTest::gmock
     GTest::gtest
     papilo-core
+    clusol
+    gfortran
+    lapack
 )
 
 set(CUOPT_TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR})
@@ -50,7 +53,7 @@ function(ConfigureTest CMAKE_TEST_NAME)
     )
 
     target_link_libraries(${CMAKE_TEST_NAME}
-        PRIVATE
+       PRIVATE
         mps_parser
         cuopt
         cuopttestutils
@@ -58,8 +61,6 @@ function(ConfigureTest CMAKE_TEST_NAME)
         GTest::gmock_main
         GTest::gtest
         GTest::gtest_main
-        # TBB::tbb
-        papilo-core
         ${CUOPT_PRIVATE_CUDA_LIBS}
     )
 

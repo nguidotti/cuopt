@@ -48,5 +48,9 @@ foreach(target
       cuopt
       cuopttestutils
       OpenMP::OpenMP_CXX
+      papilo-core
+      clusol
+      gfortran
+      lapack
   )
 endforeach()

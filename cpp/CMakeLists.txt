@@ -123,11 +123,6 @@ if(NOT DISABLE_OPENMP)
   endif()
 endif()
 
-# find_package(TBB REQUIRED)
-# if(TBB_FOUND)
-#   message(VERBOSE "cuOpt: TBB found in ${TBB_INCLUDE_DIRS}")
-# endif()
-
 # Debug options
 if(CMAKE_BUILD_TYPE MATCHES Debug)
   message(STATUS "Building with debugging flags")
@@ -252,6 +247,7 @@ target_link_libraries(cuopt
   CCCL::CCCL
   raft::raft
   cuopt::mps_parser
+  clusol
   PRIVATE
   ${CUOPT_PRIVATE_CUDA_LIBS}
   )
@@ -341,7 +337,8 @@ target_link_libraries(cuopt_cli
   cuopt
   OpenMP::OpenMP_CXX
   papilo-core
-  # TBB::tbb
+  gfortran
+  lapack
 )
 set_property(TARGET cuopt_cli PROPERTY INSTALL_RPATH "$ORIGIN/../${lib_dir}")
 
@@ -361,7 +358,8 @@ if(BUILD_BENCHMARKS)
     PUBLIC
     cuopt
     OpenMP::OpenMP_CXX
-    # TBB::tbb
     papilo-core
+    gfortran
+    lapack
   )
 endif()
