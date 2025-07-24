@@ -20,6 +20,7 @@
 #include <linear_programming/step_size_strategy/adaptive_step_size_strategy.hpp>
 #include <linear_programming/utils.cuh>
 #include <mip/mip_constants.hpp>
+#include <utilities/copy_helpers.hpp>
 
 #include <raft/sparse/detail/cusparse_macros.h>
 #include <raft/sparse/detail/cusparse_wrappers.h>
@@ -93,8 +94,8 @@ void set_adaptive_step_size_hyper_parameters(rmm::cuda_stream_view stream_view)
 template <typename i_t, typename f_t>
 __global__ void compute_step_sizes_from_movement_and_interaction(
   typename adaptive_step_size_strategy_t<i_t, f_t>::view_t step_size_strategy_view,
-  f_t* primal_step_size,
-  f_t* dual_step_size,
+  raft::device_span<f_t> primal_step_size,
+  raft::device_span<f_t> dual_step_size,
   i_t* pdhg_iteration,
   int batch_size)
 {
@@ -119,7 +120,8 @@ __global__ void compute_step_sizes_from_movement_and_interaction(
     return;
   }
 
-  f_t interaction_ = raft::abs(step_size_strategy_view.interaction[id]);
+  // TODO TMP JUST TO MAKE THE CUB WORK WIHLE I DON'T HAVE PER SOLUTION INTERACTION
+  f_t interaction_ = raft::abs(*step_size_strategy_view.interaction.data());
   f_t step_size_   = step_size_strategy_view.step_size[id];
 
   // Increase PDHG iteration
@@ -227,8 +229,8 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_step_sizes(
     const int num_blocks = (batch_mode_ ? cuda::ceil_div((0 + 3)/*@@*/, block_size) : 1);
     compute_step_sizes_from_movement_and_interaction<i_t, f_t>
       <<<num_blocks, block_size, 0, stream_view_>>>(this->view(),
-                                  primal_step_size.data(),
-                                  dual_step_size.data(),
+                                  make_span(primal_step_size),
+                                  make_span(dual_step_size),
                                   pdhg_solver.get_d_total_pdhg_iterations().data(),
                                   (batch_mode_ ? (0 + 3)/*@@*/ : 1));
   //  graph.end_capture(total_pdlp_iterations);
@@ -380,8 +382,8 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
 template <typename i_t, typename f_t>
 __global__ void compute_actual_stepsizes(
   const typename adaptive_step_size_strategy_t<i_t, f_t>::view_t step_size_strategy_view,
-  f_t* primal_step_size,
-  f_t* dual_step_size,
+  raft::device_span<f_t> primal_step_size,
+  raft::device_span<f_t> dual_step_size,
   int batch_size)
 {
   const int id = threadIdx.x + blockIdx.x * blockDim.x;
@@ -401,8 +403,8 @@ void adaptive_step_size_strategy_t<i_t, f_t>::get_primal_and_dual_stepsizes(
   const int num_blocks = (batch_mode_ ? cuda::ceil_div((0 + 3)/*@@*/, block_size) : 1);
   compute_actual_stepsizes<i_t, f_t>
     <<<num_blocks, block_size, 0, stream_view_>>>(this->view(),
-                                                  primal_step_size.data(),
-                                                  dual_step_size.data(),
+                                                  make_span(primal_step_size),
+                                                  make_span(dual_step_size),
                                                   (batch_mode_ ? (0 + 3)/*@@*/ : 1));
   RAFT_CUDA_TRY(cudaPeekAtLastError());
 }
@@ -429,14 +431,14 @@ adaptive_step_size_strategy_t<i_t, f_t>::view()
   template class adaptive_step_size_strategy_t<int, F_TYPE>;                                   \
   template __global__ void compute_actual_stepsizes<int, F_TYPE>(                              \
     const typename adaptive_step_size_strategy_t<int, F_TYPE>::view_t step_size_strategy_view, \
-    F_TYPE* primal_step_size,                                                                  \
-    F_TYPE* dual_step_size,                                                                     \
+    raft::device_span<F_TYPE> primal_step_size,                                                                  \
+    raft::device_span<F_TYPE> dual_step_size,                                                                     \
     int batch_size);                                                                            \
                                                                                                \
   template __global__ void compute_step_sizes_from_movement_and_interaction<int, F_TYPE>(      \
     typename adaptive_step_size_strategy_t<int, F_TYPE>::view_t step_size_strategy_view,       \
-    F_TYPE * primal_step_size,                                                                 \
-    F_TYPE * dual_step_size,                                                                   \
+    raft::device_span<F_TYPE> primal_step_size,                                                                 \
+    raft::device_span<F_TYPE> dual_step_size,                                                                   \
     int* pdhg_iteration,                                                                         \
     int batch_size);
 
