@@ -16,6 +16,7 @@
  */
 #pragma once
 
+#include <linear_programming/utilities/batched_dot_product_handler.cuh>
 #include <linear_programming/cusparse_view.hpp>
 #include <linear_programming/pdhg.hpp>
 #include <linear_programming/restart_strategy/localized_duality_gap_container.hpp>
@@ -181,7 +182,7 @@ class pdlp_restart_strategy_t {
                                                        rmm::device_uvector<f_t>& tmp,
                                                        i_t size_of_solutions_h,
                                                        i_t stride,
-                                                       rmm::device_scalar<f_t>& distance_moved);
+                                                       rmm::device_uvector<f_t>& distance_moved);
 
   void compute_primal_gradient(localized_duality_gap_container_t<i_t, f_t>& duality_gap,
                                cusparse_view_t<i_t, f_t>& cusparse_view);
@@ -324,6 +325,8 @@ class pdlp_restart_strategy_t {
   f_t last_restart_kkt_score   = f_t(0.0);
 
   bool last_restart_was_average_ = false;
+
+  batched_dot_product_handler_t<i_t, f_t> batched_dot_product_handler_;
 };
 
 template <typename i_t, typename f_t>

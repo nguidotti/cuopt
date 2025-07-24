@@ -18,6 +18,8 @@
 #include <linear_programming/restart_strategy/localized_duality_gap_container.hpp>
 #include <linear_programming/restart_strategy/pdlp_restart_strategy.cuh>
 
+#include <utilities/copy_helpers.hpp>
+
 #include <mip/mip_constants.hpp>
 
 #include <cuopt/linear_programming/pdlp/pdlp_hyper_params.cuh>
@@ -25,15 +27,15 @@
 namespace cuopt::linear_programming::detail {
 template <typename i_t, typename f_t>
 localized_duality_gap_container_t<i_t, f_t>::localized_duality_gap_container_t(
-  raft::handle_t const* handle_ptr, i_t primal_size, i_t dual_size)
+  raft::handle_t const* handle_ptr, i_t primal_size, i_t dual_size, bool batch_mode)
   : primal_size_h_(primal_size),
     dual_size_h_(dual_size),
     lagrangian_value_{handle_ptr->get_stream()},
     lower_bound_value_{handle_ptr->get_stream()},
     upper_bound_value_{handle_ptr->get_stream()},
-    distance_traveled_{handle_ptr->get_stream()},
-    primal_distance_traveled_{handle_ptr->get_stream()},
-    dual_distance_traveled_{handle_ptr->get_stream()},
+    distance_traveled_(batch_mode ? static_cast<size_t>((0 + 3)/*@@*/) : static_cast<size_t>(1), handle_ptr->get_stream()),
+    primal_distance_traveled_(batch_mode ? static_cast<size_t>((0 + 3)/*@@*/) : static_cast<size_t>(1), handle_ptr->get_stream()),
+    dual_distance_traveled_(batch_mode ? static_cast<size_t>((0 + 3)/*@@*/) : static_cast<size_t>(1), handle_ptr->get_stream()),
     normalized_gap_{handle_ptr->get_stream()},
     primal_solution_{static_cast<size_t>(primal_size),
                      handle_ptr->get_stream()},                                // Needed even in kkt
@@ -45,7 +47,8 @@ localized_duality_gap_container_t<i_t, f_t>::localized_duality_gap_container_t(
     primal_solution_tr_{is_KKT_restart<i_t, f_t>() ? 0 : static_cast<size_t>(primal_size),
                         handle_ptr->get_stream()},
     dual_solution_tr_{is_KKT_restart<i_t, f_t>() ? 0 : static_cast<size_t>(dual_size),
-                      handle_ptr->get_stream()}
+                      handle_ptr->get_stream()},
+    batch_mode_(batch_mode)
 {
 }
 
@@ -60,9 +63,9 @@ localized_duality_gap_container_t<i_t, f_t>::view()
   v.lagrangian_value         = lagrangian_value_.data();
   v.lower_bound_value        = lower_bound_value_.data();
   v.upper_bound_value        = upper_bound_value_.data();
-  v.distance_traveled        = distance_traveled_.data();
-  v.primal_distance_traveled = primal_distance_traveled_.data();
-  v.dual_distance_traveled   = dual_distance_traveled_.data();
+  v.distance_traveled        = make_span(distance_traveled_);
+  v.primal_distance_traveled = make_span(primal_distance_traveled_);
+  v.dual_distance_traveled   = make_span(dual_distance_traveled_);
   v.normalized_gap           = normalized_gap_.data();
 
   v.primal_solution    = primal_solution_.data();

@@ -21,7 +21,12 @@
 #include <linear_programming/pdlp_constants.hpp>
 #include <linear_programming/restart_strategy/pdlp_restart_strategy.cuh>
 #include <linear_programming/utils.cuh>
+#include <linear_programming/utilities/batched_dot_product_handler.cuh>
 #include <mip/mip_constants.hpp>
+
+#include <utilities/copy_helpers.hpp>
+
+#include "utilities/macros.cuh"
 
 #include <raft/sparse/detail/cusparse_wrappers.h>
 #include <raft/common/nvtx.hpp>
@@ -129,17 +134,17 @@ pdlp_restart_strategy_t<i_t, f_t>::pdlp_restart_strategy_t(
       (is_KKT_restart<i_t, f_t>() ?
         (batch_mode ? (0 + 3)/*@@*/ : 1) * primal_size : primal_size),
       (is_KKT_restart<i_t, f_t>() ?
-        (batch_mode ? (0 + 3)/*@@*/ : 1) * dual_size : dual_size)},
+        (batch_mode ? (0 + 3)/*@@*/ : 1) * dual_size : dual_size), batch_mode},
     current_duality_gap_{handle_ptr_,
       (is_KKT_restart<i_t, f_t>() ?
         (batch_mode ? (0 + 3)/*@@*/ : 1) * primal_size : primal_size),
       (is_KKT_restart<i_t, f_t>() ?
-        (batch_mode ? (0 + 3)/*@@*/ : 1) * dual_size : dual_size)},
+        (batch_mode ? (0 + 3)/*@@*/ : 1) * dual_size : dual_size), batch_mode},
     last_restart_duality_gap_{handle_ptr_,
       (is_KKT_restart<i_t, f_t>() ?
         (batch_mode ? (0 + 3)/*@@*/ : 1) * primal_size : primal_size),
       (is_KKT_restart<i_t, f_t>() ?
-        (batch_mode ? (0 + 3)/*@@*/ : 1) * dual_size : dual_size)},
+        (batch_mode ? (0 + 3)/*@@*/ : 1) * dual_size : dual_size), batch_mode},
     // If KKT restart, call the empty cusparse_view constructor
     avg_duality_gap_cusparse_view_{
       (is_KKT_restart<i_t, f_t>())
@@ -217,7 +222,8 @@ pdlp_restart_strategy_t<i_t, f_t>::pdlp_restart_strategy_t(
     tmp_kkt_score_{stream_view_},
     reusable_device_scalar_1_{stream_view_},
     reusable_device_scalar_2_{stream_view_},
-    reusable_device_scalar_3_{stream_view_}
+    reusable_device_scalar_3_{stream_view_},
+    batched_dot_product_handler_(batch_mode_ ? batched_dot_product_handler_t<i_t, f_t>((0 + 3)/*@@*/, handle_ptr_) : batched_dot_product_handler_t<i_t, f_t>())
 {
   raft::common::nvtx::range fun_scope("Initializing restart strategy");
 
@@ -702,18 +708,17 @@ void pdlp_restart_strategy_t<i_t, f_t>::compute_restart(
 template <typename i_t, typename f_t>
 __global__ void compute_new_primal_weight_kernel(
   const typename localized_duality_gap_container_t<i_t, f_t>::view_t duality_gap_view,
-  f_t* primal_weight,
-  const f_t* step_size,
-  f_t* primal_step_size,
-  f_t* dual_step_size,
+  raft::device_span<f_t> primal_weight,
+  raft::device_span<const f_t> step_size,
+  raft::device_span<f_t> primal_step_size,
+  raft::device_span<f_t> dual_step_size,
   int batch_size)
 {
   const int id = threadIdx.x + blockIdx.x * blockDim.x;
   if (id >= batch_size) { return; }
 
-  // TODO: handle batch mode on distrance traveled
-  f_t primal_distance = raft::sqrt(*duality_gap_view.primal_distance_traveled);
-  f_t dual_distance   = raft::sqrt(*duality_gap_view.dual_distance_traveled);
+  f_t primal_distance = raft::sqrt(duality_gap_view.primal_distance_traveled[id]);
+  f_t dual_distance   = raft::sqrt(duality_gap_view.dual_distance_traveled[id]);
 
 #ifdef PDLP_DEBUG_MODE
   printf("Compute new primal weight: primal_distance=%lf dual_distance=%lf\n",
@@ -736,7 +741,7 @@ __global__ void compute_new_primal_weight_kernel(
   f_t log_primal_weight =
     pdlp_hyper_params::default_primal_weight_update_smoothing *
       raft::myLog(new_primal_weight_estimate) +
-    (1 - pdlp_hyper_params::default_primal_weight_update_smoothing) * raft::myLog(*primal_weight);
+    (1 - pdlp_hyper_params::default_primal_weight_update_smoothing) * raft::myLog(primal_weight[id]);
 
   primal_weight[id] = raft::myExp(log_primal_weight);
   cuopt_assert(!isnan(primal_weight[id]), "primal weight can't be nan");
@@ -765,10 +770,10 @@ void pdlp_restart_strategy_t<i_t, f_t>::compute_new_primal_weight(
   const int block_size = std::min(256, (batch_mode_ ? (0 + 3)/*@@*/ : 1));
   const int num_blocks = (batch_mode_ ? cuda::ceil_div((0 + 3)/*@@*/, block_size) : 1);
   compute_new_primal_weight_kernel<i_t, f_t><<<num_blocks, block_size, 0, stream_view_>>>(duality_gap.view(),
-                                                                                        primal_weight.data(),
-                                                                                        step_size.data(),
-                                                                                        primal_step_size.data(),
-                                                                                        dual_step_size.data(),
+                                                                                        make_span(primal_weight),
+                                                                                        make_span(step_size),
+                                                                                        make_span(primal_step_size),
+                                                                                        make_span(dual_step_size),
                                                                                         (batch_mode_ ? (0 + 3)/*@@*/ : 1));
   RAFT_CUDA_TRY(cudaPeekAtLastError());
 }
@@ -780,9 +785,12 @@ void pdlp_restart_strategy_t<i_t, f_t>::distance_squared_moved_from_last_restart
   rmm::device_uvector<f_t>& tmp,
   i_t size_of_solutions_h,
   i_t stride,
-  rmm::device_scalar<f_t>& distance_moved)
+  rmm::device_uvector<f_t>& distance_moved)
 {
-  // TODO batch mode
+  cuopt_assert(new_solution.size() == old_solution.size(), "New solution size must be equal to old solution size");
+  cuopt_assert(new_solution.size() == tmp.size(), "New solution size must be equal to tmp size");
+  cuopt_assert(new_solution.size() % primal_size_h_ == 0 || new_solution.size() % dual_size_h_ == 0, "Solution size must be a multiple of primal_size_h_ or dual_size_h_");
+  cuopt_assert(new_solution.size() % size_of_solutions_h == 0, "New solution size must be a multiple of size_of_solutions_h");
 
   raft::common::nvtx::range fun_scope("distance_squared_moved_from_last_restart_period");
 #ifdef PDLP_DEBUG_MODE
@@ -809,36 +817,40 @@ void pdlp_restart_strategy_t<i_t, f_t>::distance_squared_moved_from_last_restart
             << "  New location=" << debugb.value(stream_view_) << std::endl;
 #endif
 
-  raft::linalg::binaryOp(tmp.data(),
-                         old_solution.data(),
-                         new_solution.data(),
-                         size_of_solutions_h,
-                         a_sub_scalar_times_b<f_t>(reusable_device_scalar_value_1_.data()),
-                         stream_view_);
-
-  RAFT_CUBLAS_TRY(raft::linalg::detail::cublasdot(handle_ptr_->get_cublas_handle(),
-                                                  size_of_solutions_h,
-                                                  tmp.data(),
-                                                  stride,
-                                                  tmp.data(),
-                                                  stride,
-                                                  distance_moved.data(),
-                                                  stream_view_));
+raft::linalg::binaryOp(tmp.data(),
+                      old_solution.data(),
+                      new_solution.data(),
+                      new_solution.size(),
+                      a_sub_scalar_times_b<f_t>(reusable_device_scalar_value_1_.data()),
+                      stream_view_);
+  // Both could be merged but for backward compatibility reason we keep it separate
+  if (!batch_mode_) {
+    RAFT_CUBLAS_TRY(raft::linalg::detail::cublasdot(handle_ptr_->get_cublas_handle(),
+                                                    size_of_solutions_h,
+                                                    tmp.data(),
+                                                    stride,
+                                                    tmp.data(),
+                                                    stride,
+                                                    distance_moved.data(),
+                                                    stream_view_));
+ } else {
+   batched_dot_product_handler_.batch_dot_product(tmp, tmp, size_of_solutions_h, distance_moved);
+ }
 }
-
 template <typename i_t, typename f_t>
 __global__ void compute_distance_traveled_last_restart_kernel(
   const typename localized_duality_gap_container_t<i_t, f_t>::view_t duality_gap_view,
-  const f_t* primal_weight,
-  f_t* distance_traveled)
+  raft::device_span<const f_t> primal_weight,
+  int batch_size)
 {
-  if (threadIdx.x + blockIdx.x * blockDim.x > 0) { return; }
+  const int idx = threadIdx.x + blockIdx.x * blockDim.x;
+  if (idx >= batch_size) { return; }
 
-  f_t primal_weight_ = *primal_weight;
+  const f_t primal_weight_ = primal_weight[idx];
 
-  *distance_traveled = raft::sqrt(*duality_gap_view.primal_distance_traveled *
+  duality_gap_view.distance_traveled[idx] = raft::sqrt(duality_gap_view.primal_distance_traveled[idx] *
                                     pdlp_hyper_params::primal_distance_smoothing * primal_weight_ +
-                                  *duality_gap_view.dual_distance_traveled *
+                                  duality_gap_view.dual_distance_traveled[idx] *
                                     (pdlp_hyper_params::dual_distance_smoothing / primal_weight_));
 }
 
@@ -848,17 +860,21 @@ void pdlp_restart_strategy_t<i_t, f_t>::update_last_restart_information(
 {
   raft::common::nvtx::range fun_scope("update_last_restart_information");
 
-  compute_distance_traveled_last_restart_kernel<i_t, f_t><<<1, 1, 0, stream_view_>>>(
-    duality_gap.view(), primal_weight.data(), last_restart_duality_gap_.distance_traveled_.data());
+  const int block_size = (batch_mode_ ? std::min(256, (0 + 3)/*@@*/) : 1);
+  const int grid_size = (batch_mode_ ? cuda::ceil_div((0 + 3)/*@@*/, block_size) : 1);
+  compute_distance_traveled_last_restart_kernel<i_t, f_t><<<grid_size, block_size, 0, stream_view_>>>(
+    duality_gap.view(), make_span(primal_weight), (batch_mode_ ? (0 + 3)/*@@*/ : 1));
   RAFT_CUDA_TRY(cudaPeekAtLastError());
 
+  cuopt_assert(last_restart_duality_gap_.primal_solution_.size() == duality_gap.primal_solution_.size(), "last_restart_duality_gap_.primal_solution_.size() != duality_gap.primal_solution_.size()");
+  cuopt_assert(last_restart_duality_gap_.dual_solution_.size() == duality_gap.dual_solution_.size(), "last_restart_duality_gap_.dual_solution_.size() != duality_gap.dual_solution_.size()");
   raft::copy(last_restart_duality_gap_.primal_solution_.data(),
              duality_gap.primal_solution_.data(),
-             primal_size_h_,
+             duality_gap.primal_solution_.size(),
              stream_view_);
   raft::copy(last_restart_duality_gap_.dual_solution_.data(),
              duality_gap.dual_solution_.data(),
-             dual_size_h_,
+             duality_gap.dual_solution_.size(),
              stream_view_);
 
   last_restart_length_ = weighted_average_solution_.get_iterations_since_last_restart();
@@ -872,8 +888,9 @@ __global__ void pick_restart_candidate_kernel(
 {
   if (threadIdx.x + blockIdx.x * blockDim.x > 0) { return; }
 
-  if (*current_duality_gap_view.normalized_gap / *current_duality_gap_view.distance_traveled >=
-      *avg_duality_gap_view.normalized_gap / *avg_duality_gap_view.distance_traveled) {
+  // Only used in non batch mode
+  if (*current_duality_gap_view.normalized_gap / current_duality_gap_view.distance_traveled[0] >=
+      *avg_duality_gap_view.normalized_gap / avg_duality_gap_view.distance_traveled[0]) {
     *restart_strategy_view.candidate_is_avg = 1;
   } else {
     *restart_strategy_view.candidate_is_avg = 0;
@@ -913,7 +930,7 @@ __global__ void adaptive_restart_triggered(
   *last_restart_duality_gap_view.normalized_gap =
     (*last_restart_duality_gap_view.upper_bound_value -
      *last_restart_duality_gap_view.lower_bound_value) /
-    *last_restart_duality_gap_view.distance_traveled;
+    last_restart_duality_gap_view.distance_traveled[0];
 
   f_t gap_reduction_ratio =
     *candidate_duality_gap_view.normalized_gap / *last_restart_duality_gap_view.normalized_gap;
@@ -946,10 +963,11 @@ void pdlp_restart_strategy_t<i_t, f_t>::should_do_adaptive_restart_normalized_du
   // lri.primal_distance_moved_last_restart_period ^
   //   2 * primal_weight + lri.dual_distance_moved_last_restart_period ^ 2 / primal_weight,
 
+  // No batch mode support since only used in trust region restart
   compute_distance_traveled_last_restart_kernel<i_t, f_t>
     <<<1, 1, 0, stream_view_>>>(candidate_duality_gap.view(),
-                                primal_weight.data(),
-                                last_restart_duality_gap_.distance_traveled_.data());
+                                make_span(primal_weight),
+                                last_restart_duality_gap_.distance_traveled_.size());
   RAFT_CUDA_TRY(cudaPeekAtLastError());
 
   bound_optimal_objective(
@@ -997,12 +1015,13 @@ __global__ void compute_normalized_gaps_kernel(
     "The upper bound for the objective value of the current problem must be larger than "
     "the lower bound");
 
+  // Only used in non batch mode
   *avg_duality_gap_view.normalized_gap =
     (*avg_duality_gap_view.upper_bound_value - *avg_duality_gap_view.lower_bound_value) /
-    *avg_duality_gap_view.distance_traveled;
+    avg_duality_gap_view.distance_traveled[0];
   *current_duality_gap_view.normalized_gap =
     (*current_duality_gap_view.upper_bound_value - *current_duality_gap_view.lower_bound_value) /
-    *current_duality_gap_view.distance_traveled;
+    current_duality_gap_view.distance_traveled[0];
 }
 
 template <typename i_t, typename f_t>
@@ -1443,7 +1462,7 @@ void pdlp_restart_strategy_t<i_t, f_t>::solve_bound_constrained_trust_region(
 
   // Use high_radius_squared_ to store objective_vector l2_norm
   my_l2_norm<i_t, f_t>(objective_vector_, high_radius_squared_, handle_ptr_);
-  if (duality_gap.distance_traveled_.value(stream_view_) == f_t(0.0) ||
+  if (duality_gap.distance_traveled_.element(0, stream_view_) == f_t(0.0) ||
       high_radius_squared_.value(stream_view_) == f_t(0.0)) {
     raft::copy(
       duality_gap.primal_solution_tr_.data(), center_point_.data(), primal_size_h_, stream_view_);
@@ -1734,9 +1753,10 @@ void pdlp_restart_strategy_t<i_t, f_t>::compute_distance_traveled_from_last_rest
 
   // distance_traveled = primal_distance * 0.5 * primal_weight
   // + dual_distance * 0.5 / primal_weight
-  // TODO batch mode
-  compute_distance_traveled_last_restart_kernel<i_t, f_t><<<1, 1, 0, stream_view_>>>(
-    duality_gap.view(), primal_weight.data(), duality_gap.distance_traveled_.data());
+  const int block_size = (batch_mode_ ? std::min(256, (0 + 3)/*@@*/) : 1);
+  const int grid_size = (batch_mode_ ? cuda::ceil_div((0 + 3)/*@@*/, block_size) : 1);
+  compute_distance_traveled_last_restart_kernel<i_t, f_t><<<grid_size, block_size, 0, stream_view_>>>(
+    duality_gap.view(), make_span(primal_weight), (batch_mode_ ? (0 + 3)/*@@*/ : 1));
   RAFT_CUDA_TRY(cudaPeekAtLastError());
 }
 
@@ -1997,8 +2017,8 @@ bool pdlp_restart_strategy_t<i_t, f_t>::get_last_restart_was_average() const
                                                                                                 \
   template __global__ void compute_distance_traveled_last_restart_kernel<int, F_TYPE>(          \
     const typename localized_duality_gap_container_t<int, F_TYPE>::view_t duality_gap_view,     \
-    const F_TYPE* primal_weight,                                                                \
-    F_TYPE* distance_traveled);                                                                 \
+    raft::device_span<const F_TYPE> primal_weight,                                                                \
+    int batch_size);                                                                            \
                                                                                                 \
   template __global__ void pick_restart_candidate_kernel<int, F_TYPE>(                          \
     const typename localized_duality_gap_container_t<int, F_TYPE>::view_t avg_duality_gap_view, \
@@ -2035,10 +2055,10 @@ bool pdlp_restart_strategy_t<i_t, f_t>::get_last_restart_was_average() const
                                                                                                 \
   template __global__ void compute_new_primal_weight_kernel<int, F_TYPE>(                       \
     const typename localized_duality_gap_container_t<int, F_TYPE>::view_t duality_gap_view,     \
-    F_TYPE* primal_weight,                                                                      \
-    const F_TYPE* step_size,                                                                    \
-    F_TYPE* primal_step_size,                                                                   \
-    F_TYPE* dual_step_size,                                                                     \
+    raft::device_span<F_TYPE> primal_weight,                                                                      \
+    raft::device_span<const F_TYPE> step_size,                                                                    \
+    raft::device_span<F_TYPE> primal_step_size,                                                                   \
+    raft::device_span<F_TYPE> dual_step_size,                                                                     \
     int batch_size);                                                                            \
                                                                                                 \
   template __global__ void compute_subgradient_kernel<int, F_TYPE>(                             \

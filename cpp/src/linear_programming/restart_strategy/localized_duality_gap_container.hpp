@@ -17,6 +17,7 @@
 #pragma once
 
 #include <raft/core/handle.hpp>
+#include <raft/core/device_span.hpp>
 
 #include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_scalar.hpp>
@@ -28,7 +29,8 @@ struct localized_duality_gap_container_t {
  public:
   localized_duality_gap_container_t(raft::handle_t const* handle_ptr,
                                     i_t primal_size,
-                                    i_t dual_size);
+                                    i_t dual_size,
+                                    bool batch_mode);
 
   struct view_t {
     /** size of primal problem */
@@ -39,9 +41,9 @@ struct localized_duality_gap_container_t {
     f_t* lagrangian_value;
     f_t* lower_bound_value;
     f_t* upper_bound_value;
-    f_t* distance_traveled;
-    f_t* primal_distance_traveled;
-    f_t* dual_distance_traveled;
+    raft::device_span<f_t> distance_traveled;
+    raft::device_span<f_t> primal_distance_traveled;
+    raft::device_span<f_t> dual_distance_traveled;
     f_t* normalized_gap;
 
     f_t* primal_solution;
@@ -63,9 +65,9 @@ struct localized_duality_gap_container_t {
   rmm::device_scalar<f_t> lagrangian_value_;
   rmm::device_scalar<f_t> lower_bound_value_;
   rmm::device_scalar<f_t> upper_bound_value_;
-  rmm::device_scalar<f_t> distance_traveled_;
-  rmm::device_scalar<f_t> primal_distance_traveled_;
-  rmm::device_scalar<f_t> dual_distance_traveled_;
+  rmm::device_uvector<f_t> distance_traveled_;
+  rmm::device_uvector<f_t> primal_distance_traveled_;
+  rmm::device_uvector<f_t> dual_distance_traveled_;
   rmm::device_scalar<f_t> normalized_gap_;
 
   rmm::device_uvector<f_t> primal_solution_;
@@ -74,5 +76,7 @@ struct localized_duality_gap_container_t {
   rmm::device_uvector<f_t> dual_gradient_;
   rmm::device_uvector<f_t> primal_solution_tr_;
   rmm::device_uvector<f_t> dual_solution_tr_;
+
+  bool batch_mode_{false};
 };
 }  // namespace cuopt::linear_programming::detail
