@@ -122,9 +122,6 @@ int run_single_file(const std::string& file_path,
     (op_problem.get_problem_category() == cuopt::linear_programming::problem_category_t::MIP ||
      op_problem.get_problem_category() == cuopt::linear_programming::problem_category_t::IP);
 
-  bool sol_found = false;
-  double obj_val = std::numeric_limits<double>::infinity();
-
   auto initial_solution =
     initial_solution_file.empty()
       ? std::vector<double>()
