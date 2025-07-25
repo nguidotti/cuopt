@@ -286,16 +286,14 @@ inline std::vector<i_t> compute_prioritized_integer_indices(
   cuopt_assert(res, "The activity computation must be feasible during probing cache!");
   CUOPT_LOG_INFO("prioritized integer_indices n_integer_vars %d", problem.pb->n_integer_vars);
   // compute the min var slack
-  if (problem.pb->n_integer_vars > 0) {
-    compute_min_slack_per_var<i_t, f_t>
-      <<<problem.pb->n_integer_vars, 128, 0, problem.handle_ptr->get_stream()>>>(
-        problem.pb->view(),
-        make_span_2(bound_presolve.cnst_slack),
-        make_span(min_slack_per_var),
-        make_span(different_coefficient),
-        make_span(max_excess_per_var),
-        make_span(max_n_violated_per_constraint));
-  }
+  compute_min_slack_per_var<i_t, f_t>
+    <<<problem.pb->n_integer_vars, 128, 0, problem.handle_ptr->get_stream()>>>(
+      problem.pb->view(),
+      make_span_2(bound_presolve.cnst_slack),
+      make_span(min_slack_per_var),
+      make_span(different_coefficient),
+      make_span(max_excess_per_var),
+      make_span(max_n_violated_per_constraint));
   auto iterator = thrust::make_zip_iterator(thrust::make_tuple(
     max_n_violated_per_constraint.begin(), max_excess_per_var.begin(), min_slack_per_var.begin()));
   // sort the vars

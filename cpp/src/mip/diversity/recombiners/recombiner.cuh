@@ -92,14 +92,12 @@ class recombiner_t {
     reset(a.problem_ptr->n_integer_vars, a.handle_ptr);
     const i_t TPB = 128;
     i_t n_blocks  = (a.problem_ptr->n_integer_vars + TPB - 1) / TPB;
-    if (a.problem_ptr->n_integer_vars > 0) {
-      assign_same_variables_kernel<i_t, f_t>
-        <<<n_blocks, TPB, 0, a.handle_ptr->get_stream()>>>(a.view(),
-                                                           b.view(),
-                                                           offspring.view(),
-                                                           cuopt::make_span(remaining_indices),
-                                                           n_remaining.data());
-    }
+    assign_same_variables_kernel<i_t, f_t>
+      <<<n_blocks, TPB, 0, a.handle_ptr->get_stream()>>>(a.view(),
+                                                         b.view(),
+                                                         offspring.view(),
+                                                         cuopt::make_span(remaining_indices),
+                                                         n_remaining.data());
     i_t remaining_variables = this->n_remaining.value(a.handle_ptr->get_stream());
 
     auto vec_remaining_indices =
