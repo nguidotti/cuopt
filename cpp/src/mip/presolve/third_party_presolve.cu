@@ -177,13 +177,10 @@ void check_postsolve_status(const papilo::PostsolveStatus& status)
   }
 }
 
-#define USE_PAPILOS_PRESOLVER 1
-
 template <typename i_t, typename f_t>
 optimization_problem_t<i_t, f_t> third_party_presolve_t<i_t, f_t>::apply(
   optimization_problem_t<i_t, f_t>& op_problem, double time_limit)
 {
-#if USE_PAPILOS_PRESOLVER
   papilo::Problem<f_t> papilo_problem = build_papilo_problem(op_problem);
 
   CUOPT_LOG_INFO("Unpresolved problem:: Num variables: %d Num constraints: %d, NNZ: %d",
@@ -206,16 +203,12 @@ optimization_problem_t<i_t, f_t> third_party_presolve_t<i_t, f_t>::apply(
                  papilo_problem.getConstraintMatrix().getNnz());
 
   return build_optimization_problem<i_t, f_t>(papilo_problem, op_problem.get_handle_ptr());
-#else
-  return op_problem;
-#endif
 }
 
 template <typename i_t, typename f_t>
 rmm::device_uvector<f_t> third_party_presolve_t<i_t, f_t>::undo(
   rmm::device_uvector<f_t>& reduced_sol_vec)
 {
-#if USE_PAPILOS_PRESOLVER
   auto reduced_sol_vec_h = cuopt::host_copy(reduced_sol_vec);
 
   papilo::Solution<f_t> reduced_sol(reduced_sol_vec_h);
@@ -228,19 +221,10 @@ rmm::device_uvector<f_t> third_party_presolve_t<i_t, f_t>::undo(
   bool is_optimal = false;
   auto status     = post_solver.undo(reduced_sol, full_sol, post_solve_storage_, is_optimal);
   check_postsolve_status(status);
-  // if (status != papilo::PostsolveStatus::kOk) { CUOPT_LOG_INFO("\n Post-solve failed"); }
-
-  std::cout << "primal solution after post solve:" << std::endl;
 
   // FIXME: recompute objective value, mip gap, max constraint violation, etc.
   auto full_sol_vec = cuopt::device_copy(full_sol.primal, reduced_sol_vec.stream());
   return full_sol_vec;
-#else
-  rmm::device_uvector<f_t> full_sol_vec(reduced_sol_vec.size(), reduced_sol_vec.stream());
-  raft::copy(
-    full_sol_vec.data(), reduced_sol_vec.data(), reduced_sol_vec.size(), reduced_sol_vec.stream());
-  return full_sol_vec;
-#endif
 }
 
 #if MIP_INSTANTIATE_FLOAT

@@ -630,6 +630,7 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
                op_problem.get_handle_ptr()->get_stream());
 
     if (settings.presolve) {
+      // Dual postsolve is not supported yet in Papilo.
       auto full_sol_vec = presolver->undo(primal_sol_tmp);
       primal_sol_tmp    = std::move(full_sol_vec);
     }
