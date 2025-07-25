@@ -154,8 +154,6 @@ else()
   find_package(RAFT REQUIRED)
 endif()
 
-# include_directories("/home/hugo/rapids/papilo/include")
-
 FetchContent_Declare(
   papilo
   GIT_REPOSITORY "git@github.com:scipopt/papilo.git"
