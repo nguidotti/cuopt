@@ -25,6 +25,7 @@
 #include <linear_programming/utils.cuh>
 
 #include <mip/mip_constants.hpp>
+#include <mip/presolve/third_party_presolve.cuh>
 #include <mip/presolve/trivial_presolve.cuh>
 #include <mip/solver.cuh>
 
@@ -39,6 +40,7 @@
 #include <dual_simplex/solve.hpp>
 #include <dual_simplex/tic_toc.hpp>
 #include <linear_programming/utilities/problem_checking.cuh>
+#include <utilities/timer.hpp>
 
 #include <raft/sparse/detail/cusparse_macros.h>
 #include <raft/sparse/detail/cusparse_wrappers.h>
@@ -562,6 +564,9 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
                                                    bool is_batch_mode)
 {
   try {
+    const f_t time_limit =
+      settings.time_limit == 0 ? std::numeric_limits<f_t>::max() : settings.time_limit;
+
     // Create log stream for file logging and add it to default logger
     init_logger_t log(settings.log_file, settings.log_to_console);
 
@@ -577,7 +582,20 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
       problem_checking_t<i_t, f_t>::check_problem_representation(op_problem);
       problem_checking_t<i_t, f_t>::check_initial_solution_representation(op_problem, settings);
     }
-    detail::problem_t<i_t, f_t> problem(op_problem);
+
+    auto timer = cuopt::timer_t(time_limit);
+    detail::problem_t<i_t, f_t> full_problem(op_problem);
+
+    // allocate no more than 10% of the time limit to presolve.
+    // Note that this is not the presolve time, but the time limit for presolve.
+    const double presolve_time_limit = 0.1 * time_limit;
+    detail::third_party_presolve_t<i_t, f_t> presolver;
+    auto presolved_problem     = presolver.apply(op_problem, presolve_time_limit);
+    const double presolve_time = timer.elapsed_time();
+
+    CUOPT_LOG_INFO("Third party presolve time: %f", presolve_time);
+
+    detail::problem_t<i_t, f_t> problem(presolved_problem);
     CUOPT_LOG_INFO(
       "Solving a problem with %d constraints %d variables (%d integers) and %d nonzeros",
       problem.n_constraints,
@@ -590,7 +608,7 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
 
     if (settings.user_problem_file != "") {
       CUOPT_LOG_INFO("Writing user problem to file: %s", settings.user_problem_file.c_str());
-      problem.write_as_mps(settings.user_problem_file);
+      full_problem.write_as_mps(settings.user_problem_file);
     }
 
     // Set the hyper-parameters based on the solver_settings
@@ -598,7 +616,24 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
 
     setup_device_symbols(op_problem.get_handle_ptr()->get_stream());
 
-    auto sol = solve_lp_with_method(op_problem, problem, settings, is_batch_mode);
+    auto reduced_solution = solve_lp_with_method(op_problem, problem, settings, is_batch_mode);
+    auto full_sol_vec     = presolver.undo(reduced_solution.get_primal_solution());
+
+    auto full_stats = reduced_solution.get_additional_termination_information();
+    // add third party presolve time to cuopt presolve time
+    full_stats.solve_time += presolve_time;
+
+    // Create a new solution with the full problem solution
+    optimization_problem_solution_t<i_t, f_t> sol(full_sol_vec,
+                                                  reduced_solution.get_dual_solution(),
+                                                  reduced_solution.get_reduced_cost(),
+                                                  full_problem.objective_name,
+                                                  full_problem.var_names,
+                                                  full_problem.row_names,
+                                                  full_stats,
+                                                  reduced_solution.get_termination_status(),
+                                                  op_problem.get_handle_ptr(),
+                                                  true);
 
     if (settings.sol_file != "") {
       CUOPT_LOG_INFO("Writing solution to file %s", settings.sol_file.c_str());
