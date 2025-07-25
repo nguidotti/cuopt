@@ -101,4 +101,29 @@ struct fp_recombiner_config_t {
   }
 };
 
+struct sub_mip_recombiner_config_t {
+  static constexpr double sub_mip_time_limit                 = 3.;
+  static constexpr double infeasibility_detection_time_limit = 0.5;
+  static constexpr size_t initial_n_of_vars_from_other       = 200;
+  static constexpr size_t max_different_var_limit            = 10000;
+  static constexpr size_t min_different_var_limit            = 20;
+  static size_t max_n_of_vars_from_other;
+  static constexpr double n_var_ratio_increase_factor = 1.1;
+  static constexpr double n_var_ratio_decrease_factor = 0.99;
+  static void increase_max_n_of_vars_from_other()
+  {
+    max_n_of_vars_from_other = std::min(
+      size_t(max_n_of_vars_from_other * n_var_ratio_increase_factor), max_different_var_limit);
+    CUOPT_LOG_DEBUG("Increased max_n_of_vars_from_other in SUB_MIP recombiner to %lu",
+                    max_n_of_vars_from_other);
+  }
+  static void decrease_max_n_of_vars_from_other()
+  {
+    max_n_of_vars_from_other = std::max(
+      size_t(max_n_of_vars_from_other * n_var_ratio_decrease_factor), min_different_var_limit);
+    CUOPT_LOG_DEBUG("Decreased max_n_of_vars_from_other in SUB_MIP recombiner to %lu",
+                    max_n_of_vars_from_other);
+  }
+};
+
 }  // namespace cuopt::linear_programming::detail

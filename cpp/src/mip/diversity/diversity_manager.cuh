@@ -104,6 +104,7 @@ class diversity_manager_t {
   bool run_only_ls_recombiner{false};
   bool run_only_bp_recombiner{false};
   bool run_only_fp_recombiner{false};
+  bool run_only_sub_mip_recombiner{false};
 };
 
 }  // namespace cuopt::linear_programming::detail

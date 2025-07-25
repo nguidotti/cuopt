@@ -45,6 +45,8 @@ size_t ls_recombiner_config_t::max_n_of_vars_from_other =
   ls_recombiner_config_t::initial_n_of_vars_from_other;
 size_t bp_recombiner_config_t::max_n_of_vars_from_other =
   bp_recombiner_config_t::initial_n_of_vars_from_other;
+size_t sub_mip_recombiner_config_t::max_n_of_vars_from_other =
+  sub_mip_recombiner_config_t::initial_n_of_vars_from_other;
 
 template <typename i_t, typename f_t>
 diversity_manager_t<i_t, f_t>::diversity_manager_t(mip_solver_context_t<i_t, f_t>& context_)
@@ -765,10 +767,11 @@ std::pair<solution_t<i_t, f_t>, bool> diversity_manager_t<i_t, f_t>::recombine(
     recombiner = recombiner_enum_t::BOUND_PROP;
   } else if (run_only_fp_recombiner) {
     recombiner = recombiner_enum_t::FP;
+  } else if (run_only_sub_mip_recombiner) {
+    recombiner = recombiner_enum_t::SUB_MIP;
   } else {
     recombiner = mab_recombiner.select_mab_option();
   }
-  recombiner = recombiner_enum_t::SUB_MIP;
   recombine_stats.add_attempt((recombiner_enum_t)recombiner);
   recombine_stats.start_recombiner_time();
   if (recombiner == recombiner_enum_t::BOUND_PROP) {

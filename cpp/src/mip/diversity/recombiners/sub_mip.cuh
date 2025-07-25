@@ -49,12 +49,12 @@ class sub_mip_recombiner_t : public recombiner_t<i_t, f_t> {
     // find same values and populate it to offspring
     i_t n_different_vars =
       this->assign_same_integer_values(guiding_solution, other_solution, offspring);
-    CUOPT_LOG_DEBUG("FP rec: Number of different variables %d MAX_VARS %d",
+    CUOPT_LOG_DEBUG("SUB_MIP rec: Number of different variables %d MAX_VARS %d",
                     n_different_vars,
-                    fp_recombiner_config_t::max_n_of_vars_from_other);
+                    sub_mip_recombiner_config_t::max_n_of_vars_from_other);
     i_t n_vars_from_other = n_different_vars;
-    if (n_vars_from_other > (i_t)fp_recombiner_config_t::max_n_of_vars_from_other) {
-      n_vars_from_other = fp_recombiner_config_t::max_n_of_vars_from_other;
+    if (n_vars_from_other > (i_t)sub_mip_recombiner_config_t::max_n_of_vars_from_other) {
+      n_vars_from_other = sub_mip_recombiner_config_t::max_n_of_vars_from_other;
       thrust::default_random_engine g{(unsigned int)cuopt::seed_generator::get_seed()};
       thrust::shuffle(a.handle_ptr->get_thrust_policy(),
                       this->remaining_indices.data(),
@@ -73,7 +73,7 @@ class sub_mip_recombiner_t : public recombiner_t<i_t, f_t> {
     fixed_problem.check_problem_representation(true);
     if (!guiding_solution.get_feasible() && !other_solution.get_feasible()) {
       relaxed_lp_settings_t lp_settings;
-      lp_settings.time_limit = fp_recombiner_config_t::infeasibility_detection_time_limit;
+      lp_settings.time_limit = sub_mip_recombiner_config_t::infeasibility_detection_time_limit;
       lp_settings.tolerance  = fixed_problem.tolerances.absolute_tolerance;
       lp_settings.return_first_feasible = true;
       lp_settings.save_state            = true;
@@ -84,7 +84,7 @@ class sub_mip_recombiner_t : public recombiner_t<i_t, f_t> {
       if (lp_response.get_termination_status() == pdlp_termination_status_t::PrimalInfeasible ||
           lp_response.get_termination_status() == pdlp_termination_status_t::DualInfeasible ||
           lp_response.get_termination_status() == pdlp_termination_status_t::TimeLimit) {
-        CUOPT_LOG_DEBUG("FP recombiner failed because LP found infeasible!");
+        CUOPT_LOG_DEBUG("SUB_MIP recombiner failed because LP found infeasible!");
         return std::make_pair(offspring, false);
       }
     }
@@ -100,7 +100,7 @@ class sub_mip_recombiner_t : public recombiner_t<i_t, f_t> {
       fixed_problem.get_host_user_problem(branch_and_bound_problem);
       branch_and_bound_solution.resize(branch_and_bound_problem.num_cols);
       // Fill in the settings for branch and bound
-      branch_and_bound_settings.time_limit           = fp_recombiner_config_t::fp_time_limit;
+      branch_and_bound_settings.time_limit = sub_mip_recombiner_config_t::sub_mip_time_limit;
       branch_and_bound_settings.print_presolve_stats = false;
       branch_and_bound_settings.absolute_mip_gap_tol = context.settings.tolerances.absolute_mip_gap;
       branch_and_bound_settings.relative_mip_gap_tol = context.settings.tolerances.relative_mip_gap;
@@ -108,11 +108,8 @@ class sub_mip_recombiner_t : public recombiner_t<i_t, f_t> {
       dual_simplex::branch_and_bound_t<i_t, f_t> branch_and_bound(branch_and_bound_problem,
                                                                   branch_and_bound_settings);
       branch_and_bound_status = branch_and_bound.solve(branch_and_bound_solution);
-      if (branch_and_bound_status == dual_simplex::mip_status_t::OPTIMAL ||
-          branch_and_bound_status == dual_simplex::mip_status_t::TIME_LIMIT) {
-        for (size_t i = 0; i < branch_and_bound_solution.x.size(); i++) {
-          printf("x[%lu] = %f\n", i, branch_and_bound_solution.x[i]);
-        }
+      // TODO do partial solutions too
+      if (branch_and_bound_status == dual_simplex::mip_status_t::OPTIMAL) {
         cuopt_assert(fixed_assignment.size() == branch_and_bound_solution.x.size(),
                      "Assignment size mismatch");
         raft::copy(fixed_assignment.data(),
@@ -129,11 +126,11 @@ class sub_mip_recombiner_t : public recombiner_t<i_t, f_t> {
     offspring.compute_feasibility();
     bool same_as_parents = this->check_if_offspring_is_same_as_parents(offspring, a, b);
     // adjust the max_n_of_vars_from_other
-    if (n_different_vars > (i_t)fp_recombiner_config_t::max_n_of_vars_from_other) {
+    if (n_different_vars > (i_t)sub_mip_recombiner_config_t::max_n_of_vars_from_other) {
       if (same_as_parents) {
-        fp_recombiner_config_t::increase_max_n_of_vars_from_other();
+        sub_mip_recombiner_config_t::increase_max_n_of_vars_from_other();
       } else {
-        fp_recombiner_config_t::decrease_max_n_of_vars_from_other();
+        sub_mip_recombiner_config_t::decrease_max_n_of_vars_from_other();
       }
     }
     bool better_cost_than_parents =
