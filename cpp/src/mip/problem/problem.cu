@@ -1145,6 +1145,10 @@ problem_t<i_t, f_t> problem_t<i_t, f_t>::get_problem_after_fixing_vars(
   rmm::device_uvector<i_t>& variable_map,
   const raft::handle_t* handle_ptr)
 {
+  // Don't do anything if no variables are to be removed (may happen if presolve reduces a MIP to a
+  // LP problem)
+  if (variables_to_fix.size() == 0) { return *this; }
+
   auto start_time = std::chrono::high_resolution_clock::now();
   cuopt_assert(n_variables == assignment.size(), "Assignment size issue");
   problem_t<i_t, f_t> problem(*this, true);
