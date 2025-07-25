@@ -38,6 +38,7 @@ from cuopt.linear_programming.solver.solver_parameters import (
     CUOPT_MIP_SCALING,
     CUOPT_NUM_CPU_THREADS,
     CUOPT_PDLP_SOLVER_MODE,
+    CUOPT_PRESOLVE,
     CUOPT_PRIMAL_INFEASIBLE_TOLERANCE,
     CUOPT_RELATIVE_DUAL_TOLERANCE,
     CUOPT_RELATIVE_GAP_TOLERANCE,
@@ -275,6 +276,10 @@ def create_solver(LP_data, warmstart_data):
         if solver_config.crossover is not None:
             solver_settings.set_parameter(
                 CUOPT_CROSSOVER, solver_config.crossover
+            )
+        if solver_config.presolve is not None:
+            solver_settings.set_parameter(
+                CUOPT_PRESOLVE, solver_config.presolve
             )
         if solver_config.log_to_console is not None:
             solver_settings.set_parameter(

@@ -584,18 +584,26 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
     }
 
     auto timer = cuopt::timer_t(time_limit);
-    detail::problem_t<i_t, f_t> full_problem(op_problem);
+    detail::problem_t<i_t, f_t> problem(op_problem);
 
-    // allocate no more than 10% of the time limit to presolve.
-    // Note that this is not the presolve time, but the time limit for presolve.
-    const double presolve_time_limit = 0.1 * time_limit;
-    detail::third_party_presolve_t<i_t, f_t> presolver;
-    auto presolved_problem     = presolver.apply(op_problem, presolve_time_limit);
-    const double presolve_time = timer.elapsed_time();
+    if (settings.user_problem_file != "") {
+      CUOPT_LOG_INFO("Writing user problem to file: %s", settings.user_problem_file.c_str());
+      problem.write_as_mps(settings.user_problem_file);
+    }
 
-    CUOPT_LOG_INFO("Third party presolve time: %f", presolve_time);
+    double presolve_time = 0.0;
+    std::unique_ptr<detail::third_party_presolve_t<i_t, f_t>> presolver;
 
-    detail::problem_t<i_t, f_t> problem(presolved_problem);
+    if (settings.presolve) {
+      // allocate no more than 10% of the time limit to presolve.
+      // Note that this is not the presolve time, but the time limit for presolve.
+      const double presolve_time_limit = 0.1 * time_limit;
+      presolver     = std::make_unique<detail::third_party_presolve_t<i_t, f_t>>();
+      problem       = presolver->apply(op_problem, presolve_time_limit);
+      presolve_time = timer.elapsed_time();
+      CUOPT_LOG_INFO("Third party presolve time: %f", presolve_time);
+    }
+
     CUOPT_LOG_INFO(
       "Solving a problem with %d constraints %d variables (%d integers) and %d nonzeros",
       problem.n_constraints,
@@ -606,32 +614,39 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
                    problem.presolve_data.objective_offset,
                    problem.presolve_data.objective_scaling_factor);
 
-    if (settings.user_problem_file != "") {
-      CUOPT_LOG_INFO("Writing user problem to file: %s", settings.user_problem_file.c_str());
-      full_problem.write_as_mps(settings.user_problem_file);
-    }
-
     // Set the hyper-parameters based on the solver_settings
     if (use_pdlp_solver_mode) { set_pdlp_solver_mode(settings); }
 
     setup_device_symbols(op_problem.get_handle_ptr()->get_stream());
 
-    auto reduced_solution = solve_lp_with_method(op_problem, problem, settings, is_batch_mode);
-    auto full_sol_vec     = presolver.undo(reduced_solution.get_primal_solution());
+    auto solution = solve_lp_with_method(op_problem, problem, settings, is_batch_mode);
 
-    auto full_stats = reduced_solution.get_additional_termination_information();
+    auto const& primal_sol = solution.get_primal_solution();
+    rmm::device_uvector<f_t> primal_sol_tmp(primal_sol.size(),
+                                            op_problem.get_handle_ptr()->get_stream());
+    raft::copy(primal_sol_tmp.data(),
+               primal_sol.data(),
+               primal_sol.size(),
+               op_problem.get_handle_ptr()->get_stream());
+
+    if (settings.presolve) {
+      auto full_sol_vec = presolver->undo(primal_sol_tmp);
+      primal_sol_tmp    = std::move(full_sol_vec);
+    }
+
+    auto full_stats = solution.get_additional_termination_information();
     // add third party presolve time to cuopt presolve time
     full_stats.solve_time += presolve_time;
 
     // Create a new solution with the full problem solution
-    optimization_problem_solution_t<i_t, f_t> sol(full_sol_vec,
-                                                  reduced_solution.get_dual_solution(),
-                                                  reduced_solution.get_reduced_cost(),
-                                                  full_problem.objective_name,
-                                                  full_problem.var_names,
-                                                  full_problem.row_names,
+    optimization_problem_solution_t<i_t, f_t> sol(primal_sol_tmp,
+                                                  solution.get_dual_solution(),
+                                                  solution.get_reduced_cost(),
+                                                  op_problem.get_objective_name(),
+                                                  op_problem.get_variable_names(),
+                                                  op_problem.get_row_names(),
                                                   full_stats,
-                                                  reduced_solution.get_termination_status(),
+                                                  solution.get_termination_status(),
                                                   op_problem.get_handle_ptr(),
                                                   true);
 

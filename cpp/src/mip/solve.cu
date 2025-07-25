@@ -175,17 +175,20 @@ mip_solution_t<i_t, f_t> solve_mip(optimization_problem_t<i_t, f_t>& op_problem,
     problem_checking_t<i_t, f_t>::check_initial_solution_representation(op_problem, settings);
 
     auto timer = cuopt::timer_t(time_limit);
-    // allocate note more than 10% of the time limit to presolve.
-    // Note that this is not the presolve time, but the time limit for presolve.
-    const double presolve_time_limit = 0.1 * time_limit;
-    detail::third_party_presolve_t<i_t, f_t> presolver;
-    auto presolved_problem     = presolver.apply(op_problem, presolve_time_limit);
-    const double presolve_time = timer.elapsed_time();
 
-    CUOPT_LOG_INFO("Third party presolve time: %f", presolve_time);
+    double presolve_time = 0.0;
+    std::unique_ptr<detail::third_party_presolve_t<i_t, f_t>> presolver;
+    detail::problem_t<i_t, f_t> problem(op_problem, settings.get_tolerances());
 
-    // have solve, problem, solution, utils etc. in common dir
-    detail::problem_t<i_t, f_t> problem(presolved_problem, settings.get_tolerances());
+    if (settings.presolve) {
+      // allocate not more than 10% of the time limit to presolve.
+      // Note that this is not the presolve time, but the time limit for presolve.
+      const double presolve_time_limit = 0.1 * time_limit;
+      presolver     = std::make_unique<detail::third_party_presolve_t<i_t, f_t>>();
+      problem       = presolver->apply(op_problem, presolve_time_limit);
+      presolve_time = timer.elapsed_time();
+      CUOPT_LOG_INFO("Third party presolve time: %f", presolve_time);
+    }
     if (settings.user_problem_file != "") {
       CUOPT_LOG_INFO("Writing user problem to file: %s", settings.user_problem_file.c_str());
       problem.write_as_mps(settings.user_problem_file);
@@ -195,11 +198,19 @@ mip_solution_t<i_t, f_t> solve_mip(optimization_problem_t<i_t, f_t>& op_problem,
     setup_device_symbols(op_problem.get_handle_ptr()->get_stream());
 
     auto reduced_solution = run_mip(problem, settings, timer);
-    auto full_sol_vec     = presolver.undo(reduced_solution.get_solution());
+
+    auto const& full_sol_vec = reduced_solution.get_solution();
+    rmm::device_uvector<f_t> full_sol_vec_tmp(full_sol_vec.size(),
+                                              op_problem.get_handle_ptr()->get_stream());
+    raft::copy(full_sol_vec_tmp.data(),
+               full_sol_vec.data(),
+               full_sol_vec.size(),
+               op_problem.get_handle_ptr()->get_stream());
+    if (settings.presolve) { full_sol_vec_tmp = presolver->undo(full_sol_vec_tmp); }
 
     detail::problem_t<i_t, f_t> full_problem(op_problem);
     detail::solution_t<i_t, f_t> full_sol(full_problem);
-    full_sol.copy_new_assignment(cuopt::host_copy(full_sol_vec));
+    full_sol.copy_new_assignment(cuopt::host_copy(full_sol_vec_tmp));
     full_sol.compute_feasibility();
     if (!full_sol.get_feasible()) {
       CUOPT_LOG_WARN("The solution is not feasible after post solve");

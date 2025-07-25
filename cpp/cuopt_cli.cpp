@@ -194,6 +194,11 @@ int main(int argc, char* argv[])
     .default_value(false)
     .implicit_value(true);
 
+  program.add_argument("--presolve")
+    .help("enable/disable presolve (default: true)")
+    .default_value(true)
+    .implicit_value(true);
+
   std::map<std::string, std::string> arg_name_to_param_name;
   {
     // Add all solver settings as arguments

@@ -463,6 +463,11 @@ class SolverConfig(StrictModel):
         default=False,
         description="Set True to use crossover, False to not use crossover.",
     )
+    presolve: Optional[bool] = Field(
+        default=True,
+        description="Set True to enable presolve, False to disable presolve. "
+        "Presolve can reduce problem size and improve solve time.",
+    )
     log_to_console: Optional[bool] = Field(
         default=True,
         description="Set True to write logs to console, False to "
