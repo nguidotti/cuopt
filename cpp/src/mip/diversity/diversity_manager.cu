@@ -69,6 +69,7 @@ diversity_manager_t<i_t, f_t>::diversity_manager_t(mip_solver_context_t<i_t, f_t
                             context.problem_ptr->n_variables,
                             ls.line_segment_search,
                             context.problem_ptr->handle_ptr),
+    sub_mip_recombiner(context, context.problem_ptr->n_variables, context.problem_ptr->handle_ptr),
     rng(cuopt::seed_generator::get_seed()),
     stats(context.stats),
     mab_recombiner(
@@ -99,11 +100,6 @@ diversity_manager_t<i_t, f_t>::diversity_manager_t(mip_solver_context_t<i_t, f_t
         CUOPT_LOG_WARN("Failed to parse CUOPT_CONFIG_ID environment variable: %s", e.what());
       }
     }
-    diversity_config_t::halve_population                   = config_id % 2;
-    int next_config                                        = config_id / 2;
-    diversity_config_t::lp_run_time_if_feasible            = next_config % 2 == 0 ? 15 : 5;
-    next_config                                            = next_config / 2;
-    diversity_config_t::max_iterations_without_improvement = next_config % 2 == 0 ? 15 : 50;
   }
 }
 
@@ -772,6 +768,7 @@ std::pair<solution_t<i_t, f_t>, bool> diversity_manager_t<i_t, f_t>::recombine(
   } else {
     recombiner = mab_recombiner.select_mab_option();
   }
+  recombiner = recombiner_enum_t::SUB_MIP;
   recombine_stats.add_attempt((recombiner_enum_t)recombiner);
   recombine_stats.start_recombiner_time();
   if (recombiner == recombiner_enum_t::BOUND_PROP) {
@@ -784,11 +781,19 @@ std::pair<solution_t<i_t, f_t>, bool> diversity_manager_t<i_t, f_t>::recombine(
     recombine_stats.stop_recombiner_time();
     if (success) { recombine_stats.add_success(); }
     return std::make_pair(sol, success);
-  } else {
+  } else if (recombiner == recombiner_enum_t::LINE_SEGMENT) {
     auto [sol, success] = line_segment_recombiner.recombine(a, b, population.weights);
     recombine_stats.stop_recombiner_time();
     if (success) { recombine_stats.add_success(); }
     return std::make_pair(sol, success);
+  } else if (recombiner == recombiner_enum_t::SUB_MIP) {
+    auto [sol, success] = sub_mip_recombiner.recombine(a, b, population.weights);
+    recombine_stats.stop_recombiner_time();
+    if (success) { recombine_stats.add_success(); }
+    return std::make_pair(sol, success);
+  } else {
+    CUOPT_LOG_ERROR("Invalid recombiner type: %d", recombiner);
+    return std::make_pair(solution_t<i_t, f_t>(a), false);
   }
 }
 

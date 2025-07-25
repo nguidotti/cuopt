@@ -38,7 +38,7 @@ static size_t n_sol_for_skip_init_gen            = 3;
 static double max_fast_sol_time                  = 10;
 static double lp_run_time_if_feasible            = 15.;
 static double lp_run_time_if_infeasible          = 1;
-static bool halve_population                     = false;
+static bool halve_population                     = true;
 };  // namespace diversity_config_t
 
 }  // namespace cuopt::linear_programming::detail

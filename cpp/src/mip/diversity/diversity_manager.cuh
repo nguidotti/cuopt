@@ -25,6 +25,7 @@
 #include "recombiners/fp_recombiner.cuh"
 #include "recombiners/line_segment_recombiner.cuh"
 #include "recombiners/recombiner_stats.hpp"
+#include "recombiners/sub_mip.cuh"
 
 #include <cuopt/linear_programming/mip/solver_settings.hpp>
 #include <cuopt/linear_programming/mip/solver_stats.hpp>
@@ -86,6 +87,7 @@ class diversity_manager_t {
   bound_prop_recombiner_t<i_t, f_t> bound_prop_recombiner;
   fp_recombiner_t<i_t, f_t> fp_recombiner;
   line_segment_recombiner_t<i_t, f_t> line_segment_recombiner;
+  sub_mip_recombiner_t<i_t, f_t> sub_mip_recombiner;
   all_recombine_stats recombine_stats;
   std::mt19937 rng;
   i_t current_step{0};
