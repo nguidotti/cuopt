@@ -23,6 +23,8 @@
 #include "local_search/rounding/simple_rounding.cuh"
 #include "solver.cuh"
 
+#include <linear_programming/pdlp.cuh>
+
 #include <dual_simplex/branch_and_bound.hpp>
 #include <dual_simplex/simplex_solver_settings.hpp>
 #include <dual_simplex/solve.hpp>
@@ -120,6 +122,25 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
     CUOPT_LOG_INFO("Problem full reduced in presolve");
     solution_t<i_t, f_t> sol(*context.problem_ptr);
     sol.set_problem_fully_reduced();
+    context.problem_ptr->post_process_solution(sol);
+    return sol;
+  }
+
+  // if the problem was reduced to a LP: run PDLP
+  if (context.problem_ptr->n_integer_vars == 0) {
+    CUOPT_LOG_INFO("Problem reduced to a LP, running PDLP");
+    pdlp_solver_settings_t<i_t, f_t> pdlp_settings{};
+    pdlp_settings.time_limit = timer_.remaining_time();
+    detail::pdlp_solver_t<i_t, f_t> solver(*context.problem_ptr, pdlp_settings, false);
+    auto start_time = std::chrono::high_resolution_clock::now();
+    auto opt_sol    = solver.run_solver(start_time);
+    solution_t<i_t, f_t> sol(*context.problem_ptr);
+    sol.copy_new_assignment(host_copy(opt_sol.get_primal_solution()));
+    if (opt_sol.get_termination_status() == pdlp_termination_status_t::Optimal ||
+        opt_sol.get_termination_status() == pdlp_termination_status_t::PrimalInfeasible ||
+        opt_sol.get_termination_status() == pdlp_termination_status_t::DualInfeasible) {
+      sol.set_problem_fully_reduced();
+    }
     context.problem_ptr->post_process_solution(sol);
     return sol;
   }
