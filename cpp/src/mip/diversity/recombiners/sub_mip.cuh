@@ -89,14 +89,14 @@ class sub_mip_recombiner_t : public recombiner_t<i_t, f_t> {
       }
     }
     // brute force rounding threshold is 8
-    const bool run_sub_mip = fixed_problem.n_integer_vars > 8;
+    const bool run_sub_mip                             = fixed_problem.n_integer_vars > 8;
+    dual_simplex::mip_status_t branch_and_bound_status = dual_simplex::mip_status_t::UNSET;
+    dual_simplex::mip_solution_t<i_t, f_t> branch_and_bound_solution(1);
     if (run_sub_mip) {
       // run sub-mip
       namespace dual_simplex = cuopt::linear_programming::dual_simplex;
-      dual_simplex::mip_status_t branch_and_bound_status;
       dual_simplex::user_problem_t<i_t, f_t> branch_and_bound_problem;
       dual_simplex::simplex_solver_settings_t<i_t, f_t> branch_and_bound_settings;
-      dual_simplex::mip_solution_t<i_t, f_t> branch_and_bound_solution(1);
       fixed_problem.get_host_user_problem(branch_and_bound_problem);
       branch_and_bound_solution.resize(branch_and_bound_problem.num_cols);
       // Fill in the settings for branch and bound
@@ -107,11 +107,14 @@ class sub_mip_recombiner_t : public recombiner_t<i_t, f_t> {
       branch_and_bound_settings.integer_tol = context.settings.tolerances.integrality_tolerance;
       dual_simplex::branch_and_bound_t<i_t, f_t> branch_and_bound(branch_and_bound_problem,
                                                                   branch_and_bound_settings);
+      branch_and_bound.set_initial_guess(cuopt::host_copy(fixed_assignment));
       branch_and_bound_status = branch_and_bound.solve(branch_and_bound_solution);
-      // TODO do partial solutions too
-      if (branch_and_bound_status == dual_simplex::mip_status_t::OPTIMAL) {
+      if (!std::isnan(branch_and_bound_solution.objective)) {
         cuopt_assert(fixed_assignment.size() == branch_and_bound_solution.x.size(),
                      "Assignment size mismatch");
+        CUOPT_LOG_DEBUG("Sub-MIP solution found. Objective %.16e. Status %d",
+                        branch_and_bound_solution.objective,
+                        int(branch_and_bound_status));
         raft::copy(fixed_assignment.data(),
                    branch_and_bound_solution.x.data(),
                    fixed_assignment.size(),
@@ -124,10 +127,10 @@ class sub_mip_recombiner_t : public recombiner_t<i_t, f_t> {
     if (!run_sub_mip) { offspring.round_nearest(); }
     cuopt_assert(offspring.test_number_all_integer(), "All must be integers after offspring");
     offspring.compute_feasibility();
-    bool same_as_parents = this->check_if_offspring_is_same_as_parents(offspring, a, b);
+    // bool same_as_parents = this->check_if_offspring_is_same_as_parents(offspring, a, b);
     // adjust the max_n_of_vars_from_other
     if (n_different_vars > (i_t)sub_mip_recombiner_config_t::max_n_of_vars_from_other) {
-      if (same_as_parents) {
+      if (branch_and_bound_status == dual_simplex::mip_status_t::OPTIMAL) {
         sub_mip_recombiner_config_t::increase_max_n_of_vars_from_other();
       } else {
         sub_mip_recombiner_config_t::decrease_max_n_of_vars_from_other();
@@ -143,7 +146,7 @@ class sub_mip_recombiner_t : public recombiner_t<i_t, f_t> {
       CUOPT_LOG_DEBUG("Offspring is feasible or better than both parents");
       return std::make_pair(offspring, true);
     }
-    return std::make_pair(offspring, !same_as_parents);
+    return std::make_pair(offspring, !std::isnan(branch_and_bound_solution.objective));
   }
   rmm::device_uvector<i_t> vars_to_fix;
   mip_solver_context_t<i_t, f_t>& context;
