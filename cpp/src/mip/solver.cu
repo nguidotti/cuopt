@@ -24,6 +24,7 @@
 #include "solver.cuh"
 
 #include <linear_programming/pdlp.cuh>
+#include <linear_programming/solve.cuh>
 
 #include <dual_simplex/branch_and_bound.hpp>
 #include <dual_simplex/simplex_solver_settings.hpp>
@@ -126,16 +127,19 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
     return sol;
   }
 
-  // if the problem was reduced to a LP: run PDLP
+  // if the problem was reduced to a LP: run concurrent LP
   if (context.problem_ptr->n_integer_vars == 0) {
-    CUOPT_LOG_INFO("Problem reduced to a LP, running PDLP");
-    pdlp_solver_settings_t<i_t, f_t> pdlp_settings{};
-    pdlp_settings.time_limit = timer_.remaining_time();
-    detail::pdlp_solver_t<i_t, f_t> solver(*context.problem_ptr, pdlp_settings, false);
-    auto start_time = std::chrono::high_resolution_clock::now();
-    auto opt_sol    = solver.run_solver(start_time);
+    CUOPT_LOG_INFO("Problem reduced to a LP, running concurrent LP");
+    pdlp_solver_settings_t<i_t, f_t> settings{};
+    settings.time_limit = timer_.remaining_time();
+    settings.method     = method_t::Concurrent;
+
+    auto opt_sol = solve_lp_with_method<i_t, f_t>(
+      *context.problem_ptr->original_problem_ptr, *context.problem_ptr, settings);
+
     solution_t<i_t, f_t> sol(*context.problem_ptr);
-    sol.copy_new_assignment(host_copy(opt_sol.get_primal_solution()));
+    sol.copy_new_assignment(
+      host_copy(opt_sol.get_primal_solution()));  // TODO: check if this is correct
     if (opt_sol.get_termination_status() == pdlp_termination_status_t::Optimal ||
         opt_sol.get_termination_status() == pdlp_termination_status_t::PrimalInfeasible ||
         opt_sol.get_termination_status() == pdlp_termination_status_t::DualInfeasible) {
