@@ -155,6 +155,7 @@ endif()
 find_package(TBB REQUIRED)
 
 FetchContent_Declare(
+  papilo
   GIT_REPOSITORY "git@github.com:scipopt/papilo.git"
   GIT_TAG "main"
 )
