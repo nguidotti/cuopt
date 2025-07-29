@@ -34,9 +34,6 @@ target_link_libraries(cuopttestutils
     GTest::gmock
     GTest::gtest
     papilo-core
-    clusol
-    gfortran
-    lapack
 )
 
 set(CUOPT_TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR})

@@ -249,7 +249,6 @@ target_link_libraries(cuopt
   CCCL::CCCL
   raft::raft
   cuopt::mps_parser
-  clusol
   PRIVATE
   ${CUOPT_PRIVATE_CUDA_LIBS}
   )
@@ -339,8 +338,6 @@ target_link_libraries(cuopt_cli
   cuopt
   OpenMP::OpenMP_CXX
   papilo-core
-  gfortran
-  lapack
 )
 set_property(TARGET cuopt_cli PROPERTY INSTALL_RPATH "$ORIGIN/../${lib_dir}")
 
@@ -361,7 +358,5 @@ if(BUILD_BENCHMARKS)
     cuopt
     OpenMP::OpenMP_CXX
     papilo-core
-    gfortran
-    lapack
   )
 endif()
