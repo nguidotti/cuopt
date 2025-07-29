@@ -154,6 +154,8 @@ else()
   find_package(RAFT REQUIRED)
 endif()
 
+find_package(TBB REQUIRED)
+
 FetchContent_Declare(
   papilo
   GIT_REPOSITORY "git@github.com:scipopt/papilo.git"
@@ -218,6 +220,8 @@ target_include_directories(cuopt
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>"
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libmps_parser/include>"
   "$<INSTALL_INTERFACE:include>"
+  "$<BUILD_INTERFACE:${papilo_SOURCE_DIR}/src>"
+  "$<BUILD_INTERFACE:${papilo_BINARY_DIR}>"
 )
 
 # ##################################################################################################
