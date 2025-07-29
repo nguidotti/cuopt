@@ -61,6 +61,9 @@ parallel parts of the solvers.
 
 Note: by default the number of CPU threads is automatically determined based on the number of CPU cores.
 
+Presolve
+^^^^^^^^
+``CUOPT_PRESOLVE`` controls whether presolve is enabled. Presolve can reduce problem size and improve solve time. Default is enabled.
 
 Linear Programming
 ------------------
