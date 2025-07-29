@@ -5,6 +5,7 @@ channels:
 - rapidsai-nightly
 - conda-forge
 dependencies:
+- boost
 - breathe
 - c-compiler
 - ccache
@@ -30,6 +31,7 @@ dependencies:
 - gcc_linux-aarch64=13.*
 - geopandas
 - gmock
+- gmp
 - gtest
 - httpx
 - ipython
@@ -79,6 +81,7 @@ dependencies:
 - sphinxcontrib-openapi
 - sphinxcontrib-websupport
 - sysroot_linux-aarch64==2.28
+- tbb-devel
 - uvicorn==0.34.*
 - pip:
   - nvidia_sphinx_theme
