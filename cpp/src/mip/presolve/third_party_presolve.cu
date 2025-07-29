@@ -85,11 +85,15 @@ papilo::Problem<f_t> build_papilo_problem(const optimization_problem_t<i_t, f_t>
       i, num_entries, h_variables.data() + row_start, h_coefficients.data() + row_start);
     builder.setRowLhsInf(i, h_constr_lb[i] == -std::numeric_limits<f_t>::infinity());
     builder.setRowRhsInf(i, h_constr_ub[i] == std::numeric_limits<f_t>::infinity());
+    if (h_constr_lb[i] == -std::numeric_limits<f_t>::infinity()) { builder.setRowLhs(i, 0); }
+    if (h_constr_ub[i] == std::numeric_limits<f_t>::infinity()) { builder.setRowRhs(i, 0); }
   }
 
   for (i_t i = 0; i < num_cols; ++i) {
     builder.setColLbInf(i, h_var_lb[i] == -std::numeric_limits<f_t>::infinity());
     builder.setColUbInf(i, h_var_ub[i] == std::numeric_limits<f_t>::infinity());
+    if (h_var_lb[i] == -std::numeric_limits<f_t>::infinity()) { builder.setColLb(i, 0); }
+    if (h_var_ub[i] == std::numeric_limits<f_t>::infinity()) { builder.setColUb(i, 0); }
   }
 
   return builder.build();
@@ -97,7 +101,7 @@ papilo::Problem<f_t> build_papilo_problem(const optimization_problem_t<i_t, f_t>
 
 template <typename i_t, typename f_t>
 optimization_problem_t<i_t, f_t> build_optimization_problem(
-  const papilo::Problem<f_t>& papilo_problem, raft::handle_t const* handle_ptr)
+  papilo::Problem<f_t> const& papilo_problem, raft::handle_t const* handle_ptr)
 {
   optimization_problem_t<i_t, f_t> op_problem(handle_ptr);
 
@@ -105,18 +109,14 @@ optimization_problem_t<i_t, f_t> build_optimization_problem(
   op_problem.set_objective_coefficients(obj.coefficients.data(), obj.coefficients.size());
   op_problem.set_objective_offset(obj.offset);
 
-  auto col_lower = papilo_problem.getLowerBounds();
-  auto col_upper = papilo_problem.getUpperBounds();
-  op_problem.set_variable_lower_bounds(col_lower.data(), col_lower.size());
-  op_problem.set_variable_upper_bounds(col_upper.data(), col_upper.size());
-
   auto& constraint_matrix = papilo_problem.getConstraintMatrix();
   auto row_lower          = constraint_matrix.getLeftHandSides();
   auto row_upper          = constraint_matrix.getRightHandSides();
+  auto col_lower          = papilo_problem.getLowerBounds();
+  auto col_upper          = papilo_problem.getUpperBounds();
 
   auto row_flags = constraint_matrix.getRowFlags();
   for (size_t i = 0; i < row_flags.size(); i++) {
-    // Looks like the bounds are not updated correctly in papilo
     if (row_flags[i].test(papilo::RowFlag::kLhsInf)) {
       row_lower[i] = -std::numeric_limits<f_t>::infinity();
     }
@@ -125,10 +125,10 @@ optimization_problem_t<i_t, f_t> build_optimization_problem(
     }
   }
 
-  auto [index_range, nrows] = constraint_matrix.getRangeInfo();
-
   op_problem.set_constraint_lower_bounds(row_lower.data(), row_lower.size());
   op_problem.set_constraint_upper_bounds(row_upper.data(), row_upper.size());
+
+  auto [index_range, nrows] = constraint_matrix.getRangeInfo();
 
   std::vector<i_t> offsets(nrows + 1);
   // papilo indices do not start from 0 after presolve
@@ -151,7 +151,16 @@ optimization_problem_t<i_t, f_t> build_optimization_problem(
   for (size_t i = 0; i < col_flags.size(); i++) {
     var_types[i] =
       col_flags[i].test(papilo::ColFlag::kIntegral) ? var_t::INTEGER : var_t::CONTINUOUS;
+    if (col_flags[i].test(papilo::ColFlag::kLbInf)) {
+      col_lower[i] = -std::numeric_limits<f_t>::infinity();
+    }
+    if (col_flags[i].test(papilo::ColFlag::kUbInf)) {
+      col_upper[i] = std::numeric_limits<f_t>::infinity();
+    }
   }
+
+  op_problem.set_variable_lower_bounds(col_lower.data(), col_lower.size());
+  op_problem.set_variable_upper_bounds(col_upper.data(), col_upper.size());
   op_problem.set_variable_types(var_types.data(), var_types.size());
 
   return op_problem;
