@@ -58,8 +58,9 @@ adaptive_step_size_strategy_t<i_t, f_t>::adaptive_step_size_strategy_t(
     norm_squared_delta_dual_{(batch_mode ? static_cast<size_t>((0 + 3)/*@@*/) : 1), stream_view_},
     reusable_device_scalar_value_1_{f_t(1.0), stream_view_},
     reusable_device_scalar_value_0_{f_t(0.0), stream_view_},
-    graph(stream_view_),
-    batch_mode_(batch_mode)
+    graph_(stream_view_),
+    batch_mode_(batch_mode),
+    batched_dot_product_handler_(batch_mode ? batched_transform_reduce_handler_t<i_t, f_t>((0 + 3)/*@@*/, handle_ptr_) : batched_transform_reduce_handler_t<i_t, f_t>())
 {
 }
 
@@ -105,9 +106,9 @@ __global__ void compute_step_sizes_from_movement_and_interaction(
   f_t primal_weight_ = step_size_strategy_view.primal_weight[id];
 
   f_t movement = pdlp_hyper_params::primal_distance_smoothing * primal_weight_ *
-                   *step_size_strategy_view.norm_squared_delta_primal +
+                   step_size_strategy_view.norm_squared_delta_primal[id] +
                  (pdlp_hyper_params::dual_distance_smoothing / primal_weight_) *
-                   *step_size_strategy_view.norm_squared_delta_dual;
+                   step_size_strategy_view.norm_squared_delta_dual[id];
 
 #ifdef PDLP_DEBUG_MODE
   printf("-compute_step_sizes_from_movement_and_interaction:\n");
@@ -120,8 +121,7 @@ __global__ void compute_step_sizes_from_movement_and_interaction(
     return;
   }
 
-  // TODO TMP JUST TO MAKE THE CUB WORK WIHLE I DON'T HAVE PER SOLUTION INTERACTION
-  f_t interaction_ = raft::abs(*step_size_strategy_view.interaction.data());
+  f_t interaction_ = raft::abs(step_size_strategy_view.interaction[id]);
   f_t step_size_   = step_size_strategy_view.step_size[id];
 
   // Increase PDHG iteration
@@ -216,8 +216,8 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_step_sizes(
 {
   raft::common::nvtx::range fun_scope("compute_step_sizes");
 
-  if (!graph.is_initialized(total_pdlp_iterations)) {
-    graph.start_capture(total_pdlp_iterations);
+  if (!graph_.is_initialized(total_pdlp_iterations)) {
+    graph_.start_capture(total_pdlp_iterations);
 
     // compute numerator and deminator of n_lim
     compute_interaction_and_movement(pdhg_solver.get_primal_tmp_resource(),
@@ -232,9 +232,9 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_step_sizes(
                                   make_span(dual_step_size),
                                   pdhg_solver.get_d_total_pdhg_iterations().data(),
                                   (batch_mode_ ? (0 + 3)/*@@*/ : 1));
-    graph.end_capture(total_pdlp_iterations);
+    graph_.end_capture(total_pdlp_iterations);
   }
-  graph.launch(total_pdlp_iterations);
+  graph_.launch(total_pdlp_iterations);
   // Steam sync so that next call can see modification made to host var valid_step_size
   RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
 }
@@ -337,6 +337,7 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
 #endif
 
   // compute interaction (x'-x) . (A(y'-y))
+  if (!batch_mode_) {
   RAFT_CUBLAS_TRY(
     raft::linalg::detail::cublasdot(handle_ptr_->get_cublas_handle(),
                                     current_saddle_point_state.get_primal_size(),
@@ -346,6 +347,18 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
                                     primal_stride,
                                     interaction_.data(),
                                     stream_view_));
+  } else {
+    batched_dot_product_handler_.batch_transform_reduce([&](i_t climber, rmm::cuda_stream_view stream){
+      RAFT_CUBLAS_TRY(raft::linalg::detail::cublasdot(handle_ptr_->get_cublas_handle(),
+        current_saddle_point_state.get_primal_size(),
+        tmp_primal.data() + climber * current_saddle_point_state.get_primal_size(),
+        primal_stride,
+        current_saddle_point_state.get_delta_primal().data() + climber * current_saddle_point_state.get_primal_size(),
+        primal_stride,
+        interaction_.data() + climber,
+        stream));
+    });
+  }
 
   // Compute movement
   //  compute euclidean norm squared which is
@@ -355,33 +368,57 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
   //               2 + (0.5 /
   //               solver_state.primal_weight) *
   //               norm(delta_dual) ^ 2;
-  deltas_are_done_.stream_wait(stream_pool_.get_stream(0));
-  RAFT_CUBLAS_TRY(
-    raft::linalg::detail::cublasdot(handle_ptr_->get_cublas_handle(),
-                                    current_saddle_point_state.get_primal_size(),
-                                    current_saddle_point_state.get_delta_primal().data(),
-                                    primal_stride,
-                                    current_saddle_point_state.get_delta_primal().data(),
-                                    primal_stride,
-                                    norm_squared_delta_primal_.data(),
-                                    stream_pool_.get_stream(0)));
-  dot_delta_X_.record(stream_pool_.get_stream(0));
+  if (!batch_mode_) {
+    deltas_are_done_.stream_wait(stream_pool_.get_stream(0));
+    RAFT_CUBLAS_TRY(
+      raft::linalg::detail::cublasdot(handle_ptr_->get_cublas_handle(),
+                                      current_saddle_point_state.get_primal_size(),
+                                      current_saddle_point_state.get_delta_primal().data(),
+                                      primal_stride,
+                                      current_saddle_point_state.get_delta_primal().data(),
+                                      primal_stride,
+                                      norm_squared_delta_primal_.data(),
+                                      stream_pool_.get_stream(0)));
+    dot_delta_X_.record(stream_pool_.get_stream(0));
 
-  deltas_are_done_.stream_wait(stream_pool_.get_stream(1));
-  RAFT_CUBLAS_TRY(
-    raft::linalg::detail::cublasdot(handle_ptr_->get_cublas_handle(),
-                                    current_saddle_point_state.get_dual_size(),
-                                    current_saddle_point_state.get_delta_dual().data(),
-                                    dual_stride,
-                                    current_saddle_point_state.get_delta_dual().data(),
-                                    dual_stride,
-                                    norm_squared_delta_dual_.data(),
-                                    stream_pool_.get_stream(1)));
-  dot_delta_Y_.record(stream_pool_.get_stream(1));
+    deltas_are_done_.stream_wait(stream_pool_.get_stream(1));
+    RAFT_CUBLAS_TRY(
+      raft::linalg::detail::cublasdot(handle_ptr_->get_cublas_handle(),
+                                      current_saddle_point_state.get_dual_size(),
+                                      current_saddle_point_state.get_delta_dual().data(),
+                                      dual_stride,
+                                      current_saddle_point_state.get_delta_dual().data(),
+                                      dual_stride,
+                                      norm_squared_delta_dual_.data(),
+                                      stream_pool_.get_stream(1)));
+    dot_delta_Y_.record(stream_pool_.get_stream(1));
 
-  // Wait on main stream for both dot to be done before launching the next kernel
-  dot_delta_X_.stream_wait(stream_view_);
-  dot_delta_Y_.stream_wait(stream_view_);
+    // Wait on main stream for both dot to be done before launching the next kernel
+    dot_delta_X_.stream_wait(stream_view_);
+    dot_delta_Y_.stream_wait(stream_view_);
+  } else {
+    // In batch mode we don't need to parallelize the dot products since we already have many to launch
+    batched_dot_product_handler_.batch_transform_reduce([&](i_t climber, rmm::cuda_stream_view stream){
+      RAFT_CUBLAS_TRY(raft::linalg::detail::cublasdot(handle_ptr_->get_cublas_handle(),
+        current_saddle_point_state.get_primal_size(),
+        current_saddle_point_state.get_delta_primal().data() + climber * current_saddle_point_state.get_primal_size(),
+        primal_stride,
+        current_saddle_point_state.get_delta_primal().data() + climber * current_saddle_point_state.get_primal_size(),
+        primal_stride,
+        norm_squared_delta_primal_.data() + climber,
+        stream));
+    });
+    batched_dot_product_handler_.batch_transform_reduce([&](i_t climber, rmm::cuda_stream_view stream){
+      RAFT_CUBLAS_TRY(raft::linalg::detail::cublasdot(handle_ptr_->get_cublas_handle(),
+        current_saddle_point_state.get_dual_size(),
+        current_saddle_point_state.get_delta_dual().data() + climber * current_saddle_point_state.get_dual_size(),
+        dual_stride,
+        current_saddle_point_state.get_delta_dual().data() + climber * current_saddle_point_state.get_dual_size(),
+        dual_stride,
+        norm_squared_delta_dual_.data() + climber,
+        stream));
+    });
+  }
 }
 
 template <typename i_t, typename f_t>
@@ -426,8 +463,8 @@ adaptive_step_size_strategy_t<i_t, f_t>::view()
 
   v.interaction = raft::device_span<f_t>(interaction_.data(), interaction_.size());
 
-  v.norm_squared_delta_primal = norm_squared_delta_primal_.data(); // TODO will have to be a span
-  v.norm_squared_delta_dual   = norm_squared_delta_dual_.data(); // TODO will have to be a span
+  v.norm_squared_delta_primal = raft::device_span<f_t>(norm_squared_delta_primal_.data(), norm_squared_delta_primal_.size());
+  v.norm_squared_delta_dual   = raft::device_span<f_t>(norm_squared_delta_dual_.data(), norm_squared_delta_dual_.size());
 
   return v;
 }

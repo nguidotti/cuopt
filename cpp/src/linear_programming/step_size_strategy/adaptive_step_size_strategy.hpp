@@ -21,6 +21,7 @@
 #include <linear_programming/cusparse_view.hpp>
 #include <linear_programming/pdhg.hpp>
 #include <linear_programming/saddle_point.hpp>
+#include <linear_programming/utilities/batched_transform_reduce_handler.cuh>
 
 #include <raft/core/handle.hpp>
 
@@ -52,8 +53,8 @@ class adaptive_step_size_strategy_t {
 
     raft::device_span<f_t> interaction;
 
-    f_t* norm_squared_delta_primal;
-    f_t* norm_squared_delta_dual;
+    raft::device_span<f_t> norm_squared_delta_primal;
+    raft::device_span<f_t> norm_squared_delta_dual;
   };
 
   adaptive_step_size_strategy_t(raft::handle_t const* handle_ptr,
@@ -113,8 +114,10 @@ class adaptive_step_size_strategy_t {
   const rmm::device_scalar<f_t> reusable_device_scalar_value_1_;
   const rmm::device_scalar<f_t> reusable_device_scalar_value_0_;
 
-  ping_pong_graph_t<i_t> graph;
+  ping_pong_graph_t<i_t> graph_;
 
   bool batch_mode_;
+
+  batched_transform_reduce_handler_t<i_t, f_t> batched_dot_product_handler_;
 };
 }  // namespace cuopt::linear_programming::detail
