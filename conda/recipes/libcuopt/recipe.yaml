@@ -70,6 +70,8 @@ cache:
       - libcurand-dev
       - libcusparse-dev
       - cuda-cudart-dev
+      - boost
+      - tbb-devel
 
 outputs:
   - package:
