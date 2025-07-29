@@ -360,7 +360,7 @@ int main(int argc, char* argv[])
 
   std::string out_dir;
   std::string result_file;
-  int batch_num;
+  int batch_num = -1;
 
   bool heuristics_only = program.get<std::string>("--heuristics-only")[0] == 't';
   int num_cpu_threads  = program.get<int>("--num-cpu-threads");
