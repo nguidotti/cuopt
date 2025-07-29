@@ -184,8 +184,15 @@ mip_solution_t<i_t, f_t> solve_mip(optimization_problem_t<i_t, f_t>& op_problem,
       // allocate not more than 10% of the time limit to presolve.
       // Note that this is not the presolve time, but the time limit for presolve.
       const double presolve_time_limit = 0.1 * time_limit;
-      presolver     = std::make_unique<detail::third_party_presolve_t<i_t, f_t>>();
-      problem       = presolver->apply(op_problem, presolve_time_limit);
+      presolver               = std::make_unique<detail::third_party_presolve_t<i_t, f_t>>();
+      auto reduced_op_problem = presolver->apply(
+        op_problem, cuopt::linear_programming::problem_category_t::MIP, presolve_time_limit);
+      if (reduced_op_problem.empty()) {
+        return mip_solution_t<i_t, f_t>(mip_termination_status_t::Infeasible,
+                                        solver_stats_t<i_t, f_t>{},
+                                        op_problem.get_handle_ptr()->get_stream());
+      }
+      problem       = detail::problem_t<i_t, f_t>(reduced_op_problem);
       presolve_time = timer.elapsed_time();
       CUOPT_LOG_INFO("Third party presolve time: %f", presolve_time);
     }
@@ -199,18 +206,20 @@ mip_solution_t<i_t, f_t> solve_mip(optimization_problem_t<i_t, f_t>& op_problem,
 
     auto reduced_solution = run_mip(problem, settings, timer);
 
-    auto const& full_sol_vec = reduced_solution.get_solution();
-    rmm::device_uvector<f_t> full_sol_vec_tmp(full_sol_vec.size(),
+    auto primal_solution = cuopt::device_copy(reduced_solution.get_solution(),
                                               op_problem.get_handle_ptr()->get_stream());
-    raft::copy(full_sol_vec_tmp.data(),
-               full_sol_vec.data(),
-               full_sol_vec.size(),
-               op_problem.get_handle_ptr()->get_stream());
-    if (settings.presolve) { full_sol_vec_tmp = presolver->undo(full_sol_vec_tmp); }
+
+    if (settings.presolve) {
+      presolver->undo(primal_solution,
+                      primal_solution,
+                      primal_solution,
+                      cuopt::linear_programming::problem_category_t::MIP,
+                      op_problem.get_handle_ptr()->get_stream());
+    }
 
     detail::problem_t<i_t, f_t> full_problem(op_problem);
     detail::solution_t<i_t, f_t> full_sol(full_problem);
-    full_sol.copy_new_assignment(cuopt::host_copy(full_sol_vec_tmp));
+    full_sol.copy_new_assignment(cuopt::host_copy(primal_solution));
     full_sol.compute_feasibility();
     if (!full_sol.get_feasible()) {
       CUOPT_LOG_WARN("The solution is not feasible after post solve");

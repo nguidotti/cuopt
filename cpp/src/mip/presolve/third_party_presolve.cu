@@ -177,9 +177,55 @@ void check_postsolve_status(const papilo::PostsolveStatus& status)
   }
 }
 
+template <typename f_t>
+void set_presolve_methods(papilo::Presolve<f_t>& presolver, problem_category_t category)
+{
+  using uptr = std::unique_ptr<papilo::PresolveMethod<f_t>>;
+
+  // fast presolvers
+  presolver.addPresolveMethod(uptr(new papilo::SingletonCols<f_t>()));
+  presolver.addPresolveMethod(uptr(new papilo::CoefficientStrengthening<f_t>()));
+  presolver.addPresolveMethod(uptr(new papilo::ConstraintPropagation<f_t>()));
+
+  // medium presolvers
+  presolver.addPresolveMethod(uptr(new papilo::FixContinuous<f_t>()));
+  presolver.addPresolveMethod(uptr(new papilo::SimpleProbing<f_t>()));
+  presolver.addPresolveMethod(uptr(new papilo::ParallelRowDetection<f_t>()));
+  presolver.addPresolveMethod(uptr(new papilo::ParallelColDetection<f_t>()));
+  presolver.addPresolveMethod(uptr(new papilo::SingletonStuffing<f_t>()));
+  presolver.addPresolveMethod(uptr(new papilo::DualFix<f_t>()));
+  presolver.addPresolveMethod(uptr(new papilo::SimplifyInequalities<f_t>()));
+
+  // exhaustive presolvers
+  presolver.addPresolveMethod(uptr(new papilo::ImplIntDetection<f_t>()));
+  presolver.addPresolveMethod(uptr(new papilo::DominatedCols<f_t>()));
+  presolver.addPresolveMethod(uptr(new papilo::Probing<f_t>()));
+
+  if (category == problem_category_t::MIP) {
+    presolver.addPresolveMethod(uptr(new papilo::DualInfer<f_t>));
+    presolver.addPresolveMethod(uptr(new papilo::SimpleSubstitution<f_t>()));
+    presolver.addPresolveMethod(uptr(new papilo::Sparsify<f_t>()));
+    presolver.addPresolveMethod(uptr(new papilo::Substitution<f_t>()));
+  }
+}
+
+template <typename f_t>
+void set_presolve_options(papilo::Presolve<f_t>& presolver,
+                          problem_category_t category,
+                          double time_limit)
+{
+  presolver.getPresolveOptions().tlim = time_limit;
+  if (category == problem_category_t::LP) {
+    presolver.getPresolveOptions().componentsmaxint = -1;
+    presolver.getPresolveOptions().detectlindep     = 0;
+  }
+}
+
 template <typename i_t, typename f_t>
 optimization_problem_t<i_t, f_t> third_party_presolve_t<i_t, f_t>::apply(
-  optimization_problem_t<i_t, f_t>& op_problem, double time_limit)
+  optimization_problem_t<i_t, f_t> const& op_problem,
+  problem_category_t category,
+  double time_limit)
 {
   papilo::Problem<f_t> papilo_problem = build_papilo_problem(op_problem);
 
@@ -189,10 +235,13 @@ optimization_problem_t<i_t, f_t> third_party_presolve_t<i_t, f_t>::apply(
                  papilo_problem.getConstraintMatrix().getNnz());
 
   papilo::Presolve<f_t> presolver;
-  presolver.addDefaultPresolvers();
-  presolver.getPresolveOptions().tlim = time_limit;
+  set_presolve_methods<f_t>(presolver, category);
+  set_presolve_options<f_t>(presolver, category, time_limit);
 
   auto result = presolver.apply(papilo_problem);
+  if (result.status == papilo::PresolveStatus::kInfeasible) {
+    return optimization_problem_t<i_t, f_t>(op_problem.get_handle_ptr());
+  }
 
   post_solve_storage_ = result.postsolve;
 
@@ -206,13 +255,23 @@ optimization_problem_t<i_t, f_t> third_party_presolve_t<i_t, f_t>::apply(
 }
 
 template <typename i_t, typename f_t>
-rmm::device_uvector<f_t> third_party_presolve_t<i_t, f_t>::undo(
-  rmm::device_uvector<f_t>& reduced_sol_vec)
+void third_party_presolve_t<i_t, f_t>::undo(rmm::device_uvector<f_t>& primal_solution,
+                                            rmm::device_uvector<f_t>& dual_solution,
+                                            rmm::device_uvector<f_t>& reduced_costs,
+                                            problem_category_t category,
+                                            rmm::cuda_stream_view stream_view)
 {
-  auto reduced_sol_vec_h = cuopt::host_copy(reduced_sol_vec);
+  auto primal_sol_vec_h    = cuopt::host_copy(primal_solution, stream_view);
+  auto dual_sol_vec_h      = cuopt::host_copy(dual_solution, stream_view);
+  auto reduced_costs_vec_h = cuopt::host_copy(reduced_costs, stream_view);
 
-  papilo::Solution<f_t> reduced_sol(reduced_sol_vec_h);
+  papilo::Solution<f_t> reduced_sol(primal_sol_vec_h);
   papilo::Solution<f_t> full_sol;
+  if (category == problem_category_t::LP) {
+    full_sol.type         = papilo::SolutionType::kPrimalDual;
+    full_sol.dual         = dual_sol_vec_h;
+    full_sol.reducedCosts = reduced_costs_vec_h;
+  }
 
   papilo::Message Msg{};
   Msg.setVerbosityLevel(papilo::VerbosityLevel::kQuiet);
@@ -222,9 +281,13 @@ rmm::device_uvector<f_t> third_party_presolve_t<i_t, f_t>::undo(
   auto status     = post_solver.undo(reduced_sol, full_sol, post_solve_storage_, is_optimal);
   check_postsolve_status(status);
 
-  // FIXME: recompute objective value, mip gap, max constraint violation, etc.
-  auto full_sol_vec = cuopt::device_copy(full_sol.primal, reduced_sol_vec.stream());
-  return full_sol_vec;
+  primal_solution.resize(full_sol.primal.size(), stream_view);
+  dual_solution.resize(full_sol.dual.size(), stream_view);
+  reduced_costs.resize(full_sol.reducedCosts.size(), stream_view);
+  raft::copy(primal_solution.data(), full_sol.primal.data(), full_sol.primal.size(), stream_view);
+  raft::copy(dual_solution.data(), full_sol.dual.data(), full_sol.dual.size(), stream_view);
+  raft::copy(
+    reduced_costs.data(), full_sol.reducedCosts.data(), full_sol.reducedCosts.size(), stream_view);
 }
 
 #if MIP_INSTANTIATE_FLOAT

@@ -598,8 +598,14 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
       // allocate no more than 10% of the time limit to presolve.
       // Note that this is not the presolve time, but the time limit for presolve.
       const double presolve_time_limit = 0.1 * time_limit;
-      presolver     = std::make_unique<detail::third_party_presolve_t<i_t, f_t>>();
-      problem       = presolver->apply(op_problem, presolve_time_limit);
+      presolver            = std::make_unique<detail::third_party_presolve_t<i_t, f_t>>();
+      auto reduced_problem = presolver->apply(
+        op_problem, cuopt::linear_programming::problem_category_t::LP, presolve_time_limit);
+      if (reduced_problem.empty()) {
+        return optimization_problem_solution_t<i_t, f_t>(
+          pdlp_termination_status_t::PrimalInfeasible, op_problem.get_handle_ptr()->get_stream());
+      }
+      problem       = detail::problem_t<i_t, f_t>(reduced_problem);
       presolve_time = timer.elapsed_time();
       CUOPT_LOG_INFO("Third party presolve time: %f", presolve_time);
     }
@@ -621,18 +627,19 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
 
     auto solution = solve_lp_with_method(op_problem, problem, settings, is_batch_mode);
 
-    auto const& primal_sol = solution.get_primal_solution();
-    rmm::device_uvector<f_t> primal_sol_tmp(primal_sol.size(),
-                                            op_problem.get_handle_ptr()->get_stream());
-    raft::copy(primal_sol_tmp.data(),
-               primal_sol.data(),
-               primal_sol.size(),
-               op_problem.get_handle_ptr()->get_stream());
-
+    auto primal_solution =
+      cuopt::device_copy(solution.get_primal_solution(), op_problem.get_handle_ptr()->get_stream());
+    auto dual_solution =
+      cuopt::device_copy(solution.get_dual_solution(), op_problem.get_handle_ptr()->get_stream());
+    auto reduced_costs =
+      cuopt::device_copy(solution.get_reduced_cost(), op_problem.get_handle_ptr()->get_stream());
     if (settings.presolve) {
       // Dual postsolve is not supported yet in Papilo.
-      auto full_sol_vec = presolver->undo(primal_sol_tmp);
-      primal_sol_tmp    = std::move(full_sol_vec);
+      presolver->undo(primal_solution,
+                      dual_solution,
+                      reduced_costs,
+                      cuopt::linear_programming::problem_category_t::LP,
+                      op_problem.get_handle_ptr()->get_stream());
     }
 
     auto full_stats = solution.get_additional_termination_information();
@@ -640,9 +647,9 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
     full_stats.solve_time += presolve_time;
 
     // Create a new solution with the full problem solution
-    optimization_problem_solution_t<i_t, f_t> sol(primal_sol_tmp,
-                                                  solution.get_dual_solution(),
-                                                  solution.get_reduced_cost(),
+    optimization_problem_solution_t<i_t, f_t> sol(primal_solution,
+                                                  dual_solution,
+                                                  reduced_costs,
                                                   op_problem.get_objective_name(),
                                                   op_problem.get_variable_names(),
                                                   op_problem.get_row_names(),
