@@ -185,8 +185,10 @@ mip_solution_t<i_t, f_t> solve_mip(optimization_problem_t<i_t, f_t>& op_problem,
       // Note that this is not the presolve time, but the time limit for presolve.
       const double presolve_time_limit = 0.1 * time_limit;
       presolver               = std::make_unique<detail::third_party_presolve_t<i_t, f_t>>();
-      auto reduced_op_problem = presolver->apply(
-        op_problem, cuopt::linear_programming::problem_category_t::MIP, presolve_time_limit);
+      auto reduced_op_problem = presolver->apply(op_problem,
+                                                 cuopt::linear_programming::problem_category_t::MIP,
+                                                 settings.tolerances.absolute_tolerance,
+                                                 presolve_time_limit);
       if (reduced_op_problem.empty()) {
         return mip_solution_t<i_t, f_t>(mip_termination_status_t::Infeasible,
                                         solver_stats_t<i_t, f_t>{},

@@ -599,8 +599,10 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
       // Note that this is not the presolve time, but the time limit for presolve.
       const double presolve_time_limit = 0.1 * time_limit;
       presolver            = std::make_unique<detail::third_party_presolve_t<i_t, f_t>>();
-      auto reduced_problem = presolver->apply(
-        op_problem, cuopt::linear_programming::problem_category_t::LP, presolve_time_limit);
+      auto reduced_problem = presolver->apply(op_problem,
+                                              cuopt::linear_programming::problem_category_t::LP,
+                                              settings.tolerances.absolute_primal_tolerance,
+                                              presolve_time_limit);
       if (reduced_problem.empty()) {
         return optimization_problem_solution_t<i_t, f_t>(
           pdlp_termination_status_t::PrimalInfeasible, op_problem.get_handle_ptr()->get_stream());

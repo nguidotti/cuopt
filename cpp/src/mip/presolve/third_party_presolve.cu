@@ -212,9 +212,12 @@ void set_presolve_methods(papilo::Presolve<f_t>& presolver, problem_category_t c
 template <typename f_t>
 void set_presolve_options(papilo::Presolve<f_t>& presolver,
                           problem_category_t category,
+                          f_t absolute_tolerance,
                           double time_limit)
 {
-  presolver.getPresolveOptions().tlim = time_limit;
+  presolver.getPresolveOptions().tlim    = time_limit;
+  presolver.getPresolveOptions().epsilon = absolute_tolerance;
+  presolver.getPresolveOptions().feastol = absolute_tolerance;
   if (category == problem_category_t::LP) {
     presolver.getPresolveOptions().componentsmaxint = -1;
     presolver.getPresolveOptions().detectlindep     = 0;
@@ -225,6 +228,7 @@ template <typename i_t, typename f_t>
 optimization_problem_t<i_t, f_t> third_party_presolve_t<i_t, f_t>::apply(
   optimization_problem_t<i_t, f_t> const& op_problem,
   problem_category_t category,
+  f_t absolute_tolerance,
   double time_limit)
 {
   papilo::Problem<f_t> papilo_problem = build_papilo_problem(op_problem);
@@ -236,7 +240,7 @@ optimization_problem_t<i_t, f_t> third_party_presolve_t<i_t, f_t>::apply(
 
   papilo::Presolve<f_t> presolver;
   set_presolve_methods<f_t>(presolver, category);
-  set_presolve_options<f_t>(presolver, category, time_limit);
+  set_presolve_options<f_t>(presolver, category, absolute_tolerance, time_limit);
 
   auto result = presolver.apply(papilo_problem);
   if (result.status == papilo::PresolveStatus::kInfeasible) {
@@ -268,9 +272,9 @@ void third_party_presolve_t<i_t, f_t>::undo(rmm::device_uvector<f_t>& primal_sol
   papilo::Solution<f_t> reduced_sol(primal_sol_vec_h);
   papilo::Solution<f_t> full_sol;
   if (category == problem_category_t::LP) {
-    full_sol.type         = papilo::SolutionType::kPrimalDual;
-    full_sol.dual         = dual_sol_vec_h;
-    full_sol.reducedCosts = reduced_costs_vec_h;
+    reduced_sol.type         = papilo::SolutionType::kPrimalDual;
+    reduced_sol.dual         = dual_sol_vec_h;
+    reduced_sol.reducedCosts = reduced_costs_vec_h;
   }
 
   papilo::Message Msg{};
