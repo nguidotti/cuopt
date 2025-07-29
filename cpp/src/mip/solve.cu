@@ -212,9 +212,11 @@ mip_solution_t<i_t, f_t> solve_mip(optimization_problem_t<i_t, f_t>& op_problem,
                                               op_problem.get_handle_ptr()->get_stream());
 
     if (settings.presolve) {
+      rmm::device_uvector<f_t> dual_solution(0, op_problem.get_handle_ptr()->get_stream());
+      rmm::device_uvector<f_t> reduced_costs(0, op_problem.get_handle_ptr()->get_stream());
       presolver->undo(primal_solution,
-                      primal_solution,
-                      primal_solution,
+                      dual_solution,
+                      reduced_costs,
                       cuopt::linear_programming::problem_category_t::MIP,
                       op_problem.get_handle_ptr()->get_stream());
     }
