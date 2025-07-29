@@ -216,8 +216,8 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_step_sizes(
 {
   raft::common::nvtx::range fun_scope("compute_step_sizes");
 
-  //if (!graph.is_initialized(total_pdlp_iterations)) {
-  //  graph.start_capture(total_pdlp_iterations);
+  if (!graph.is_initialized(total_pdlp_iterations)) {
+    graph.start_capture(total_pdlp_iterations);
 
     // compute numerator and deminator of n_lim
     compute_interaction_and_movement(pdhg_solver.get_primal_tmp_resource(),
@@ -232,9 +232,9 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_step_sizes(
                                   make_span(dual_step_size),
                                   pdhg_solver.get_d_total_pdhg_iterations().data(),
                                   (batch_mode_ ? (0 + 3)/*@@*/ : 1));
-  //  graph.end_capture(total_pdlp_iterations);
-  //}
-  //graph.launch(total_pdlp_iterations);
+    graph.end_capture(total_pdlp_iterations);
+  }
+  graph.launch(total_pdlp_iterations);
   // Steam sync so that next call can see modification made to host var valid_step_size
   RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
 }
