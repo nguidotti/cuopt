@@ -87,7 +87,8 @@ pdlp_solver_t<i_t, f_t>::pdlp_solver_t(problem_t<i_t, f_t>& op_problem,
                                                  pdhg_solver_.get_dual_tmp_resource(),
                                                  op_problem.reverse_coefficients,
                                                  op_problem.reverse_offsets,
-                                                 op_problem.reverse_constraints},
+                                                 op_problem.reverse_constraints,
+                                                 settings.batch_mode},
     current_op_problem_evaluation_cusparse_view_{handle_ptr_,
                                                  op_problem,
                                                  pdhg_solver_.get_primal_solution(),
@@ -96,7 +97,8 @@ pdlp_solver_t<i_t, f_t>::pdlp_solver_t(problem_t<i_t, f_t>& op_problem,
                                                  pdhg_solver_.get_dual_tmp_resource(),
                                                  op_problem.reverse_coefficients,
                                                  op_problem.reverse_offsets,
-                                                 op_problem.reverse_constraints},
+                                                 op_problem.reverse_constraints,
+                                                 settings.batch_mode},
     restart_strategy_{handle_ptr_,
                       op_problem,
                       average_op_problem_evaluation_cusparse_view_,
@@ -584,18 +586,19 @@ void pdlp_solver_t<i_t, f_t>::print_final_termination_criteria(
       "LP Solver status:                %s",
       optimization_problem_solution_t<i_t, f_t>::get_termination_status_string(termination_status)
         .c_str());
+    // TODO: batch mode
     CUOPT_LOG_INFO("Primal objective:                %+.8e",
-                   convergence_information.get_primal_objective().value(stream_view_));
+                   convergence_information.get_primal_objective().element(0, stream_view_));
     CUOPT_LOG_INFO("Dual objective:                  %+.8e",
-                   convergence_information.get_dual_objective().value(stream_view_));
+                   convergence_information.get_dual_objective().element(0, stream_view_));
     CUOPT_LOG_INFO("Duality gap (abs/rel):           %+.2e / %+.2e",
-                   convergence_information.get_gap().value(stream_view_),
+                   convergence_information.get_gap().element(0, stream_view_),
                    convergence_information.get_relative_gap_value());
     CUOPT_LOG_INFO("Primal infeasibility (abs/rel):  %+.2e / %+.2e",
-                   convergence_information.get_l2_primal_residual().value(stream_view_),
+                   convergence_information.get_l2_primal_residual().element(0, stream_view_),
                    convergence_information.get_relative_l2_primal_residual_value());
     CUOPT_LOG_INFO("Dual infeasibility (abs/rel):    %+.2e / %+.2e",
-                   convergence_information.get_l2_dual_residual().value(stream_view_),
+                   convergence_information.get_l2_dual_residual().element(0, stream_view_),
                    convergence_information.get_relative_l2_dual_residual_value());
   }
 }
@@ -656,14 +659,13 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
 
   if (settings_.first_primal_feasible) {
     // Both primal feasible, return best objective
+    // TODO: batch mode
     if (termination_average == pdlp_termination_status_t::PrimalFeasible &&
         termination_current == pdlp_termination_status_t::PrimalFeasible) {
       const f_t current_overall_primal_residual =
-        current_termination_strategy_.get_convergence_information().get_l2_primal_residual().value(
-          stream_view_);
+        current_termination_strategy_.get_convergence_information().get_l2_primal_residual().element(0, stream_view_);
       const f_t average_overall_primal_residual =
-        average_termination_strategy_.get_convergence_information().get_l2_primal_residual().value(
-          stream_view_);
+        average_termination_strategy_.get_convergence_information().get_l2_primal_residual().element(0, stream_view_);
       if (current_overall_primal_residual < average_overall_primal_residual) {
         return current_termination_strategy_.fill_return_problem_solution(
           internal_solver_iterations_,
@@ -705,6 +707,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
   // If both are pdlp_termination_status_t::Optimal, return the one with the lowest KKT score
   if (termination_average == pdlp_termination_status_t::Optimal &&
       termination_current == pdlp_termination_status_t::Optimal) {
+    // TODO: batch mode
     const f_t current_kkt_score = restart_strategy_.compute_kkt_score(
       current_termination_strategy_.get_convergence_information().get_l2_primal_residual(),
       current_termination_strategy_.get_convergence_information().get_l2_dual_residual(),
@@ -1366,7 +1369,8 @@ void pdlp_solver_t<i_t, f_t>::compute_initial_primal_weight()
   // Here we use the combined bounds of the op_problem_scaled which may or may not be scaled yet
   // based on pdlp config
   detail::combine_constraint_bounds<i_t, f_t>(op_problem_scaled_,
-                                              op_problem_scaled_.combined_bounds);
+                                              op_problem_scaled_.combined_bounds,
+                                              settings_.batch_mode);
 
   // => same as sqrt(dot(b,b))
   rmm::device_scalar<f_t> b_vec_norm{0.0, stream_view_};
@@ -1381,7 +1385,6 @@ void pdlp_solver_t<i_t, f_t>::compute_initial_primal_weight()
                                         pdlp_hyper_params::initial_primal_weight_c_scaling,
                                         c_vec_norm,
                                         stream_view_);
-
   // TODO: handle batch mode : different primal weight per batch
   const int block_size = (settings_.batch_mode ? std::min(256, (0 + 3)/*@@*/) : 1);
   const int grid_size = (settings_.batch_mode ? cuda::ceil_div((0 + 3)/*@@*/, block_size) : 1);

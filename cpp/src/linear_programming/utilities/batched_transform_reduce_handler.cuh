@@ -32,37 +32,32 @@ namespace cuopt::linear_programming::detail {
 // This class is used to start a batched dot product
 // With large problem size (>10K) and small batch size (<100), this is faster than using Segmented Reduce
 template <typename i_t, typename f_t>
-struct batched_dot_product_handler_t {
-  batched_dot_product_handler_t(i_t batch_size, raft::handle_t const* handle_ptr)
+struct batched_transform_reduce_handler_t {
+  batched_transform_reduce_handler_t(i_t batch_size, raft::handle_t const* handle_ptr)
     : batch_size_(batch_size), handle_ptr_(handle_ptr), stream_pool_(batch_size), dot_events_(batch_size) {}
 
   // Empty constructor for when used in non batch mode
-  batched_dot_product_handler_t() {}
+  batched_transform_reduce_handler_t() {}
 
-  void batch_dot_product(const rmm::device_uvector<f_t>& input_vector_1,
-                         const rmm::device_uvector<f_t>& input_vector_2,
-                         i_t problem_size,
-                         rmm::device_uvector<f_t>& result)
+  template <typename func_t>
+  void batch_transform_reduce(func_t&& func)
   {
-        // We need to make sure operations on the main stream are done before capturing the parallel dot products
-        capture_event_.record(handle_ptr_->get_stream());
-        for (i_t climber = 0; climber < batch_size_; ++climber) {
-          capture_event_.stream_wait(stream_pool_.get_stream(climber));
-        }
+    // We need to make sure operations on the main stream are done before capturing the parallel dot products
+    // Create an event after anything that has happened on the main stram
+    capture_event_.record(handle_ptr_->get_stream());
+    // All streams should wait for this event to be done
     for (i_t climber = 0; climber < batch_size_; ++climber) {
-      RAFT_CUBLAS_TRY(raft::linalg::detail::cublasdot(handle_ptr_->get_cublas_handle(),
-      problem_size,
-      input_vector_1.data() + climber * problem_size,
-      1,
-      input_vector_2.data() + climber * problem_size,
-      1,
-      result.data() + climber,
-      stream_pool_.get_stream(climber)));
-        dot_events_[climber].record(stream_pool_.get_stream(climber));
+      capture_event_.stream_wait(stream_pool_.get_stream(climber));
     }
-        for (i_t climber = 0; climber < batch_size_; ++climber) {
-          dot_events_[climber].stream_wait(handle_ptr_->get_stream());
-        }
+    // Launch n operations on n streams and add an event after each stream to know when the operation is done
+    for (i_t climber = 0; climber < batch_size_; ++climber) {
+      func(climber, stream_pool_.get_stream(climber));
+      dot_events_[climber].record(stream_pool_.get_stream(climber));
+    }
+    // Make the main stream wait for all those events to be done
+    for (i_t climber = 0; climber < batch_size_; ++climber) {
+      dot_events_[climber].stream_wait(handle_ptr_->get_stream());
+    }
   }
 
   i_t batch_size_{-1};

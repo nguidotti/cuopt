@@ -221,7 +221,6 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_step_sizes(
 
     // compute numerator and deminator of n_lim
     compute_interaction_and_movement(pdhg_solver.get_primal_tmp_resource(),
-                                     pdhg_solver.potential_next_dual_solution_,
                                      pdhg_solver.get_cusparse_view(),
                                      pdhg_solver.get_saddle_point_state());
     // Compute n_lim, n_next and decide if step size is valid
@@ -243,10 +242,13 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_step_sizes(
 template <typename i_t, typename f_t>
 void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
   rmm::device_uvector<f_t>& tmp_primal, // Conditionnaly is batch or non batch
-  rmm::device_uvector<f_t>& potential_next_dual_solution,
   cusparse_view_t<i_t, f_t>& cusparse_view,
   saddle_point_state_t<i_t, f_t>& current_saddle_point_state)
 {
+  cuopt_assert(current_saddle_point_state.get_next_AtY().size() == current_saddle_point_state.get_current_AtY().size(), "next_AtY and current_AtY must have the same size");
+  cuopt_assert(current_saddle_point_state.get_next_AtY().size() == tmp_primal.size(), "next_AtY and tmp_primal must have the same size");
+  cuopt_assert(current_saddle_point_state.get_next_AtY().size() == current_saddle_point_state.get_primal_solution().size(), "primal_size and next_AtY must have the same size");
+
   // QP would need this:
   // if iszero(problem.objective_matrix)
   //   primal_objective_interaction = 0.0
@@ -326,10 +328,13 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
       cuda::std::make_tuple(current_saddle_point_state.get_next_AtY().data(),
                             current_saddle_point_state.get_current_AtY().data()),
       tmp_primal.data(),
-      current_saddle_point_state.get_primal_size() * (0 + 3)/*@@*/,
+      tmp_primal.size(),
       sub_op<f_t>(),
       stream_view_);
-    }
+  }
+#ifdef PDLP_DEBUG_MODE
+  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+#endif
 
   // compute interaction (x'-x) . (A(y'-y))
   RAFT_CUBLAS_TRY(

@@ -90,7 +90,7 @@ class pdlp_termination_strategy_t {
   convergence_information_t<i_t, f_t> convergence_information_;
   infeasibility_information_t<i_t, f_t> infeasibility_information_;
 
-  rmm::device_scalar<i_t> termination_status_;
+  rmm::device_uvector<i_t> termination_status_;
   const pdlp_solver_settings_t<i_t, f_t>& settings_;
 };
 }  // namespace cuopt::linear_programming::detail

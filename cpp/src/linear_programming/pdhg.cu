@@ -53,7 +53,8 @@ pdhg_solver_t<i_t, f_t>::pdhg_solver_t(raft::handle_t const* handle_ptr,
                    current_saddle_point_state_,
                    tmp_primal_,
                    tmp_dual_,
-                   potential_next_dual_solution_},
+                   potential_next_dual_solution_,
+                   batch_mode},
     reusable_device_scalar_value_1_{1.0, stream_view_},
     reusable_device_scalar_value_0_{0.0, stream_view_},
     reusable_device_scalar_value_neg_1_{f_t(-1.0), stream_view_},
@@ -74,6 +75,13 @@ rmm::device_scalar<i_t>& pdhg_solver_t<i_t, f_t>::get_d_total_pdhg_iterations()
 template <typename i_t, typename f_t>
 void pdhg_solver_t<i_t, f_t>::compute_next_dual_solution(rmm::device_uvector<f_t>& dual_step_size)
 {
+  cuopt_assert(current_saddle_point_state_.get_dual_solution().size() == current_saddle_point_state_.get_dual_gradient().size(), "dual_solution and dual_gradient must have the same size");
+  cuopt_assert(current_saddle_point_state_.get_dual_solution().size() == potential_next_dual_solution_.size(), "dual_solution and potential_next_dual_solution must have the same size");
+  cuopt_assert(current_saddle_point_state_.get_dual_solution().size() == current_saddle_point_state_.get_delta_dual().size(), "dual_solution and delta_dual must have the same size");
+
+  cuopt_assert(current_saddle_point_state_.get_dual_solution().size() % problem_ptr->constraint_lower_bounds.size() == 0, "dual_solution and constraint_lower_bounds must have the same size");
+  cuopt_assert(current_saddle_point_state_.get_dual_solution().size() % problem_ptr->constraint_upper_bounds.size() == 0, "dual_solution and constraint_upper_bounds must have the same size");
+
   raft::common::nvtx::range fun_scope("compute_next_dual_solution");
   // proj(y+sigma(b-K(2x'-x)))
   // rewritten as proj(y+sigma(b-K(x'+delta_x)))
@@ -155,10 +163,13 @@ void pdhg_solver_t<i_t, f_t>::compute_next_dual_solution(rmm::device_uvector<f_t
                           ),
     thrust::make_zip_iterator(potential_next_dual_solution_.data(),
                               current_saddle_point_state_.get_delta_dual().data()),
-    dual_size_h_ * (0 + 3)/*@@*/,
+    current_saddle_point_state_.get_dual_solution().size(),
     batch_dual_projection<f_t>(),
     stream_view_);
   }
+#ifdef PDLP_DEBUG_MODE
+  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+#endif
 }
 
 template <typename i_t, typename f_t>
@@ -190,12 +201,25 @@ void pdhg_solver_t<i_t, f_t>::compute_At_y()
                                                         (f_t*)cusparse_view_.buffer_transpose_batch.data(),
                                                         stream_view_));
   }
+#ifdef PDLP_DEBUG_MODE
+  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+#endif
 }
 
 template <typename i_t, typename f_t>
 void pdhg_solver_t<i_t, f_t>::compute_primal_projection_with_gradient(
   rmm::device_uvector<f_t>& primal_step_size)
 {
+  cuopt_assert(current_saddle_point_state_.get_primal_solution().size() == current_saddle_point_state_.get_current_AtY().size(), "primal_solution and current_AtY must have the same size");
+  cuopt_assert(current_saddle_point_state_.get_primal_solution().size() == potential_next_primal_solution_.size(), "primal_solution and potential_next_primal_solution must have the same size");
+  cuopt_assert(current_saddle_point_state_.get_primal_solution().size() == current_saddle_point_state_.get_delta_primal().size(), "primal_solution and delta_primal must have the same size");
+  cuopt_assert(current_saddle_point_state_.get_primal_solution().size() == tmp_primal_.size(), "primal_solution and tmp_primal must have the same size");
+
+
+  cuopt_assert(current_saddle_point_state_.get_primal_solution().size() % problem_ptr->objective_coefficients.size() == 0, "primal_solution and objective_coefficients must have the same size");
+  cuopt_assert(current_saddle_point_state_.get_primal_solution().size() % problem_ptr->variable_lower_bounds.size() == 0, "primal_solution and variable_lower_bounds must have the same size");
+  cuopt_assert(current_saddle_point_state_.get_primal_solution().size() % problem_ptr->variable_upper_bounds.size() == 0, "primal_solution and variable_upper_bounds must have the same size");
+
   // Applying *c -* A_t @ y
   // x-(tau*primal_gradient)
   // project by max(min(x[i], upperbound[i]),lowerbound[i])
@@ -239,10 +263,13 @@ void pdhg_solver_t<i_t, f_t>::compute_primal_projection_with_gradient(
     thrust::make_zip_iterator(potential_next_primal_solution_.data(),
                               current_saddle_point_state_.get_delta_primal().data(),
                               tmp_primal_.data()),
-    primal_size_h_ * (0 + 3)/*@@*/,
+    current_saddle_point_state_.get_primal_solution().size(),
     batch_primal_projection<f_t>(),
     stream_view_);
   }
+#ifdef PDLP_DEBUG_MODE
+  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+#endif
 }
 
 template <typename i_t, typename f_t>
@@ -389,6 +416,20 @@ void pdhg_solver_t<i_t, f_t>::update_solution(
             current_saddle_point_state_.get_dual_size(),
             current_saddle_point_state_.get_dual_solution().data(),
             CUSPARSE_ORDER_COL));
+      RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
+              &current_op_problem_evaluation_cusparse_view_.batch_primal_solutions,
+              current_saddle_point_state_.get_primal_size(),
+              (0 + 3)/*@@*/,
+              current_saddle_point_state_.get_primal_size(),
+              current_saddle_point_state_.primal_solution_.data(),
+              CUSPARSE_ORDER_COL));
+      RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
+                &current_op_problem_evaluation_cusparse_view_.batch_dual_solutions,
+                current_saddle_point_state_.get_dual_size(),
+                (0 + 3)/*@@*/,
+                current_saddle_point_state_.get_dual_size(),
+                current_saddle_point_state_.get_dual_solution().data(),
+                CUSPARSE_ORDER_COL));
  }
   RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednvec(
     &current_op_problem_evaluation_cusparse_view_.primal_solution,

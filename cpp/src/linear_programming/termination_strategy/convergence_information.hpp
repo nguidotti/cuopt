@@ -16,6 +16,7 @@
  */
 #pragma once
 
+#include <linear_programming/utilities/batched_transform_reduce_handler.cuh>
 #include <linear_programming/cusparse_view.hpp>
 #include <linear_programming/pdhg.hpp>
 #include <linear_programming/saddle_point.hpp>
@@ -39,7 +40,8 @@ class convergence_information_t {
                             problem_t<i_t, f_t>& op_problem,
                             cusparse_view_t<i_t, f_t>& cusparse_view,
                             i_t primal_size,
-                            i_t dual_size);
+                            i_t dual_size,
+                            bool batch_mode);
 
   void compute_convergence_information(
     pdhg_solver_t<i_t, f_t>& current_pdhg_solver,
@@ -53,13 +55,13 @@ class convergence_information_t {
   rmm::device_uvector<f_t>& get_reduced_cost();
 
   // Needed for kkt restart & debug prints
-  const rmm::device_scalar<f_t>& get_primal_objective() const;
-  const rmm::device_scalar<f_t>& get_dual_objective() const;
-  const rmm::device_scalar<f_t>& get_l2_primal_residual() const;
-  const rmm::device_scalar<f_t>& get_l2_dual_residual() const;
+  const rmm::device_uvector<f_t>& get_primal_objective() const;
+  const rmm::device_uvector<f_t>& get_dual_objective() const;
+  const rmm::device_uvector<f_t>& get_l2_primal_residual() const;
+  const rmm::device_uvector<f_t>& get_l2_dual_residual() const;
   const rmm::device_scalar<f_t>& get_relative_linf_primal_residual() const;
   const rmm::device_scalar<f_t>& get_relative_linf_dual_residual() const;
-  const rmm::device_scalar<f_t>& get_gap() const;
+  const rmm::device_uvector<f_t>& get_gap() const;
   f_t get_relative_gap_value() const;
   f_t get_relative_l2_primal_residual_value() const;
   f_t get_relative_l2_dual_residual_value() const;
@@ -80,24 +82,24 @@ class convergence_information_t {
     f_t* l2_norm_primal_linear_objective;
     f_t* l2_norm_primal_right_hand_side;
 
-    f_t* primal_objective;
-    f_t* dual_objective;
-    f_t* l2_primal_residual;
-    f_t* l2_dual_residual;
+    raft::device_span<f_t> primal_objective;
+    raft::device_span<f_t> dual_objective;
+    raft::device_span<f_t> l2_primal_residual;
+    raft::device_span<f_t> l2_dual_residual;
 
     f_t* relative_l_inf_primal_residual;
     f_t* relative_l_inf_dual_residual;
 
-    f_t* gap;
-    f_t* abs_objective;
+    raft::device_span<f_t> gap;
+    raft::device_span<f_t> abs_objective;
 
-    f_t* l2_primal_variable;
-    f_t* l2_dual_variable;
+    raft::device_span<f_t> l2_primal_variable;
+    raft::device_span<f_t> l2_dual_variable;
 
-    f_t* primal_residual;
-    f_t* dual_residual;
-    f_t* reduced_cost;
-    f_t* bound_value;
+    raft::device_span<f_t> primal_residual;
+    raft::device_span<f_t> dual_residual;
+    raft::device_span<f_t> reduced_cost;
+    raft::device_span<f_t> bound_value;
   };  // struct view_t
 
   /**
@@ -155,11 +157,11 @@ class convergence_information_t {
   rmm::device_scalar<f_t> l2_norm_primal_linear_objective_;
   rmm::device_scalar<f_t> l2_norm_primal_right_hand_side_;
 
-  rmm::device_scalar<f_t> primal_objective_;
-  rmm::device_scalar<f_t> dual_objective_;
-  rmm::device_scalar<f_t> reduced_cost_dual_objective_;
-  rmm::device_scalar<f_t> l2_primal_residual_;
-  rmm::device_scalar<f_t> l2_dual_residual_;
+  rmm::device_uvector<f_t> primal_objective_;
+  rmm::device_uvector<f_t> dual_objective_;
+  rmm::device_uvector<f_t> reduced_cost_dual_objective_;
+  rmm::device_uvector<f_t> l2_primal_residual_;
+  rmm::device_uvector<f_t> l2_dual_residual_;
   // Useful in per constraint mode
   // To compute residual we check: residual[i] < absolute_tolerance + relative_tolerance * rhs[i]
   // Which can be rewritten as: residual[i] - relative_tolerance * rhs[i] < absolute_tolerance
@@ -169,11 +171,11 @@ class convergence_information_t {
   // Useful for best_primal_so_far
   rmm::device_scalar<i_t> nb_violated_constraints_;
 
-  rmm::device_scalar<f_t> gap_;
-  rmm::device_scalar<f_t> abs_objective_;
+  rmm::device_uvector<f_t> gap_;
+  rmm::device_uvector<f_t> abs_objective_;
 
-  rmm::device_scalar<f_t> l2_primal_variable_;
-  rmm::device_scalar<f_t> l2_dual_variable_;
+  rmm::device_uvector<f_t> l2_primal_variable_;
+  rmm::device_uvector<f_t> l2_dual_variable_;
 
   // used for computations and can be reused
   rmm::device_uvector<f_t> primal_residual_;
@@ -181,11 +183,14 @@ class convergence_information_t {
   rmm::device_uvector<f_t> reduced_cost_;
   rmm::device_uvector<f_t> bound_value_;
 
-  rmm::device_buffer rmm_tmp_buffer_;
+  rmm::device_uvector<uint8_t> rmm_tmp_buffer_;
   size_t size_of_buffer_;
 
   const rmm::device_scalar<f_t> reusable_device_scalar_value_1_;
   const rmm::device_scalar<f_t> reusable_device_scalar_value_0_;
   const rmm::device_scalar<f_t> reusable_device_scalar_value_neg_1_;
+
+  bool batch_mode_{false};
+  batched_transform_reduce_handler_t<i_t, f_t> batched_dot_product_handler_;
 };
 }  // namespace cuopt::linear_programming::detail

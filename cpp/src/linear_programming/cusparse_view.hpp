@@ -34,7 +34,8 @@ class cusparse_view_t {
                   saddle_point_state_t<i_t, f_t>& current_saddle_point_state,
                   rmm::device_uvector<f_t>& _tmp_primal,
                   rmm::device_uvector<f_t>& _tmp_dual,
-                  rmm::device_uvector<f_t>& _potential_next_dual_solution);
+                  rmm::device_uvector<f_t>& _potential_next_dual_solution,
+                  bool batch_mode);
 
   cusparse_view_t(raft::handle_t const* handle_ptr,
                   const problem_t<i_t, f_t>& op_problem,
@@ -44,7 +45,8 @@ class cusparse_view_t {
                   rmm::device_uvector<f_t>& _tmp_dual,
                   const rmm::device_uvector<f_t>& _A_T,
                   const rmm::device_uvector<i_t>& _A_T_offsets,
-                  const rmm::device_uvector<i_t>& _A_T_indices);
+                  const rmm::device_uvector<i_t>& _A_T_indices,
+                  bool batch_mode);
 
   cusparse_view_t(raft::handle_t const* handle_ptr,
                   const problem_t<i_t, f_t>& op_problem,
@@ -71,9 +73,11 @@ class cusparse_view_t {
   cusparseDnVecDescr_t dual_solution;
 
   // cusparse view of batch solutions
+  cusparseDnMatDescr_t batch_primal_solutions;
   cusparseDnMatDescr_t batch_dual_solutions;
   cusparseDnMatDescr_t batch_potential_next_dual_solution;
   cusparseDnMatDescr_t batch_next_AtYs;
+  cusparseDnMatDescr_t batch_tmp_duals;
 
   // cusparse view of gradients
   cusparseDnVecDescr_t primal_gradient;
@@ -120,5 +124,7 @@ class cusparse_view_t {
   const rmm::device_uvector<f_t>& A_;
   const rmm::device_uvector<i_t>& A_offsets_;
   const rmm::device_uvector<i_t>& A_indices_;
+
+  bool batch_mode_{false};
 };
 }  // namespace cuopt::linear_programming::detail

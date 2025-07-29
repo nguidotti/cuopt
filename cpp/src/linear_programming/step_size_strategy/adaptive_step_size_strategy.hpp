@@ -79,7 +79,6 @@ class adaptive_step_size_strategy_t {
 
  private:
   void compute_interaction_and_movement(rmm::device_uvector<f_t>& tmp_primal,
-                                        rmm::device_uvector<f_t>& potential_next_dual_solution,
                                         cusparse_view_t<i_t, f_t>& cusparse_view,
                                         saddle_point_state_t<i_t, f_t>& current_saddle_point_state);
 

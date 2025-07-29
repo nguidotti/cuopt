@@ -21,7 +21,7 @@
 #include <linear_programming/pdlp_constants.hpp>
 #include <linear_programming/restart_strategy/pdlp_restart_strategy.cuh>
 #include <linear_programming/utils.cuh>
-#include <linear_programming/utilities/batched_dot_product_handler.cuh>
+#include <linear_programming/utilities/batched_transform_reduce_handler.cuh>
 #include <mip/mip_constants.hpp>
 
 #include <utilities/copy_helpers.hpp>
@@ -223,7 +223,7 @@ pdlp_restart_strategy_t<i_t, f_t>::pdlp_restart_strategy_t(
     reusable_device_scalar_1_{stream_view_},
     reusable_device_scalar_2_{stream_view_},
     reusable_device_scalar_3_{stream_view_},
-    batched_dot_product_handler_(batch_mode_ ? batched_dot_product_handler_t<i_t, f_t>((0 + 3)/*@@*/, handle_ptr_) : batched_dot_product_handler_t<i_t, f_t>())
+    batched_dot_product_handler_(batch_mode_ ? batched_transform_reduce_handler_t<i_t, f_t>((0 + 3)/*@@*/, handle_ptr_) : batched_transform_reduce_handler_t<i_t, f_t>())
 {
   raft::common::nvtx::range fun_scope("Initializing restart strategy");
 
@@ -414,9 +414,9 @@ __global__ void kernel_compute_kkt_score(const f_t* l2_primal_residual,
 
 template <typename i_t, typename f_t>
 f_t pdlp_restart_strategy_t<i_t, f_t>::compute_kkt_score(
-  const rmm::device_scalar<f_t>& l2_primal_residual,
-  const rmm::device_scalar<f_t>& l2_dual_residual,
-  const rmm::device_scalar<f_t>& gap,
+  const rmm::device_uvector<f_t>& l2_primal_residual,
+  const rmm::device_uvector<f_t>& l2_dual_residual,
+  const rmm::device_uvector<f_t>& gap,
   const rmm::device_uvector<f_t>& primal_weight)
 {
   // TODO: batch mode
@@ -511,15 +511,17 @@ bool pdlp_restart_strategy_t<i_t, f_t>::run_kkt_restart(
 
 #ifdef PDLP_DEBUG_MODE
   RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  // TODO: batch mode
   std::cout << "  Current convergeance information:"
             << "    l2_primal_residual="
-            << current_convergence_information.get_l2_primal_residual().value(stream_view_)
+            << current_convergence_information.get_l2_primal_residual().element(0, stream_view_)
             << "    l2_dual_residual="
-            << current_convergence_information.get_l2_dual_residual().value(stream_view_)
-            << "    gap=" << current_convergence_information.get_gap().value(stream_view_)
+            << current_convergence_information.get_l2_dual_residual().element(0, stream_view_)
+            << "    gap=" << current_convergence_information.get_gap().element(0, stream_view_)
             << std::endl;
 #endif
 
+  // TODO: batch mode
   const f_t current_kkt_score =
     compute_kkt_score(current_convergence_information.get_l2_primal_residual(),
                       current_convergence_information.get_l2_dual_residual(),
@@ -537,6 +539,7 @@ bool pdlp_restart_strategy_t<i_t, f_t>::run_kkt_restart(
     return false;
   }
 
+  // TODO: batch mode
   const f_t average_kkt_score =
     compute_kkt_score(average_convergence_information.get_l2_primal_residual(),
                       average_convergence_information.get_l2_dual_residual(),
@@ -834,7 +837,16 @@ raft::linalg::binaryOp(tmp.data(),
                                                     distance_moved.data(),
                                                     stream_view_));
  } else {
-   batched_dot_product_handler_.batch_dot_product(tmp, tmp, size_of_solutions_h, distance_moved);
+   batched_dot_product_handler_.batch_transform_reduce([&](i_t climber, rmm::cuda_stream_view stream){
+    RAFT_CUBLAS_TRY(raft::linalg::detail::cublasdot(handle_ptr_->get_cublas_handle(),
+      size_of_solutions_h,
+      tmp.data() + climber * size_of_solutions_h,
+      1,
+      tmp.data() + climber * size_of_solutions_h,
+      1,
+      distance_moved.data() + climber,
+      stream));
+    });
  }
 }
 template <typename i_t, typename f_t>
@@ -1461,7 +1473,7 @@ void pdlp_restart_strategy_t<i_t, f_t>::solve_bound_constrained_trust_region(
                         stream_view_);
 
   // Use high_radius_squared_ to store objective_vector l2_norm
-  my_l2_norm<i_t, f_t>(objective_vector_, high_radius_squared_, handle_ptr_);
+  my_l2_norm<i_t, f_t>(objective_vector_, high_radius_squared_.data(), handle_ptr_);
   if (duality_gap.distance_traveled_.element(0, stream_view_) == f_t(0.0) ||
       high_radius_squared_.value(stream_view_) == f_t(0.0)) {
     raft::copy(

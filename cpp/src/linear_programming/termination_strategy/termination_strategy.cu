@@ -22,6 +22,8 @@
 #include <cuopt/linear_programming/pdlp/pdlp_warm_start_data.hpp>
 #include <cuopt/linear_programming/pdlp/solver_settings.hpp>
 
+#include <utilities/copy_helpers.hpp>
+
 #include <raft/common/nvtx.hpp>
 #include <raft/util/cuda_utils.cuh>
 #include <raft/util/cudart_utils.hpp>
@@ -38,16 +40,17 @@ pdlp_termination_strategy_t<i_t, f_t>::pdlp_termination_strategy_t(
   : handle_ptr_(handle_ptr),
     stream_view_(handle_ptr_->get_stream()),
     problem_ptr(&op_problem),
-    convergence_information_{handle_ptr_, op_problem, cusparse_view, primal_size, dual_size},
+    convergence_information_{handle_ptr_, op_problem, cusparse_view, primal_size, dual_size, settings.batch_mode},
     infeasibility_information_{handle_ptr_,
-                               op_problem,
-                               cusparse_view,
-                               primal_size,
-                               dual_size,
-                               settings.detect_infeasibility},
-    termination_status_{0, stream_view_},
+                              op_problem,
+                              cusparse_view,
+                              primal_size,
+                              dual_size,
+                              settings.detect_infeasibility},
+    termination_status_((settings.batch_mode ? (0 + 3)/*@@*/ : 1), stream_view_),
     settings_(settings)
 {
+  RAFT_CUDA_TRY(cudaMemsetAsync(termination_status_.data(), 0, termination_status_.size() * sizeof(i_t), stream_view_));
 }
 
 template <typename i_t, typename f_t>
@@ -87,11 +90,11 @@ pdlp_termination_status_t pdlp_termination_strategy_t<i_t, f_t>::evaluate_termin
   raft::common::nvtx::range fun_scope("Evaluate termination criteria");
 
   convergence_information_.compute_convergence_information(current_pdhg_solver,
-                                                           primal_iterate,
-                                                           dual_iterate,
-                                                           combined_bounds,
-                                                           objective_coefficients,
-                                                           settings_);
+                                                          primal_iterate,
+                                                          dual_iterate,
+                                                          combined_bounds,
+                                                          objective_coefficients,
+                                                          settings_);
   if (settings_.detect_infeasibility) {
     infeasibility_information_.compute_infeasibility_information(
       current_pdhg_solver, primal_iterate, dual_iterate);
@@ -117,26 +120,28 @@ template <typename i_t, typename f_t>
 __global__ void check_termination_criteria_kernel(
   const typename convergence_information_t<i_t, f_t>::view_t convergence_information,
   const typename infeasibility_information_t<i_t, f_t>::view_t infeasibility_information,
-  i_t* termination_status,
+  raft::device_span<i_t> termination_status,
   typename pdlp_solver_settings_t<i_t, f_t>::tolerances_t tolerance,
   bool infeasibility_detection,
-  bool per_constraint_residual)
+  bool per_constraint_residual,
+  i_t batch_size)
 {
-  if (threadIdx.x + blockIdx.x * blockDim.x > 0) { return; }
+  const int idx = threadIdx.x + blockIdx.x * blockDim.x;
+  if (idx >= batch_size) { return; }
 
 #ifdef PDLP_VERBOSE_MODE
   printf(
     "Gap : %lf <= %lf [%d] (tolerance.absolute_gap_tolerance %lf + "
     "tolerance.relative_gap_tolerance %lf * convergence_information.abs_objective %lf)\n",
-    *convergence_information.gap,
+    convergence_information.gap[idx],
     tolerance.absolute_gap_tolerance +
-      tolerance.relative_gap_tolerance * *convergence_information.abs_objective,
-    *convergence_information.gap <=
+      tolerance.relative_gap_tolerance * convergence_information.abs_objective[idx],
+    convergence_information.gap[idx] <=
       tolerance.absolute_gap_tolerance +
-        tolerance.relative_gap_tolerance * *convergence_information.abs_objective,
+        tolerance.relative_gap_tolerance * convergence_information.abs_objective[idx],
     tolerance.absolute_gap_tolerance,
     tolerance.relative_gap_tolerance,
-    *convergence_information.abs_objective);
+    convergence_information.abs_objective[idx]);
 
   if (per_constraint_residual) {
     printf(
@@ -150,15 +155,16 @@ __global__ void check_termination_criteria_kernel(
       *convergence_information.relative_l_inf_dual_residual,
       tolerance.absolute_dual_tolerance);
   } else {
+    // TODO: batch mode per problem rhs
     printf(
       "Primal residual  %lf <= %lf [%d] (tolerance.absolute_primal_tolerance %lf + "
       "tolerance.relative_primal_tolerance %lf * "
       "convergence_information.l2_norm_primal_right_hand_side %lf)\n",
-      *convergence_information.l2_primal_residual,
+      convergence_information.l2_primal_residual[idx],
       tolerance.absolute_primal_tolerance +
         tolerance.relative_primal_tolerance *
           *convergence_information.l2_norm_primal_right_hand_side,
-      *convergence_information.l2_primal_residual <=
+      convergence_information.l2_primal_residual[idx] <=
         tolerance.absolute_primal_tolerance +
           tolerance.relative_primal_tolerance *
             *convergence_information.l2_norm_primal_right_hand_side,
@@ -170,10 +176,10 @@ __global__ void check_termination_criteria_kernel(
     "Dual residual  %lf <= %lf [%d] (tolerance.absolute_dual_tolerance %lf + "
     "tolerance.relative_dual_tolerance %lf * "
     "convergence_information.l2_norm_primal_linear_objective %lf)\n",
-    *convergence_information.l2_dual_residual,
+    convergence_information.l2_dual_residual[idx],
     tolerance.absolute_dual_tolerance +
       tolerance.relative_dual_tolerance * *convergence_information.l2_norm_primal_linear_objective,
-    *convergence_information.l2_dual_residual <=
+    convergence_information.l2_dual_residual[idx] <=
       tolerance.absolute_dual_tolerance +
         tolerance.relative_dual_tolerance *
           *convergence_information.l2_norm_primal_linear_objective,
@@ -183,45 +189,45 @@ __global__ void check_termination_criteria_kernel(
 #endif
 
   // By default set to No Termination
-  *termination_status = (i_t)pdlp_termination_status_t::NumericalError;
+  termination_status[idx] = (i_t)pdlp_termination_status_t::NumericalError;
 
   // test if gap optimal
   const bool optimal_gap =
-    *convergence_information.gap <=
+    convergence_information.gap[idx] <=
     tolerance.absolute_gap_tolerance +
-      tolerance.relative_gap_tolerance * *convergence_information.abs_objective;
+      tolerance.relative_gap_tolerance * convergence_information.abs_objective[idx];
 
   // test if respect constraints
   if (per_constraint_residual) {
     // In residual we store l_inf(residual_i - rel * b/c_i)
     const bool primal_feasible = *convergence_information.relative_l_inf_primal_residual <=
-                                 tolerance.absolute_primal_tolerance;
+                                tolerance.absolute_primal_tolerance;
     // First check for optimality
     if (*convergence_information.relative_l_inf_dual_residual <=
           tolerance.absolute_dual_tolerance &&
         primal_feasible && optimal_gap) {
-      *termination_status = (i_t)pdlp_termination_status_t::Optimal;
+      termination_status[idx] = (i_t)pdlp_termination_status_t::Optimal;
       return;
     } else if (primal_feasible)  // If not optimal maybe be at least primal feasible
     {
-      *termination_status = (i_t)pdlp_termination_status_t::PrimalFeasible;
+      termination_status[idx] = (i_t)pdlp_termination_status_t::PrimalFeasible;
       return;
     }
   } else {
-    const bool primal_feasible = *convergence_information.l2_primal_residual <=
-                                 tolerance.absolute_primal_tolerance +
-                                   tolerance.relative_primal_tolerance *
-                                     *convergence_information.l2_norm_primal_right_hand_side;
-    if (*convergence_information.l2_dual_residual <=
+    const bool primal_feasible = convergence_information.l2_primal_residual[idx] <=
+                                tolerance.absolute_primal_tolerance +
+                                  tolerance.relative_primal_tolerance *
+                                    *convergence_information.l2_norm_primal_right_hand_side;
+    if (convergence_information.l2_dual_residual[idx] <=
           tolerance.absolute_dual_tolerance +
             tolerance.relative_dual_tolerance *
               *convergence_information.l2_norm_primal_linear_objective &&
         primal_feasible && optimal_gap) {
-      *termination_status = (i_t)pdlp_termination_status_t::Optimal;
+      termination_status[idx] = (i_t)pdlp_termination_status_t::Optimal;
       return;
     } else if (primal_feasible)  // If not optimal maybe be at least primal feasible
     {
-      *termination_status = (i_t)pdlp_termination_status_t::PrimalFeasible;
+      termination_status[idx] = (i_t)pdlp_termination_status_t::PrimalFeasible;
       return;
     }
   }
@@ -232,7 +238,7 @@ __global__ void check_termination_criteria_kernel(
         *infeasibility_information.max_dual_ray_infeasibility /
             *infeasibility_information.dual_ray_linear_objective <=
           tolerance.primal_infeasible_tolerance) {
-      *termination_status = (i_t)pdlp_termination_status_t::PrimalInfeasible;
+      termination_status[idx] = (i_t)pdlp_termination_status_t::PrimalInfeasible;
       return;
     }
 
@@ -243,7 +249,7 @@ __global__ void check_termination_criteria_kernel(
         *infeasibility_information.max_primal_ray_infeasibility /
             -(*infeasibility_information.primal_ray_linear_objective) <=
           tolerance.dual_infeasible_tolerance) {
-      *termination_status = (i_t)pdlp_termination_status_t::DualInfeasible;
+      termination_status[idx] = (i_t)pdlp_termination_status_t::DualInfeasible;
       return;
     }
   }
@@ -255,13 +261,16 @@ void pdlp_termination_strategy_t<i_t, f_t>::check_termination_criteria()
 #ifdef PDLP_VERBOSE_MODE
   RAFT_CUDA_TRY(cudaDeviceSynchronize());
 #endif
+  const int block_size = (settings_.batch_mode ? std::min(256, (0 + 3)/*@@*/) : 1);
+  const int grid_size = (settings_.batch_mode ? cuda::ceil_div((0 + 3)/*@@*/, block_size) : 1);
   check_termination_criteria_kernel<i_t, f_t>
-    <<<1, 1, 0, stream_view_>>>(convergence_information_.view(),
+    <<<grid_size, block_size, 0, stream_view_>>>(convergence_information_.view(),
                                 infeasibility_information_.view(),
-                                termination_status_.data(),
+                                make_span(termination_status_),
                                 settings_.tolerances,
                                 settings_.detect_infeasibility,
-                                settings_.per_constraint_residual);
+                                settings_.per_constraint_residual,
+                                settings_.batch_mode ? (0 + 3)/*@@*/ : 1);
   RAFT_CUDA_TRY(cudaPeekAtLastError());
 }
 
@@ -276,6 +285,7 @@ pdlp_termination_strategy_t<i_t, f_t>::fill_return_problem_solution(
   pdlp_termination_status_t termination_status,
   bool deep_copy)
 {
+  // TODO: batch mode
   typename convergence_information_t<i_t, f_t>::view_t convergence_information_view =
     convergence_information_.view();
   typename infeasibility_information_t<i_t, f_t>::view_t infeasibility_information_view =
@@ -287,43 +297,43 @@ pdlp_termination_strategy_t<i_t, f_t>::fill_return_problem_solution(
   term_stats.total_number_of_attempted_steps = current_pdhg_solver.get_total_pdhg_iterations();
 
   raft::copy(&term_stats.l2_primal_residual,
-             (settings_.per_constraint_residual)
-               ? convergence_information_view.relative_l_inf_primal_residual
-               : convergence_information_view.l2_primal_residual,
-             1,
-             stream_view_);
+            (settings_.per_constraint_residual)
+              ? convergence_information_view.relative_l_inf_primal_residual
+              : convergence_information_view.l2_primal_residual.data(),
+            1,
+            stream_view_);
   term_stats.l2_relative_primal_residual =
     convergence_information_.get_relative_l2_primal_residual_value();
   raft::copy(&term_stats.l2_dual_residual,
-             (settings_.per_constraint_residual)
-               ? convergence_information_view.relative_l_inf_dual_residual
-               : convergence_information_view.l2_dual_residual,
-             1,
-             stream_view_);
+            (settings_.per_constraint_residual)
+              ? convergence_information_view.relative_l_inf_dual_residual
+              : convergence_information_view.l2_dual_residual.data(),
+            1,
+            stream_view_);
   term_stats.l2_relative_dual_residual =
     convergence_information_.get_relative_l2_dual_residual_value();
   raft::copy(
-    &term_stats.primal_objective, convergence_information_view.primal_objective, 1, stream_view_);
+    &term_stats.primal_objective, convergence_information_view.primal_objective.data(), 1, stream_view_);
   raft::copy(
-    &term_stats.dual_objective, convergence_information_view.dual_objective, 1, stream_view_);
-  raft::copy(&term_stats.gap, convergence_information_view.gap, 1, stream_view_);
+    &term_stats.dual_objective, convergence_information_view.dual_objective.data(), 1, stream_view_);
+  raft::copy(&term_stats.gap, convergence_information_view.gap.data(), 1, stream_view_);
   term_stats.relative_gap = convergence_information_.get_relative_gap_value();
   raft::copy(&term_stats.max_primal_ray_infeasibility,
-             infeasibility_information_view.max_primal_ray_infeasibility,
-             1,
-             stream_view_);
+            infeasibility_information_view.max_primal_ray_infeasibility,
+            1,
+            stream_view_);
   raft::copy(&term_stats.primal_ray_linear_objective,
-             infeasibility_information_view.primal_ray_linear_objective,
-             1,
-             stream_view_);
+            infeasibility_information_view.primal_ray_linear_objective,
+            1,
+            stream_view_);
   raft::copy(&term_stats.max_dual_ray_infeasibility,
-             infeasibility_information_view.max_dual_ray_infeasibility,
-             1,
-             stream_view_);
+            infeasibility_information_view.max_dual_ray_infeasibility,
+            1,
+            stream_view_);
   raft::copy(&term_stats.dual_ray_linear_objective,
-             infeasibility_information_view.dual_ray_linear_objective,
-             1,
-             stream_view_);
+            infeasibility_information_view.dual_ray_linear_objective,
+            1,
+            stream_view_);
   term_stats.solved_by_pdlp = (termination_status != pdlp_termination_status_t::ConcurrentLimit);
 
   RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
@@ -379,26 +389,28 @@ pdlp_termination_strategy_t<i_t, f_t>::fill_return_problem_solution(
 template <typename i_t, typename f_t>
 void pdlp_termination_strategy_t<i_t, f_t>::print_termination_criteria(i_t iteration, f_t elapsed)
 {
+  // TODO: batch mode
   CUOPT_LOG_INFO("%7d %+.8e %+.8e  %8.2e   %8.2e     %8.2e   %.3fs",
-                 iteration,
-                 convergence_information_.get_primal_objective().value(stream_view_),
-                 convergence_information_.get_dual_objective().value(stream_view_),
-                 convergence_information_.get_gap().value(stream_view_),
-                 convergence_information_.get_l2_primal_residual().value(stream_view_),
-                 convergence_information_.get_l2_dual_residual().value(stream_view_),
-                 elapsed);
+                iteration,
+                convergence_information_.get_primal_objective().element(0, stream_view_),
+                convergence_information_.get_dual_objective().element(0, stream_view_),
+                convergence_information_.get_gap().element(0, stream_view_),
+                convergence_information_.get_l2_primal_residual().element(0, stream_view_),
+                convergence_information_.get_l2_dual_residual().element(0, stream_view_),
+                elapsed);
 }
 
 #define INSTANTIATE(F_TYPE)                                                                    \
   template class pdlp_termination_strategy_t<int, F_TYPE>;                                     \
-                                                                                               \
+                                                                                              \
   template __global__ void check_termination_criteria_kernel<int, F_TYPE>(                     \
     const typename convergence_information_t<int, F_TYPE>::view_t convergence_information,     \
     const typename infeasibility_information_t<int, F_TYPE>::view_t infeasibility_information, \
-    int* termination_status,                                                                   \
+    raft::device_span<int> termination_status,                                                                   \
     typename pdlp_solver_settings_t<int, F_TYPE>::tolerances_t tolerances,                     \
     bool infeasibility_detection,                                                              \
-    bool per_constraint_residual);
+    bool per_constraint_residual,                                                              \
+    int batch_size);
 
 #if MIP_INSTANTIATE_FLOAT
 INSTANTIATE(float)

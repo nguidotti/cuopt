@@ -16,7 +16,7 @@
  */
 #pragma once
 
-#include <linear_programming/utilities/batched_dot_product_handler.cuh>
+#include <linear_programming/utilities/batched_transform_reduce_handler.cuh>
 #include <linear_programming/cusparse_view.hpp>
 #include <linear_programming/pdhg.hpp>
 #include <linear_programming/restart_strategy/localized_duality_gap_container.hpp>
@@ -106,9 +106,9 @@ class pdlp_restart_strategy_t {
                           bool batch_mode);
 
   // Compute kkt score on passed argument using the container tmp_kkt score and stream view
-  f_t compute_kkt_score(const rmm::device_scalar<f_t>& l2_primal_residual,
-                        const rmm::device_scalar<f_t>& l2_dual_residual,
-                        const rmm::device_scalar<f_t>& gap,
+  f_t compute_kkt_score(const rmm::device_uvector<f_t>& l2_primal_residual,
+                        const rmm::device_uvector<f_t>& l2_dual_residual,
+                        const rmm::device_uvector<f_t>& gap,
                         const rmm::device_uvector<f_t>& primal_weight);
 
   void update_distance(pdhg_solver_t<i_t, f_t>& pdhg_solver,
@@ -326,7 +326,7 @@ class pdlp_restart_strategy_t {
 
   bool last_restart_was_average_ = false;
 
-  batched_dot_product_handler_t<i_t, f_t> batched_dot_product_handler_;
+  batched_transform_reduce_handler_t<i_t, f_t> batched_dot_product_handler_;
 };
 
 template <typename i_t, typename f_t>

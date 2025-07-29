@@ -169,6 +169,7 @@ struct problem_wrapped_iterator {
   }
 
   const f_t* problem_input_;
+  // TODO use i_t
   int problem_size_;
 };
 
@@ -251,18 +252,37 @@ struct combine_finite_abs_bounds {
   }
 };
 
+// Combine constraint lower and upper bounds into a single vector taking the absolute max
 template <typename i_t, typename f_t>
 void inline combine_constraint_bounds(const problem_t<i_t, f_t>& op_problem,
-                                      rmm::device_uvector<f_t>& combined_bounds)
+                                      rmm::device_uvector<f_t>& combined_bounds,
+                                      bool is_batch = false)
 {
-  combined_bounds.resize(op_problem.n_constraints, op_problem.handle_ptr->get_stream());
+  // TODO ask Akif why this was necessary: combined_bounds.resize(op_problem.n_constraints, op_problem.handle_ptr->get_stream());
   if (combined_bounds.size() > 0) {
-    raft::linalg::binaryOp(combined_bounds.data(),
-                           op_problem.constraint_lower_bounds.data(),
-                           op_problem.constraint_upper_bounds.data(),
-                           op_problem.n_constraints,
-                           combine_finite_abs_bounds<f_t>(),
-                           op_problem.handle_ptr->get_stream());
+    cuopt_assert(combined_bounds.size() % op_problem.n_constraints == 0, "Combined bounds size must be a multiple of the number of constraints");
+    if (!is_batch) {
+      raft::linalg::binaryOp(combined_bounds.data(),
+                             op_problem.constraint_lower_bounds.data(),
+                             op_problem.constraint_upper_bounds.data(),
+                             op_problem.n_constraints,
+                             combine_finite_abs_bounds<f_t>(),
+                             op_problem.handle_ptr->get_stream());
+    } else {
+      // TODO batch with different constraint bounds size
+      cub::DeviceTransform::Transform(cuda::std::make_tuple(
+                                      thrust::make_transform_iterator(
+                                        thrust::make_counting_iterator(0),
+                                        problem_wrapped_iterator<f_t>(op_problem.constraint_lower_bounds.data(), op_problem.n_constraints)),
+                                      thrust::make_transform_iterator(
+                                        thrust::make_counting_iterator(0),
+                                        problem_wrapped_iterator<f_t>(op_problem.constraint_upper_bounds.data(), op_problem.n_constraints))
+                                      ),
+                                      combined_bounds.data(),
+                                      combined_bounds.size(),
+                                      combine_finite_abs_bounds<f_t>(),
+                                      op_problem.handle_ptr->get_stream());
+    }
   }
 }
 
@@ -454,7 +474,7 @@ f_t device_to_host_value(f_t* iter)
 
 template <typename i_t, typename f_t>
 void inline my_l2_norm(const rmm::device_uvector<f_t>& input_vector,
-                       rmm::device_scalar<f_t>& result,
+                       f_t* result,
                        raft::handle_t const* handle_ptr)
 {
   constexpr int stride = 1;
@@ -462,7 +482,7 @@ void inline my_l2_norm(const rmm::device_uvector<f_t>& input_vector,
                                                    input_vector.size(),
                                                    input_vector.data(),
                                                    stride,
-                                                   result.data(),
+                                                   result,
                                                    handle_ptr->get_stream()));
 }
 
