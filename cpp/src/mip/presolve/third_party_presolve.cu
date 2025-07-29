@@ -68,7 +68,7 @@ papilo::Problem<f_t> build_papilo_problem(const optimization_problem_t<i_t, f_t>
   builder.setColLbAll(h_var_lb);
   builder.setColUbAll(h_var_ub);
 
-  for (i_t i = 0; i < num_cols; i++) {
+  for (i_t i = 0; i < num_cols; ++i) {
     builder.setColIntegral(i, h_var_types[i] == var_t::INTEGER);
   }
 
@@ -76,13 +76,20 @@ papilo::Problem<f_t> build_papilo_problem(const optimization_problem_t<i_t, f_t>
   builder.setRowRhsAll(h_constr_ub);
 
   // Add constraints row by row
-  for (i_t i = 0; i < num_rows; i++) {
+  for (i_t i = 0; i < num_rows; ++i) {
     // Get row entries
     i_t row_start   = h_offsets[i];
     i_t row_end     = h_offsets[i + 1];
     i_t num_entries = row_end - row_start;
     builder.addRowEntries(
       i, num_entries, h_variables.data() + row_start, h_coefficients.data() + row_start);
+    builder.setRowLhsInf(i, h_constr_lb[i] == -std::numeric_limits<f_t>::infinity());
+    builder.setRowRhsInf(i, h_constr_ub[i] == std::numeric_limits<f_t>::infinity());
+  }
+
+  for (i_t i = 0; i < num_cols; ++i) {
+    builder.setColLbInf(i, h_var_lb[i] == -std::numeric_limits<f_t>::infinity());
+    builder.setColUbInf(i, h_var_ub[i] == std::numeric_limits<f_t>::infinity());
   }
 
   return builder.build();
@@ -172,7 +179,10 @@ void check_presolve_status(const papilo::PresolveStatus& status)
 void check_postsolve_status(const papilo::PostsolveStatus& status)
 {
   switch (status) {
-    case papilo::PostsolveStatus::kOk: CUOPT_LOG_INFO("Post-solve succeeded"); break;
+    case papilo::PostsolveStatus::kOk:
+      CUOPT_LOG_INFO("Post-solve succeeded");
+      break;
+      // This occurs when the solution is not feasible
     case papilo::PostsolveStatus::kFailed: CUOPT_LOG_INFO("Post-solve failed"); break;
   }
 }
