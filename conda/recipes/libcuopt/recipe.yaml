@@ -49,6 +49,7 @@ cache:
 
   requirements:
     build:
+      - boost
       - ${{ compiler("c") }}
       - ${{ compiler("cxx") }}
       - ${{ compiler("cuda") }} =${{ cuda_version }}
@@ -56,6 +57,7 @@ cache:
       - cuda-version =${{ cuda_version }}
       - cmake ${{ cmake_version }}
       - ninja
+      - tbb-devel
     host:
       - cpp-argparse
       - cuda-version =${{ cuda_version }}

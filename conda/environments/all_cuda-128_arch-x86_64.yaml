@@ -31,7 +31,6 @@ dependencies:
 - gcc_linux-64=13.*
 - geopandas
 - gmock
-- gmp
 - gtest
 - httpx
 - ipython
