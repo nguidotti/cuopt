@@ -30,6 +30,7 @@ from cuopt.linear_programming.solver.solver_parameters import (
     CUOPT_METHOD,
     CUOPT_MIP_HEURISTICS_ONLY,
     CUOPT_PDLP_SOLVER_MODE,
+    CUOPT_PRESOLVE,
     CUOPT_PRIMAL_INFEASIBLE_TOLERANCE,
     CUOPT_RELATIVE_DUAL_TOLERANCE,
     CUOPT_RELATIVE_GAP_TOLERANCE,
@@ -75,6 +76,8 @@ def test_solver():
     settings = solver_settings.SolverSettings()
     settings.set_optimality_tolerance(1e-2)
     settings.set_parameter(CUOPT_METHOD, SolverMethod.PDLP)
+    # Reduces to an empty problem
+    settings.set_parameter(CUOPT_PRESOLVE, False)
 
     solution = solver.Solve(data_model_obj, settings)
     assert solution.get_termination_reason() == "Optimal"
