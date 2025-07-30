@@ -682,14 +682,13 @@ TEST(pdlp_class, per_constraint_test)
                handle.get_stream());
 
     auto& current_termination_strategy = solver.get_current_termination_strategy();
-    pdlp_termination_status_t termination_average =
-      current_termination_strategy.evaluate_termination_criteria(solver.pdhg_solver_,
-                                                                 d_initial_primal,
-                                                                 d_initial_primal,
-                                                                 problem.combined_bounds,
-                                                                 problem.objective_coefficients);
+    current_termination_strategy.evaluate_termination_criteria(solver.pdhg_solver_,
+                                                               d_initial_primal,
+                                                               d_initial_primal,
+                                                               problem.combined_bounds,
+                                                               problem.objective_coefficients);
 
-    EXPECT_TRUE(termination_average != pdlp_termination_status_t::Optimal);
+    EXPECT_TRUE(current_termination_strategy.get_termination_status() != pdlp_termination_status_t::Optimal);
   }
   {
     solver_settings.per_constraint_residual = true;
@@ -701,8 +700,7 @@ TEST(pdlp_class, per_constraint_test)
                handle.get_stream());
 
     auto& current_termination_strategy = solver.get_current_termination_strategy();
-    pdlp_termination_status_t termination_average =
-      current_termination_strategy.evaluate_termination_criteria(solver.pdhg_solver_,
+    current_termination_strategy.evaluate_termination_criteria(solver.pdhg_solver_,
                                                                  d_initial_primal,
                                                                  d_initial_primal,
                                                                  problem.combined_bounds,

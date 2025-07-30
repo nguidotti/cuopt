@@ -73,6 +73,18 @@ rmm::device_scalar<i_t>& pdhg_solver_t<i_t, f_t>::get_d_total_pdhg_iterations()
 }
 
 template <typename i_t, typename f_t>
+i_t pdhg_solver_t<i_t, f_t>::get_primal_size() const
+{
+  return primal_size_h_;
+}
+
+template <typename i_t, typename f_t>
+i_t pdhg_solver_t<i_t, f_t>::get_dual_size() const
+{
+  return dual_size_h_;
+}
+
+template <typename i_t, typename f_t>
 void pdhg_solver_t<i_t, f_t>::compute_next_dual_solution(rmm::device_uvector<f_t>& dual_step_size)
 {
   cuopt_assert(current_saddle_point_state_.get_dual_solution().size() == current_saddle_point_state_.get_dual_gradient().size(), "dual_solution and dual_gradient must have the same size");

@@ -21,6 +21,7 @@
 #include <mip/mip_constants.hpp>
 
 #include <cuopt/linear_programming/pdlp/solver_settings.hpp>
+#include <cuopt/error.hpp>
 
 #include <utilities/copy_helpers.hpp>
 
@@ -206,7 +207,7 @@ void convergence_information_t<i_t, f_t>::compute_convergence_information(
   // If per_constraint_residual is false we still need to perform the l2 since it's used in kkt
   if (settings.per_constraint_residual) {
     // TODO: batch mode
-    cuopt_assert(!batch_mode_, "Batch mode not supported for per_constraint_residual");
+    cuopt_expects(!settings.batch_mode, error_type_t::ValidationError, "Batch mode not supported for per_constraint_residual");
     // Compute the linf of (residual_i - rel * b_i)
     thrust::device_ptr<f_t> result_ptr(linf_primal_residual_.data());
     const f_t neutral = f_t(0.0);
@@ -263,7 +264,7 @@ void convergence_information_t<i_t, f_t>::compute_convergence_information(
   // If per_constraint_residual is false we still need to perform the l2 since it's used in kkt
   if (settings.per_constraint_residual) {
     // TODO: batch mode
-    cuopt_assert(!batch_mode_, "Batch mode not supported for per_constraint_residual");
+    cuopt_expects(!settings.batch_mode, error_type_t::ValidationError, "Batch mode not supported for per_constraint_residual");
     // Compute the linf of (residual_i - rel * c_i)
     thrust::device_ptr<f_t> result_ptr(linf_dual_residual_.data());
     const f_t neutral = f_t(0.0);

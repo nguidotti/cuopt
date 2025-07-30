@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include <utilities/macros.cuh>
+
 #include <raft/core/device_span.hpp>
 #include <raft/util/cudart_utils.hpp>
 
@@ -174,6 +176,22 @@ inline auto device_copy(std::vector<bool> const& host_vec, rmm::cuda_stream_view
 }
 
 template <typename T>
+inline rmm::device_uvector<T> make_sub_device_copy(rmm::device_uvector<T> const& input_vec,
+                                                   size_t target_size,
+                                                   size_t offset)
+{
+  cuopt_assert(offset + target_size <= input_vec.size(), "Offset + target size must be less than or equal to input vector size");
+  cuopt_assert(target_size > 0, "Target size must be greater than 0");
+  cuopt_assert(input_vec.size() > 0, "Input vector must be greater than 0");
+
+  rmm::device_uvector<T> output_vec(target_size, input_vec.stream());
+
+  raft::copy(output_vec.data(), input_vec.data() + offset, target_size, input_vec.stream());
+
+  return output_vec;
+}
+
+template <typename T>
 void print(std::string_view const name, rmm::device_uvector<T> const& container)
 {
   raft::print_device_vector(name.data(), container.data(), container.size(), std::cout);
@@ -205,6 +223,12 @@ template <typename T>
 raft::device_span<const T> make_span(rmm::device_uvector<T> const& container)
 {
   return raft::device_span<const T>(container.data(), container.size());
+}
+
+template <typename T>
+raft::device_span<T> make_span(T* data, size_t size)
+{
+  return raft::device_span<T>(data, size);
 }
 
 // resizes the device vector if it the std vector is larger

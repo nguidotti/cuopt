@@ -29,9 +29,7 @@
 #include <rmm/device_scalar.hpp>
 #include <rmm/device_uvector.hpp>
 
-#include <thrust/host_vector.h>
-#include <thrust/mr/allocator.h>
-#include <thrust/system/cuda/memory_resource.h>
+#include <thrust/universal_vector.h>
 
 namespace cuopt::linear_programming::detail {
 void set_adaptive_step_size_hyper_parameters(rmm::cuda_stream_view stream_view);
@@ -75,8 +73,9 @@ class adaptive_step_size_strategy_t {
    */
   view_t view();
 
+  bool all_invalid() const;
+  void reset_valid_step_size();
   i_t get_valid_step_size() const;
-  void set_valid_step_size(i_t);
 
  private:
   void compute_interaction_and_movement(rmm::device_uvector<f_t>& tmp_primal,
@@ -100,11 +99,7 @@ class adaptive_step_size_strategy_t {
   // Host pinned memory scalar written in kernel
   // Combines both numerical_issue and valid_step size and save the device/host memcpy
   // -1: Error ; 0: Invalid step size ; 1: Valid step size
-  thrust::host_vector<i_t,
-                      thrust::mr::stateless_resource_allocator<
-                        i_t,
-                        thrust::system::cuda::universal_host_pinned_memory_resource>>
-    valid_step_size_;
+  thrust::universal_host_pinned_vector<i_t> valid_step_size_;
 
   rmm::device_uvector<f_t> interaction_;
 

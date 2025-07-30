@@ -74,7 +74,7 @@ class pdlp_solver_t {
   i_t get_total_pdhg_iterations() const;
   f_t get_relative_dual_tolerance_factor() const;
   f_t get_relative_primal_tolerance_factor() const;
-  detail::pdlp_termination_strategy_t<i_t, f_t>& get_current_termination_strategy();
+  pdlp_termination_strategy_t<i_t, f_t>& get_current_termination_strategy();
 
   void set_problem_ptr(problem_t<i_t, f_t>* problem_ptr_);
 
@@ -97,21 +97,27 @@ class pdlp_solver_t {
   void set_inside_mip(bool inside_mip);
 
  private:
-  void print_termination_criteria(const std::chrono::high_resolution_clock::time_point& start_time,
-                                  bool is_average = false);
+  void print_termination_criteria(const pdlp_termination_strategy_t<i_t, f_t>& termination_strategy,
+                                  const std::chrono::high_resolution_clock::time_point& start_time,
+                                  i_t best_id = -1);
   void print_final_termination_criteria(
     const std::chrono::high_resolution_clock::time_point& start_time,
-    const convergence_information_t<i_t, f_t>& convergence_information,
-    const pdlp_termination_status_t& termination_status,
-    bool is_average = false);
+    const pdlp_termination_strategy_t<i_t, f_t>& termination_strategy,
+    i_t best_id = 0);
+  optimization_problem_solution_t<i_t, f_t> return_best_solution(
+    pdlp_termination_strategy_t<i_t, f_t>& termination_strategy,
+    const rmm::device_uvector<f_t>& primal_solution,
+    const rmm::device_uvector<f_t>& dual_solution,
+    const std::chrono::high_resolution_clock::time_point& start_time,
+    std::optional<pdlp_termination_status_t> termination_status = std::nullopt);
   void compute_initial_step_size();
   void compute_initial_primal_weight();
   std::optional<optimization_problem_solution_t<i_t, f_t>> check_termination(
     const std::chrono::high_resolution_clock::time_point& start_time);
   std::optional<optimization_problem_solution_t<i_t, f_t>> check_limits(
     const std::chrono::high_resolution_clock::time_point& start_time);
-  void record_best_primal_so_far(const detail::pdlp_termination_strategy_t<i_t, f_t>& current,
-                                 const detail::pdlp_termination_strategy_t<i_t, f_t>& average,
+  void record_best_primal_so_far(const pdlp_termination_strategy_t<i_t, f_t>& current,
+                                 const pdlp_termination_strategy_t<i_t, f_t>& average,
                                  const pdlp_termination_status_t& termination_current,
                                  const pdlp_termination_status_t& termination_average);
 

@@ -24,6 +24,8 @@
 #include <mip/mip_constants.hpp>
 #include "cuopt/linear_programming/pdlp/solver_solution.hpp"
 
+#include <utilities/copy_helpers.hpp>
+
 #include <raft/common/nvtx.hpp>
 #include <raft/linalg/eltwise.cuh>
 #include <raft/linalg/ternary_op.cuh>
@@ -289,13 +291,11 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
     RAFT_CUDA_TRY(cudaDeviceSynchronize());
     std::cout << "Time Limit reached, returning current solution" << std::endl;
 #endif
-    return current_termination_strategy_.fill_return_problem_solution(
-      internal_solver_iterations_,
-      pdhg_solver_,
-      pdhg_solver_.get_primal_solution(),
-      pdhg_solver_.get_dual_solution(),
-      get_filled_warmed_start_data(),
-      pdlp_termination_status_t::TimeLimit);
+    return return_best_solution(current_termination_strategy_,
+                                pdhg_solver_.get_primal_solution(),
+                                pdhg_solver_.get_dual_solution(),
+                                start_time,
+                                pdlp_termination_status_t::TimeLimit);
   }
 
   // Check for iteration limit
@@ -313,13 +313,11 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
     std::cout << "Iteration Limit reached, returning current solution" << std::endl;
 #endif
 
-    return current_termination_strategy_.fill_return_problem_solution(
-      internal_solver_iterations_,
-      pdhg_solver_,
-      pdhg_solver_.get_primal_solution(),
-      pdhg_solver_.get_dual_solution(),
-      get_filled_warmed_start_data(),
-      pdlp_termination_status_t::IterationLimit);
+    return return_best_solution(current_termination_strategy_,
+                                pdhg_solver_.get_primal_solution(),
+                                pdhg_solver_.get_dual_solution(),
+                                start_time,
+                                pdlp_termination_status_t::IterationLimit);
   }
 
   // Check for concurrent limit
@@ -329,13 +327,11 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
     RAFT_CUDA_TRY(cudaDeviceSynchronize());
     std::cout << "Concurrent Limit reached, returning current solution" << std::endl;
 #endif
-    return current_termination_strategy_.fill_return_problem_solution(
-      internal_solver_iterations_,
-      pdhg_solver_,
-      pdhg_solver_.get_primal_solution(),
-      pdhg_solver_.get_dual_solution(),
-      get_filled_warmed_start_data(),
-      pdlp_termination_status_t::ConcurrentLimit);
+    return return_best_solution(current_termination_strategy_,
+                                pdhg_solver_.get_primal_solution(),
+                                pdhg_solver_.get_dual_solution(),
+                                start_time,
+                                pdlp_termination_status_t::ConcurrentLimit);
   }
 
   return std::nullopt;
@@ -464,8 +460,8 @@ void pdlp_solver_t<i_t, f_t>::record_best_primal_so_far(
     best_primal_solution_so_far = termination_strategy_to_use->fill_return_problem_solution(
       internal_solver_iterations_,
       pdhg_solver_,
-      *primal_to_set,
-      *dual_to_set,
+      std::move(*primal_to_set),
+      std::move(*dual_to_set),
       pdlp_termination_status_t::TimeLimit,
       true);
   } else {
@@ -558,49 +554,89 @@ pdlp_warm_start_data_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::get_filled_warmed_star
 
 template <typename i_t, typename f_t>
 void pdlp_solver_t<i_t, f_t>::print_termination_criteria(
-  const std::chrono::high_resolution_clock::time_point& start_time, bool is_average)
+  const pdlp_termination_strategy_t<i_t, f_t>& termination_strategy,
+  const std::chrono::high_resolution_clock::time_point& start_time,
+  i_t best_id)
 {
   if (!inside_mip_) {
+    if (best_id == -1 && settings_.batch_mode) {
+      std::tie(std::ignore, best_id) = restart_strategy_.compute_kkt_score(
+        termination_strategy.get_convergence_information().get_l2_primal_residual(),
+        termination_strategy.get_convergence_information().get_l2_dual_residual(),
+        termination_strategy.get_convergence_information().get_gap(),
+        primal_weight_);
+    }
+    else if (!settings_.batch_mode)
+      best_id = 0;
     const auto current_time = std::chrono::high_resolution_clock::now();
     const f_t elapsed =
       std::chrono::duration_cast<std::chrono::milliseconds>(current_time - start_time).count() /
       1000.0;
-    if (is_average) {
-      average_termination_strategy_.print_termination_criteria(total_pdlp_iterations_, elapsed);
-    } else {
-      current_termination_strategy_.print_termination_criteria(total_pdlp_iterations_, elapsed);
-    }
+    termination_strategy.print_termination_criteria(total_pdlp_iterations_, elapsed, best_id);
   }
 }
 
 template <typename i_t, typename f_t>
 void pdlp_solver_t<i_t, f_t>::print_final_termination_criteria(
   const std::chrono::high_resolution_clock::time_point& start_time,
-  const convergence_information_t<i_t, f_t>& convergence_information,
-  const pdlp_termination_status_t& termination_status,
-  bool is_average)
+  const pdlp_termination_strategy_t<i_t, f_t>& termination_strategy,
+  i_t best_id)
 {
   if (!inside_mip_) {
-    print_termination_criteria(start_time, is_average);
+    const auto& convergence_information = termination_strategy.get_convergence_information();
+    print_termination_criteria(termination_strategy, start_time, best_id);
     CUOPT_LOG_INFO(
       "LP Solver status:                %s",
-      optimization_problem_solution_t<i_t, f_t>::get_termination_status_string(termination_status)
+      optimization_problem_solution_t<i_t, f_t>::get_termination_status_string(termination_strategy.get_termination_status(best_id))
         .c_str());
-    // TODO: batch mode
     CUOPT_LOG_INFO("Primal objective:                %+.8e",
-                   convergence_information.get_primal_objective().element(0, stream_view_));
+                   convergence_information.get_primal_objective().element(best_id, stream_view_));
     CUOPT_LOG_INFO("Dual objective:                  %+.8e",
-                   convergence_information.get_dual_objective().element(0, stream_view_));
+                   convergence_information.get_dual_objective().element(best_id, stream_view_));
     CUOPT_LOG_INFO("Duality gap (abs/rel):           %+.2e / %+.2e",
-                   convergence_information.get_gap().element(0, stream_view_),
+                   convergence_information.get_gap().element(best_id, stream_view_),
                    convergence_information.get_relative_gap_value());
     CUOPT_LOG_INFO("Primal infeasibility (abs/rel):  %+.2e / %+.2e",
-                   convergence_information.get_l2_primal_residual().element(0, stream_view_),
+                   convergence_information.get_l2_primal_residual().element(best_id, stream_view_),
                    convergence_information.get_relative_l2_primal_residual_value());
     CUOPT_LOG_INFO("Dual infeasibility (abs/rel):    %+.2e / %+.2e",
-                   convergence_information.get_l2_dual_residual().element(0, stream_view_),
+                   convergence_information.get_l2_dual_residual().element(best_id, stream_view_),
                    convergence_information.get_relative_l2_dual_residual_value());
   }
+}
+
+/*
+  In the context of MCPDLP, will return the best solution accross climers
+*/
+template <typename i_t, typename f_t>
+optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::return_best_solution(
+  pdlp_termination_strategy_t<i_t, f_t>& termination_strategy,
+  const rmm::device_uvector<f_t>& primal_solution,
+  const rmm::device_uvector<f_t>& dual_solution,
+  const std::chrono::high_resolution_clock::time_point& start_time,
+  std::optional<pdlp_termination_status_t> termination_status)
+{
+  i_t best_id;
+  if (termination_strategy.nb_optimal_solutions() == 1)
+    best_id = termination_strategy.get_optimal_solution_id();
+  else
+  {
+    std::tie(std::ignore, best_id) = restart_strategy_.compute_kkt_score(
+      termination_strategy.get_convergence_information().get_l2_primal_residual(),
+      termination_strategy.get_convergence_information().get_l2_dual_residual(),
+      termination_strategy.get_convergence_information().get_gap(),
+      primal_weight_);
+  }
+  print_final_termination_criteria(start_time,
+                                   termination_strategy,
+                                   best_id);
+  return termination_strategy.fill_return_problem_solution(
+    internal_solver_iterations_,
+    pdhg_solver_,
+    make_sub_device_copy(primal_solution, primal_size_h_, best_id * primal_size_h_),
+    make_sub_device_copy(dual_solution, dual_size_h_, best_id * dual_size_h_),
+    get_filled_warmed_start_data(),
+    (termination_status.has_value() ? termination_status.value() : termination_strategy.get_termination_status(best_id)));
 }
 
 template <typename i_t, typename f_t>
@@ -618,11 +654,10 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
       std::chrono::duration_cast<std::chrono::milliseconds>(current_time - start_time).count() /
       1000.0;
   printf("Termination criteria current\n");
-  current_termination_strategy_.print_termination_criteria(total_pdlp_iterations_, elapsed);
+  print_termination_criteria(current_termination_strategy_, start_time);
   RAFT_CUDA_TRY(cudaDeviceSynchronize());
 #endif
-  pdlp_termination_status_t termination_current =
-    current_termination_strategy_.evaluate_termination_criteria(
+  current_termination_strategy_.evaluate_termination_criteria(
       pdhg_solver_,
       pdhg_solver_.get_primal_solution(),
       pdhg_solver_.get_dual_solution(),
@@ -632,13 +667,12 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
 #ifdef PDLP_VERBOSE_MODE
   RAFT_CUDA_TRY(cudaDeviceSynchronize());
   std::cout << "Termination criteria average:" << std::endl;
-  average_termination_strategy_.print_termination_criteria(total_pdlp_iterations_, elapsed);
+  print_termination_criteria(average_termination_strategy_, start_time);
   RAFT_CUDA_TRY(cudaDeviceSynchronize());
 #endif
 
   // Check both average and current solution
-  pdlp_termination_status_t termination_average =
-    average_termination_strategy_.evaluate_termination_criteria(
+  average_termination_strategy_.evaluate_termination_criteria(
       pdhg_solver_,
       unscaled_primal_avg_solution_,
       unscaled_dual_avg_solution_,
@@ -651,7 +685,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
   // enough) We still need to check iteration and time limit prior without breaking the logic below
   // of first checking termination before the limit
   if (total_pdlp_iterations_ <= 1) {
-    print_termination_criteria(start_time);
+    print_termination_criteria(current_termination_strategy_, start_time);
     return check_limits(start_time);
   }
 
@@ -660,6 +694,9 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
   if (settings_.first_primal_feasible) {
     // Both primal feasible, return best objective
     // TODO: batch mode
+    cuopt_expects(!settings_.batch_mode, error_type_t::ValidationError, "First primal feasible is not supported in batch mode");
+    const auto termination_average = average_termination_strategy_.get_termination_status();
+    const auto termination_current = current_termination_strategy_.get_termination_status();
     if (termination_average == pdlp_termination_status_t::PrimalFeasible &&
         termination_current == pdlp_termination_status_t::PrimalFeasible) {
       const f_t current_overall_primal_residual =
@@ -670,8 +707,8 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
         return current_termination_strategy_.fill_return_problem_solution(
           internal_solver_iterations_,
           pdhg_solver_,
-          pdhg_solver_.get_primal_solution(),
-          pdhg_solver_.get_dual_solution(),
+          std::move(pdhg_solver_.get_primal_solution()),
+          std::move(pdhg_solver_.get_dual_solution()),
           get_filled_warmed_start_data(),
           termination_current);
       } else  // Average has better overall residual
@@ -679,8 +716,8 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
         return average_termination_strategy_.fill_return_problem_solution(
           internal_solver_iterations_,
           pdhg_solver_,
-          unscaled_primal_avg_solution_,
-          unscaled_dual_avg_solution_,
+          std::move(unscaled_primal_avg_solution_),
+          std::move(unscaled_dual_avg_solution_),
           get_filled_warmed_start_data(),
           termination_average);
       }
@@ -688,16 +725,16 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
       return current_termination_strategy_.fill_return_problem_solution(
         internal_solver_iterations_,
         pdhg_solver_,
-        pdhg_solver_.get_primal_solution(),
-        pdhg_solver_.get_dual_solution(),
+        std::move(pdhg_solver_.get_primal_solution()),
+        std::move(pdhg_solver_.get_dual_solution()),
         get_filled_warmed_start_data(),
         termination_current);
     } else if (termination_average == pdlp_termination_status_t::PrimalFeasible) {
       return average_termination_strategy_.fill_return_problem_solution(
         internal_solver_iterations_,
         pdhg_solver_,
-        unscaled_primal_avg_solution_,
-        unscaled_dual_avg_solution_,
+        std::move(unscaled_primal_avg_solution_),
+        std::move(unscaled_dual_avg_solution_),
         get_filled_warmed_start_data(),
         termination_average);
     }
@@ -705,158 +742,144 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
   }
 
   // If both are pdlp_termination_status_t::Optimal, return the one with the lowest KKT score
-  if (termination_average == pdlp_termination_status_t::Optimal &&
-      termination_current == pdlp_termination_status_t::Optimal) {
-    // TODO: batch mode
-    const f_t current_kkt_score = restart_strategy_.compute_kkt_score(
+  if (average_termination_strategy_.has_optimal_status() &&
+      current_termination_strategy_.has_optimal_status()) {
+    const auto [best_current_kkt_score, best_current_id] = restart_strategy_.compute_kkt_score(
       current_termination_strategy_.get_convergence_information().get_l2_primal_residual(),
       current_termination_strategy_.get_convergence_information().get_l2_dual_residual(),
       current_termination_strategy_.get_convergence_information().get_gap(),
       primal_weight_);
 
-    const f_t average_kkt_score = restart_strategy_.compute_kkt_score(
+    const auto [best_average_kkt_score, best_average_id] = restart_strategy_.compute_kkt_score(
       average_termination_strategy_.get_convergence_information().get_l2_primal_residual(),
       average_termination_strategy_.get_convergence_information().get_l2_dual_residual(),
       average_termination_strategy_.get_convergence_information().get_gap(),
       primal_weight_);
 
-    if (current_kkt_score < average_kkt_score) {
+    if (best_current_kkt_score < best_average_kkt_score) {
 #ifdef PDLP_VERBOSE_MODE
       std::cout << "Optimal. End total number of iteration current=" << internal_solver_iterations_
                 << std::endl;
 #endif
       print_final_termination_criteria(start_time,
-                                       current_termination_strategy_.get_convergence_information(),
-                                       termination_current);
+                                       current_termination_strategy_,
+                                       best_current_id);
       return current_termination_strategy_.fill_return_problem_solution(
         internal_solver_iterations_,
         pdhg_solver_,
-        pdhg_solver_.get_primal_solution(),
-        pdhg_solver_.get_dual_solution(),
+        make_sub_device_copy(pdhg_solver_.get_primal_solution(), primal_size_h_, best_current_id * primal_size_h_),
+        make_sub_device_copy(pdhg_solver_.get_dual_solution(), dual_size_h_, best_current_id * dual_size_h_),
         get_filled_warmed_start_data(),
-        termination_current);
+        current_termination_strategy_.get_termination_status(best_current_id));
     } else {
 #ifdef PDLP_VERBOSE_MODE
       std::cout << "Optimal. End total number of iteration average=" << internal_solver_iterations_
                 << std::endl;
 #endif
       print_final_termination_criteria(start_time,
-                                       average_termination_strategy_.get_convergence_information(),
-                                       termination_average,
-                                       true);
+                                       average_termination_strategy_,
+                                       best_average_id);
       return average_termination_strategy_.fill_return_problem_solution(
         internal_solver_iterations_,
         pdhg_solver_,
-        unscaled_primal_avg_solution_,
-        unscaled_dual_avg_solution_,
+        make_sub_device_copy(unscaled_primal_avg_solution_, primal_size_h_, best_average_id * primal_size_h_),
+        make_sub_device_copy(unscaled_dual_avg_solution_, dual_size_h_, best_average_id * dual_size_h_),
         get_filled_warmed_start_data(),
-        termination_average);
+        average_termination_strategy_.get_termination_status(best_average_id));
     }
   }
 
   // If at least one is pdlp_termination_status_t::Optimal, return it
-  if (termination_average == pdlp_termination_status_t::Optimal) {
+  if (average_termination_strategy_.has_optimal_status()) {
 #ifdef PDLP_VERBOSE_MODE
     std::cout << "Optimal. End total number of iteration average=" << internal_solver_iterations_
               << std::endl;
 #endif
-    print_final_termination_criteria(start_time,
-                                     average_termination_strategy_.get_convergence_information(),
-                                     termination_average,
-                                     true);
-    return average_termination_strategy_.fill_return_problem_solution(
-      internal_solver_iterations_,
-      pdhg_solver_,
-      unscaled_primal_avg_solution_,
-      unscaled_dual_avg_solution_,
-      get_filled_warmed_start_data(),
-      termination_average);
+    return return_best_solution(average_termination_strategy_,
+                         unscaled_primal_avg_solution_,
+                         unscaled_dual_avg_solution_,
+                         start_time);
   }
-  if (termination_current == pdlp_termination_status_t::Optimal) {
+  if (current_termination_strategy_.has_optimal_status()) {
 #ifdef PDLP_VERBOSE_MODE
     std::cout << "Optimal. End total number of iteration current=" << internal_solver_iterations_
               << std::endl;
 #endif
-    print_final_termination_criteria(
-      start_time, current_termination_strategy_.get_convergence_information(), termination_current);
-    return current_termination_strategy_.fill_return_problem_solution(
-      internal_solver_iterations_,
-      pdhg_solver_,
-      pdhg_solver_.get_primal_solution(),
-      pdhg_solver_.get_dual_solution(),
-      get_filled_warmed_start_data(),
-      termination_current);
+    return return_best_solution(current_termination_strategy_,
+                         pdhg_solver_.get_primal_solution(),
+                         pdhg_solver_.get_dual_solution(),
+                         start_time);
   }
 
   // Check for infeasibility
 
   // If strict infeasibility, any infeasibility is detected, it is returned
   // Else both are needed
-  // (If infeasibility_detection is not set, termination reason cannot be Infeasible)
-  if (settings_.strict_infeasibility) {
-    if (termination_current == pdlp_termination_status_t::PrimalInfeasible ||
-        termination_current == pdlp_termination_status_t::DualInfeasible) {
-#ifdef PDLP_VERBOSE_MODE
-      std::cout << "Current Infeasible. End total number of iteration current="
-                << internal_solver_iterations_ << std::endl;
-#endif
-      print_final_termination_criteria(start_time,
-                                       current_termination_strategy_.get_convergence_information(),
-                                       termination_current);
-      return current_termination_strategy_.fill_return_problem_solution(
-        internal_solver_iterations_,
-        pdhg_solver_,
-        pdhg_solver_.get_primal_solution(),
-        pdhg_solver_.get_dual_solution(),
-        termination_current);
-    }
-    if (termination_average == pdlp_termination_status_t::PrimalInfeasible ||
-        termination_average == pdlp_termination_status_t::DualInfeasible) {
-#ifdef PDLP_VERBOSE_MODE
-      std::cout << "Average Infeasible. End total number of iteration current="
-                << internal_solver_iterations_ << std::endl;
-#endif
-      print_final_termination_criteria(start_time,
-                                       average_termination_strategy_.get_convergence_information(),
-                                       termination_average,
-                                       true);
-      return average_termination_strategy_.fill_return_problem_solution(
-        internal_solver_iterations_,
-        pdhg_solver_,
-        unscaled_primal_avg_solution_,
-        unscaled_dual_avg_solution_,
-        termination_average);
-    }
-  } else {
-    if ((termination_current == pdlp_termination_status_t::PrimalInfeasible &&
-         termination_average == pdlp_termination_status_t::PrimalInfeasible) ||
-        (termination_current == pdlp_termination_status_t::DualInfeasible &&
-         termination_average == pdlp_termination_status_t::DualInfeasible)) {
-#ifdef PDLP_VERBOSE_MODE
-      std::cout << "Infeasible. End total number of iteration current="
-                << internal_solver_iterations_ << std::endl;
-#endif
-      print_final_termination_criteria(start_time,
-                                       current_termination_strategy_.get_convergence_information(),
-                                       termination_current);
-      return current_termination_strategy_.fill_return_problem_solution(
-        internal_solver_iterations_,
-        pdhg_solver_,
-        pdhg_solver_.get_primal_solution(),
-        pdhg_solver_.get_dual_solution(),
-        termination_current);
+  // (If detect_infeasibility is not set, termination reason cannot be Infeasible)
+  if (settings_.detect_infeasibility)
+  {
+    cuopt_expects(!settings_.batch_mode, error_type_t::ValidationError, "Infeasibility detection is not supported in batch mode");
+    if (settings_.strict_infeasibility) {
+      if (current_termination_strategy_.get_termination_status() == pdlp_termination_status_t::PrimalInfeasible ||
+          current_termination_strategy_.get_termination_status() == pdlp_termination_status_t::DualInfeasible) {
+  #ifdef PDLP_VERBOSE_MODE
+        std::cout << "Current Infeasible. End total number of iteration current="
+                  << internal_solver_iterations_ << std::endl;
+  #endif
+        print_final_termination_criteria(start_time,
+                                        current_termination_strategy_);
+        return current_termination_strategy_.fill_return_problem_solution(
+          internal_solver_iterations_,
+          pdhg_solver_,
+          std::move(pdhg_solver_.get_primal_solution()),
+          std::move(pdhg_solver_.get_dual_solution()),
+          current_termination_strategy_.get_termination_status());
+      }
+      if (average_termination_strategy_.get_termination_status() == pdlp_termination_status_t::PrimalInfeasible ||
+          average_termination_strategy_.get_termination_status() == pdlp_termination_status_t::DualInfeasible) {
+  #ifdef PDLP_VERBOSE_MODE
+        std::cout << "Average Infeasible. End total number of iteration current="
+                  << internal_solver_iterations_ << std::endl;
+  #endif
+        print_final_termination_criteria(start_time,
+                                        average_termination_strategy_);
+        return average_termination_strategy_.fill_return_problem_solution(
+          internal_solver_iterations_,
+          pdhg_solver_,
+          std::move(unscaled_primal_avg_solution_),
+          std::move(unscaled_dual_avg_solution_),
+          average_termination_strategy_.get_termination_status());
+      }
+    } else {
+      if ((current_termination_strategy_.get_termination_status() == pdlp_termination_status_t::PrimalInfeasible &&
+          average_termination_strategy_.get_termination_status() == pdlp_termination_status_t::PrimalInfeasible) ||
+          (current_termination_strategy_.get_termination_status() == pdlp_termination_status_t::DualInfeasible &&
+          average_termination_strategy_.get_termination_status() == pdlp_termination_status_t::DualInfeasible)) {
+  #ifdef PDLP_VERBOSE_MODE
+        std::cout << "Infeasible. End total number of iteration current="
+                  << internal_solver_iterations_ << std::endl;
+  #endif
+        print_final_termination_criteria(start_time,
+                                        current_termination_strategy_);
+        return current_termination_strategy_.fill_return_problem_solution(
+          internal_solver_iterations_,
+          pdhg_solver_,
+          std::move(pdhg_solver_.get_primal_solution()),
+          std::move(pdhg_solver_.get_dual_solution()),
+          current_termination_strategy_.get_termination_status());
+      }
     }
   }
 
   // Numerical error has happend (movement is 0 and pdlp_termination_status_t::Optimality has not
   // been reached)
-  if (step_size_strategy_.get_valid_step_size() == -1) {
+  if (step_size_strategy_.all_invalid()) {
 #ifdef PDLP_VERBOSE_MODE
     std::cout << "Numerical Error. End total number of iteration current="
               << internal_solver_iterations_ << std::endl;
 #endif
     print_final_termination_criteria(
-      start_time, current_termination_strategy_.get_convergence_information(), termination_current);
+      start_time, current_termination_strategy_);
     return optimization_problem_solution_t<i_t, f_t>{pdlp_termination_status_t::NumericalError,
                                                      stream_view_};
   }
@@ -864,11 +887,14 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
   // If not infeasible and not pdlp_termination_status_t::Optimal and no error, record best so far
   // is toggle
   if (settings_.save_best_primal_so_far)
+  {
+    cuopt_expects(!settings_.batch_mode, error_type_t::ValidationError, "Saving best primal so far is not supported in batch mode");
     record_best_primal_so_far(current_termination_strategy_,
                               average_termination_strategy_,
-                              termination_current,
-                              termination_average);
-  if (total_pdlp_iterations_ % 1000 == 0) { print_termination_criteria(start_time); }
+                              current_termination_strategy_.get_termination_status(),
+                              average_termination_strategy_.get_termination_status());
+  }
+  if (total_pdlp_iterations_ % 1000 == 0) { print_termination_criteria(current_termination_strategy_, start_time); }
 
   // No reason to terminate
   return check_limits(start_time);
@@ -1157,7 +1183,7 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(
     bool is_major_iteration = ((total_pdlp_iterations_ % pdlp_hyper_params::major_iteration == 0) &&
                                (total_pdlp_iterations_ > 0)) ||
                               (total_pdlp_iterations_ <= pdlp_hyper_params::min_iteration_restart);
-    bool error_occured                      = (step_size_strategy_.get_valid_step_size() == -1);
+    bool error_occured                      = (step_size_strategy_.all_invalid());
     bool artificial_restart_check_main_loop = false;
     if (pdlp_hyper_params::artificial_restart_in_main_loop)
       artificial_restart_check_main_loop =
@@ -1263,8 +1289,9 @@ template <typename i_t, typename f_t>
 void pdlp_solver_t<i_t, f_t>::take_step(i_t total_pdlp_iterations)
 {
   // continue testing stepsize until we find a valid one or encounter a numerical error
-  step_size_strategy_.set_valid_step_size(0);
+  step_size_strategy_.reset_valid_step_size();
 
+  // TODO: batch mode
   while (step_size_strategy_.get_valid_step_size() == 0) {
 #ifdef PDLP_DEBUG_MODE
     RAFT_CUDA_TRY(cudaDeviceSynchronize());

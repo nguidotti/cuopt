@@ -196,18 +196,6 @@ __global__ void compute_step_sizes_from_movement_and_interaction(
 }
 
 template <typename i_t, typename f_t>
-i_t adaptive_step_size_strategy_t<i_t, f_t>::get_valid_step_size() const
-{
-  return valid_step_size_[0];
-}
-
-template <typename i_t, typename f_t>
-void adaptive_step_size_strategy_t<i_t, f_t>::set_valid_step_size(i_t valid)
-{
-  valid_step_size_[0] = valid;
-}
-
-template <typename i_t, typename f_t>
 void adaptive_step_size_strategy_t<i_t, f_t>::compute_step_sizes(
   pdhg_solver_t<i_t, f_t>& pdhg_solver,
   rmm::device_uvector<f_t>& primal_step_size,
@@ -467,6 +455,25 @@ adaptive_step_size_strategy_t<i_t, f_t>::view()
   v.norm_squared_delta_dual   = raft::device_span<f_t>(norm_squared_delta_dual_.data(), norm_squared_delta_dual_.size());
 
   return v;
+}
+
+template <typename i_t, typename f_t>
+bool adaptive_step_size_strategy_t<i_t, f_t>::all_invalid() const
+{
+  return std::all_of(valid_step_size_.begin(), valid_step_size_.end(), [](i_t v) { return v == -1; });
+}
+
+template <typename i_t, typename f_t>
+void adaptive_step_size_strategy_t<i_t, f_t>::reset_valid_step_size()
+{
+  std::fill(valid_step_size_.begin(), valid_step_size_.end(), 0);
+}
+
+template <typename i_t, typename f_t>
+i_t adaptive_step_size_strategy_t<i_t, f_t>::get_valid_step_size() const
+{
+  // TODO: batch mode
+  return valid_step_size_[0];
 }
 
 #define INSTANTIATE(F_TYPE)                                                                    \

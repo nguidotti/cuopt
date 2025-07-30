@@ -219,7 +219,7 @@ pdlp_restart_strategy_t<i_t, f_t>::pdlp_restart_strategy_t(
     reusable_device_scalar_value_0_{0.0, stream_view_},
     reusable_device_scalar_value_0_i_t_{0, stream_view_},
     reusable_device_scalar_value_neg_1_{f_t(-1.0), stream_view_},
-    tmp_kkt_score_{stream_view_},
+    tmp_kkt_score_((batch_mode_ ? (0 + 3)/*@@*/ : 1)),
     reusable_device_scalar_1_{stream_view_},
     reusable_device_scalar_2_{stream_view_},
     reusable_device_scalar_3_{stream_view_},
@@ -386,46 +386,60 @@ void pdlp_restart_strategy_t<i_t, f_t>::run_trust_region_restart(
   }
 }
 
-template <typename f_t>
-__global__ void kernel_compute_kkt_score(const f_t* l2_primal_residual,
-                                         const f_t* l2_dual_residual,
-                                         const f_t* gap,
-                                         const f_t* primal_weight,
-                                         f_t* kkt_score)
+template <typename i_t, typename f_t>
+__global__ void kernel_compute_kkt_score(raft::device_span<const f_t> l2_primal_residual,
+                                         raft::device_span<const f_t> l2_dual_residual,
+                                         raft::device_span<const f_t> gap,
+                                         raft::device_span<const f_t> primal_weight,
+                                         raft::device_span<f_t> kkt_score,
+                                         const i_t batch_size)
 {
-  const f_t weight_squared = *primal_weight * *primal_weight;
-  *kkt_score               = raft::sqrt(weight_squared * *l2_primal_residual * *l2_primal_residual +
-                          *l2_dual_residual * *l2_dual_residual / weight_squared + *gap * *gap);
+  const i_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= batch_size) { return; }
+
+  const f_t weight_squared = primal_weight[idx] * primal_weight[idx];
+  kkt_score[idx]           = raft::sqrt(weight_squared * l2_primal_residual[idx] * l2_primal_residual[idx] +
+                          l2_dual_residual[idx] * l2_dual_residual[idx] / weight_squared + gap[idx] * gap[idx]);
+
 #ifdef PDLP_DEBUG_MODE
   printf(
     "kernel_compute_kkt_score=%lf weight=%lf (^2 %lf), l2_primal_residual=%lf (^2 %lf), "
     "l2_dual_residual=%lf (^2 %lf), fap=%lf (^2 %lf)\n",
-    *kkt_score,
-    *primal_weight,
+    kkt_score[idx],
+    primal_weight[idx],
     weight_squared,
-    *l2_primal_residual,
-    (*l2_primal_residual * *l2_primal_residual),
-    *l2_dual_residual,
-    (*l2_dual_residual * *l2_dual_residual),
-    *gap,
-    (*gap * *gap));
+    l2_primal_residual[idx],
+    l2_primal_residual[idx] * l2_primal_residual[idx],
+    l2_dual_residual[idx],
+    l2_dual_residual[idx] * l2_dual_residual[idx],
+    gap[idx],
+    gap[idx] * gap[idx]);
 #endif
 }
 
 template <typename i_t, typename f_t>
-f_t pdlp_restart_strategy_t<i_t, f_t>::compute_kkt_score(
+std::pair<f_t, i_t> pdlp_restart_strategy_t<i_t, f_t>::compute_kkt_score(
   const rmm::device_uvector<f_t>& l2_primal_residual,
   const rmm::device_uvector<f_t>& l2_dual_residual,
   const rmm::device_uvector<f_t>& gap,
   const rmm::device_uvector<f_t>& primal_weight)
 {
-  // TODO: batch mode
-  kernel_compute_kkt_score<f_t><<<1, 1, 0, stream_view_>>>(l2_primal_residual.data(),
-                                                           l2_dual_residual.data(),
-                                                           gap.data(),
-                                                           primal_weight.data(),
-                                                           tmp_kkt_score_.data());
-  return tmp_kkt_score_.value(stream_view_);
+  const int block_size = (batch_mode_ ? std::min(256, (0 + 3)/*@@*/) : 1);
+  const int grid_size = (batch_mode_ ? cuda::ceil_div((0 + 3)/*@@*/, block_size) : 1);
+  kernel_compute_kkt_score<i_t, f_t><<<grid_size, block_size, 0, stream_view_>>>(raft::device_span<const f_t>(l2_primal_residual.data(), l2_primal_residual.size()),
+                                                           raft::device_span<const f_t>(l2_dual_residual.data(), l2_dual_residual.size()),
+                                                           raft::device_span<const f_t>(gap.data(), gap.size()),
+                                                           raft::device_span<const f_t>(primal_weight.data(), primal_weight.size()),
+                                                           raft::device_span<f_t>(thrust::raw_pointer_cast(tmp_kkt_score_.data()), tmp_kkt_score_.size()),
+                                                           batch_mode_ ? (0 + 3)/*@@*/ : 1);
+  RAFT_CUDA_TRY(cudaPeekAtLastError());
+  RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
+  if (batch_mode_) {
+    const auto min = std::min_element(tmp_kkt_score_.begin(), tmp_kkt_score_.end());
+    return std::make_pair(*min, std::distance(tmp_kkt_score_.begin(), min));
+  } else {
+    return std::make_pair(tmp_kkt_score_[0], 0);
+  }
 }
 
 template <typename i_t, typename f_t>
@@ -522,7 +536,8 @@ bool pdlp_restart_strategy_t<i_t, f_t>::run_kkt_restart(
 #endif
 
   // TODO: batch mode
-  const f_t current_kkt_score =
+  f_t current_kkt_score;
+  std::tie(current_kkt_score, std::ignore) =
     compute_kkt_score(current_convergence_information.get_l2_primal_residual(),
                       current_convergence_information.get_l2_dual_residual(),
                       current_convergence_information.get_gap(),
@@ -540,14 +555,16 @@ bool pdlp_restart_strategy_t<i_t, f_t>::run_kkt_restart(
   }
 
   // TODO: batch mode
-  const f_t average_kkt_score =
+  f_t average_kkt_score;
+  std::tie(average_kkt_score, std::ignore) =
     compute_kkt_score(average_convergence_information.get_l2_primal_residual(),
                       average_convergence_information.get_l2_dual_residual(),
                       average_convergence_information.get_gap(),
                       primal_weight);
-  f_t candidate_kkt_score;
 
+  f_t candidate_kkt_score;
   bool restart_to_average;
+
   if (current_kkt_score < average_kkt_score) {
     restart_to_average  = false;
     candidate_kkt_score = current_kkt_score;

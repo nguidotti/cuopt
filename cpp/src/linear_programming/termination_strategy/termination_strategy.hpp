@@ -31,6 +31,8 @@
 #include <rmm/device_scalar.hpp>
 #include <rmm/device_uvector.hpp>
 
+#include <thrust/universal_vector.h>
+
 namespace cuopt::linear_programming::detail {
 template <typename i_t, typename f_t>
 class pdlp_termination_strategy_t {
@@ -42,7 +44,7 @@ class pdlp_termination_strategy_t {
                               const i_t dual_size,
                               const pdlp_solver_settings_t<i_t, f_t>& settings);
 
-  pdlp_termination_status_t evaluate_termination_criteria(
+  void evaluate_termination_criteria(
     pdhg_solver_t<i_t, f_t>& current_pdhg_solver,
     rmm::device_uvector<f_t>& primal_iterate,
     rmm::device_uvector<f_t>& dual_iterate,
@@ -51,12 +53,17 @@ class pdlp_termination_strategy_t {
       objective_coefficients  // Only useful if per_constraint_residual
   );
 
-  void print_termination_criteria(i_t iteration, f_t elapsed);
+  void print_termination_criteria(i_t iteration, f_t elapsed, i_t best_id) const;
 
   void set_relative_dual_tolerance_factor(f_t dual_tolerance_factor);
   void set_relative_primal_tolerance_factor(f_t primal_tolerance_factor);
   f_t get_relative_dual_tolerance_factor() const;
   f_t get_relative_primal_tolerance_factor() const;
+
+  pdlp_termination_status_t get_termination_status(int id = 0) const;
+  bool has_optimal_status() const;
+  i_t nb_optimal_solutions() const;
+  i_t get_optimal_solution_id() const;
 
   const convergence_information_t<i_t, f_t>& get_convergence_information() const;
 
@@ -64,8 +71,8 @@ class pdlp_termination_strategy_t {
   optimization_problem_solution_t<i_t, f_t> fill_return_problem_solution(
     i_t number_of_iterations,
     pdhg_solver_t<i_t, f_t>& current_pdhg_solver,
-    rmm::device_uvector<f_t>& primal_iterate,
-    rmm::device_uvector<f_t>& dual_iterate,
+    rmm::device_uvector<f_t>&& primal_iterate,
+    rmm::device_uvector<f_t>&& dual_iterate,
     pdlp_warm_start_data_t<i_t, f_t> warm_start_data,
     pdlp_termination_status_t termination_status,
     bool deep_copy = false);
@@ -74,8 +81,8 @@ class pdlp_termination_strategy_t {
   optimization_problem_solution_t<i_t, f_t> fill_return_problem_solution(
     i_t number_of_iterations,
     pdhg_solver_t<i_t, f_t>& current_pdhg_solver,
-    rmm::device_uvector<f_t>& primal_iterate,
-    rmm::device_uvector<f_t>& dual_iterate,
+    rmm::device_uvector<f_t>&& primal_iterate,
+    rmm::device_uvector<f_t>&& dual_iterate,
     pdlp_termination_status_t termination_status,
     bool deep_copy = false);
 
@@ -90,7 +97,7 @@ class pdlp_termination_strategy_t {
   convergence_information_t<i_t, f_t> convergence_information_;
   infeasibility_information_t<i_t, f_t> infeasibility_information_;
 
-  rmm::device_uvector<i_t> termination_status_;
+  thrust::universal_host_pinned_vector<i_t> termination_status_;
   const pdlp_solver_settings_t<i_t, f_t>& settings_;
 };
 }  // namespace cuopt::linear_programming::detail

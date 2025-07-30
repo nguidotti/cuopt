@@ -44,6 +44,8 @@ class pdhg_solver_t {
   rmm::device_scalar<i_t>& get_d_total_pdhg_iterations();
   rmm::device_uvector<f_t>& get_primal_solution();
   rmm::device_uvector<f_t>& get_dual_solution();
+  i_t get_primal_size() const;
+  i_t get_dual_size() const;
 
   void take_step(rmm::device_uvector<f_t>& primal_step_size,
                  rmm::device_uvector<f_t>& dual_step_size,

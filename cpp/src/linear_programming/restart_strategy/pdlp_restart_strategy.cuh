@@ -37,6 +37,8 @@
 
 #include <raft/core/device_span.hpp>
 
+#include <thrust/universal_vector.h>
+
 namespace cuopt::linear_programming::detail {
 void set_restart_hyper_parameters(rmm::cuda_stream_view stream_view);
 template <typename i_t, typename f_t>
@@ -106,7 +108,7 @@ class pdlp_restart_strategy_t {
                           bool batch_mode);
 
   // Compute kkt score on passed argument using the container tmp_kkt score and stream view
-  f_t compute_kkt_score(const rmm::device_uvector<f_t>& l2_primal_residual,
+  std::pair<f_t, i_t> compute_kkt_score(const rmm::device_uvector<f_t>& l2_primal_residual,
                         const rmm::device_uvector<f_t>& l2_dual_residual,
                         const rmm::device_uvector<f_t>& gap,
                         const rmm::device_uvector<f_t>& primal_weight);
@@ -315,8 +317,10 @@ class pdlp_restart_strategy_t {
   const rmm::device_scalar<f_t> reusable_device_scalar_value_0_;
   const rmm::device_scalar<i_t> reusable_device_scalar_value_0_i_t_;
   const rmm::device_scalar<f_t> reusable_device_scalar_value_neg_1_;
+
   // Used to store temporarily on the device the kkt scores before host retrival
-  rmm::device_scalar<f_t> tmp_kkt_score_;
+  thrust::universal_host_pinned_vector<f_t> tmp_kkt_score_;
+
   rmm::device_scalar<f_t> reusable_device_scalar_1_;
   rmm::device_scalar<f_t> reusable_device_scalar_2_;
   rmm::device_scalar<f_t> reusable_device_scalar_3_;
