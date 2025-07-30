@@ -218,7 +218,7 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_step_sizes(
       <<<num_blocks, block_size, 0, stream_view_>>>(this->view(),
                                   make_span(primal_step_size),
                                   make_span(dual_step_size),
-                                  pdhg_solver.get_d_total_pdhg_iterations().data(),
+                                  pdhg_solver.get_d_total_pdhg_iterations(),
                                   (batch_mode_ ? (0 + 3)/*@@*/ : 1));
     graph_.end_capture(total_pdlp_iterations);
   }

@@ -67,9 +67,9 @@ pdhg_solver_t<i_t, f_t>::pdhg_solver_t(raft::handle_t const* handle_ptr,
 }
 
 template <typename i_t, typename f_t>
-rmm::device_scalar<i_t>& pdhg_solver_t<i_t, f_t>::get_d_total_pdhg_iterations()
+i_t* pdhg_solver_t<i_t, f_t>::get_d_total_pdhg_iterations()
 {
-  return d_total_pdhg_iterations_;
+  return d_total_pdhg_iterations_.data();
 }
 
 template <typename i_t, typename f_t>
@@ -82,6 +82,19 @@ template <typename i_t, typename f_t>
 i_t pdhg_solver_t<i_t, f_t>::get_dual_size() const
 {
   return dual_size_h_;
+}
+
+template <typename i_t, typename f_t>
+void pdhg_solver_t<i_t, f_t>::set_total_pdhg_iterations(i_t total_pdhg_iterations)
+{
+  total_pdhg_iterations_ = total_pdhg_iterations;
+  d_total_pdhg_iterations_.set_value_async(total_pdhg_iterations, stream_view_);
+}
+
+template <typename i_t, typename f_t>
+i_t pdhg_solver_t<i_t, f_t>::get_total_pdhg_iterations() const
+{
+  return total_pdhg_iterations_;
 }
 
 template <typename i_t, typename f_t>

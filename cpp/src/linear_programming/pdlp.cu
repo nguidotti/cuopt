@@ -147,10 +147,8 @@ pdlp_solver_t<i_t, f_t>::pdlp_solver_t(problem_t<i_t, f_t>& op_problem,
     initial_step_size_     = settings.get_pdlp_warm_start_data().initial_step_size_;
     initial_primal_weight_ = settings.get_pdlp_warm_start_data().initial_primal_weight_;
     total_pdlp_iterations_ = settings.get_pdlp_warm_start_data().total_pdlp_iterations_;
-    pdhg_solver_.total_pdhg_iterations_ =
-      settings.get_pdlp_warm_start_data().total_pdhg_iterations_;
-    pdhg_solver_.get_d_total_pdhg_iterations().set_value_async(
-      settings.get_pdlp_warm_start_data().total_pdhg_iterations_, stream_view_);
+    pdhg_solver_.set_total_pdhg_iterations(
+      settings.get_pdlp_warm_start_data().total_pdhg_iterations_);
     restart_strategy_.last_candidate_kkt_score =
       settings.get_pdlp_warm_start_data().last_candidate_kkt_score_;
     restart_strategy_.last_restart_kkt_score =
@@ -545,7 +543,7 @@ pdlp_warm_start_data_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::get_filled_warmed_star
     get_primal_weight_h(),
     get_step_size_h(),
     total_pdlp_iterations_,
-    pdhg_solver_.total_pdhg_iterations_,
+    pdhg_solver_.get_total_pdhg_iterations(),
     restart_strategy_.last_candidate_kkt_score,
     restart_strategy_.last_restart_kkt_score,
     restart_strategy_.weighted_average_solution_.sum_primal_solution_weights_.element(0, stream_view_), // TODO handle batch
@@ -1032,10 +1030,10 @@ void pdlp_solver_t<i_t, f_t>::update_primal_dual_solutions(
       }
 
       // Compute an initial step size
-      ++pdhg_solver_.total_pdhg_iterations_;  // Fake a first initial PDHG step, else it will break
+      pdhg_solver_.set_total_pdhg_iterations(pdhg_solver_.get_total_pdhg_iterations() + 1);  // Fake a first initial PDHG step, else it will break
                                               // the computation
       step_size_strategy_.compute_step_sizes(pdhg_solver_, primal_step_size_, dual_step_size_, 0);
-      --pdhg_solver_.total_pdhg_iterations_;
+      pdhg_solver_.set_total_pdhg_iterations(pdhg_solver_.get_total_pdhg_iterations() - 1);
 
       // Else scale after computing initial step size
       if (pdlp_hyper_params::compute_initial_step_size_before_scaling) {
@@ -1117,8 +1115,7 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(
   if (initial_primal_weight_.has_value())
     primal_weight_.set_element_async(0, initial_primal_weight_.value(), stream_view_);
   if (initial_k_.has_value()) {
-    pdhg_solver_.total_pdhg_iterations_ = initial_k_.value();
-    pdhg_solver_.get_d_total_pdhg_iterations().set_value_async(initial_k_.value(), stream_view_);
+    pdhg_solver_.set_total_pdhg_iterations(initial_k_.value());
   }
 
   // Only the primal_weight_ and step_size_ variables are initialized during the initial phase
@@ -1439,7 +1436,7 @@ f_t pdlp_solver_t<i_t, f_t>::get_step_size_h() const
 template <typename i_t, typename f_t>
 i_t pdlp_solver_t<i_t, f_t>::get_total_pdhg_iterations() const
 {
-  return pdhg_solver_.total_pdhg_iterations_;
+  return pdhg_solver_.get_total_pdhg_iterations();
 }
 
 template <typename i_t, typename f_t>
