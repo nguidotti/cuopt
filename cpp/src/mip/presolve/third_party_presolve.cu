@@ -118,7 +118,6 @@ papilo::Problem<f_t> build_papilo_problem(const optimization_problem_t<i_t, f_t>
     if (h_var_lb[i] == -std::numeric_limits<f_t>::infinity()) { builder.setColLb(i, 0); }
     if (h_var_ub[i] == std::numeric_limits<f_t>::infinity()) { builder.setColUb(i, 0); }
   }
-
   return builder.build();
 }
 
@@ -235,7 +234,8 @@ void set_presolve_methods(papilo::Presolve<f_t>& presolver, problem_category_t c
   presolver.addPresolveMethod(uptr(new papilo::SimpleProbing<f_t>()));
   presolver.addPresolveMethod(uptr(new papilo::ParallelRowDetection<f_t>()));
   presolver.addPresolveMethod(uptr(new papilo::ParallelColDetection<f_t>()));
-  presolver.addPresolveMethod(uptr(new papilo::SingletonStuffing<f_t>()));
+  // FIXME: Postsolve fails with this method
+  //  presolver.addPresolveMethod(uptr(new papilo::SingletonStuffing<f_t>()));
   presolver.addPresolveMethod(uptr(new papilo::DualFix<f_t>()));
   presolver.addPresolveMethod(uptr(new papilo::SimplifyInequalities<f_t>()));
 
