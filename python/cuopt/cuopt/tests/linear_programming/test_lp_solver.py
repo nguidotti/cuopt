@@ -97,6 +97,8 @@ def test_parser_and_solver():
 
     settings = solver_settings.SolverSettings()
     settings.set_optimality_tolerance(1e-2)
+    # Reduces to an empty problem
+    settings.set_parameter(CUOPT_PRESOLVE, False)
     solution = solver.Solve(data_model_obj, settings)
     assert solution.get_termination_reason() == "Optimal"
 
@@ -432,6 +434,8 @@ def test_parse_var_names():
 
     settings = solver_settings.SolverSettings()
     settings.set_parameter(CUOPT_METHOD, SolverMethod.PDLP)
+    # To match original dict
+    settings.set_parameter(CUOPT_PRESOLVE, False)
     solution = solver.Solve(data_model_obj, settings)
 
     expected_dict = {
