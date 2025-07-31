@@ -42,7 +42,7 @@ optimization_problem_t<i_t, f_t>::optimization_problem_t(raft::handle_t const* h
     n_constraints_{0},
     A_{0, stream_view_},
     A_indices_{0, stream_view_},
-    A_offsets_{0, stream_view_},
+    A_offsets_{1, stream_view_},
     b_{0, stream_view_},
     c_{0, stream_view_},
     variable_lower_bounds_{0, stream_view_},
@@ -55,6 +55,7 @@ optimization_problem_t<i_t, f_t>::optimization_problem_t(raft::handle_t const* h
     row_names_{}
 {
   raft::common::nvtx::range fun_scope("optimization problem construction");
+  A_offsets_.set_element_to_zero_async(0, stream_view_);
 }
 
 template <typename i_t, typename f_t>
