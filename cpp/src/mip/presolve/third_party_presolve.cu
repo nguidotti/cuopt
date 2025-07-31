@@ -34,7 +34,10 @@ papilo::Problem<f_t> build_papilo_problem(const optimization_problem_t<i_t, f_t>
   const i_t num_rows = op_problem.get_n_constraints();
   const i_t nnz      = op_problem.get_nnz();
 
-  // Set problem dimensions in builder
+  cuopt_expects(op_problem.get_sense() == false,
+                error_type_t::ValidationError,
+                "Papilo does not support maximization problems");
+
   builder.reserve(nnz, num_rows, num_cols);
 
   // Get problem data from optimization problem
@@ -44,6 +47,8 @@ papilo::Problem<f_t> build_papilo_problem(const optimization_problem_t<i_t, f_t>
   const auto& obj_coeffs   = op_problem.get_objective_coefficients();
   const auto& var_lb       = op_problem.get_variable_lower_bounds();
   const auto& var_ub       = op_problem.get_variable_upper_bounds();
+  const auto& bounds       = op_problem.get_constraint_bounds();
+  const auto& row_types    = op_problem.get_row_types();
   const auto& constr_lb    = op_problem.get_constraint_lower_bounds();
   const auto& constr_ub    = op_problem.get_constraint_upper_bounds();
   const auto& var_types    = op_problem.get_variable_types();
@@ -55,9 +60,27 @@ papilo::Problem<f_t> build_papilo_problem(const optimization_problem_t<i_t, f_t>
   std::vector<f_t> h_obj_coeffs   = cuopt::host_copy(obj_coeffs);
   std::vector<f_t> h_var_lb       = cuopt::host_copy(var_lb);
   std::vector<f_t> h_var_ub       = cuopt::host_copy(var_ub);
+  std::vector<f_t> h_bounds       = cuopt::host_copy(bounds);
+  std::vector<char> h_row_types   = cuopt::host_copy(row_types);
   std::vector<f_t> h_constr_lb    = cuopt::host_copy(constr_lb);
   std::vector<f_t> h_constr_ub    = cuopt::host_copy(constr_ub);
   std::vector<var_t> h_var_types  = cuopt::host_copy(var_types);
+
+  auto constr_bounds_empty = h_constr_lb.empty() && h_constr_ub.empty();
+  if (constr_bounds_empty) {
+    for (size_t i = 0; i < h_row_types.size(); ++i) {
+      if (h_row_types[i] == 'L') {
+        h_constr_lb.push_back(-std::numeric_limits<f_t>::infinity());
+        h_constr_ub.push_back(h_bounds[i]);
+      } else if (h_row_types[i] == 'G') {
+        h_constr_lb.push_back(h_bounds[i]);
+        h_constr_ub.push_back(std::numeric_limits<f_t>::infinity());
+      } else if (h_row_types[i] == 'E') {
+        h_constr_lb.push_back(h_bounds[i]);
+        h_constr_ub.push_back(h_bounds[i]);
+      }
+    }
+  }
 
   builder.setNumCols(num_cols);
   builder.setNumRows(num_rows);
@@ -65,18 +88,22 @@ papilo::Problem<f_t> build_papilo_problem(const optimization_problem_t<i_t, f_t>
   builder.setObjAll(h_obj_coeffs);
   builder.setObjOffset(op_problem.get_objective_offset());
 
-  builder.setColLbAll(h_var_lb);
-  builder.setColUbAll(h_var_ub);
+  if (!h_var_lb.empty() && !h_var_ub.empty()) {
+    builder.setColLbAll(h_var_lb);
+    builder.setColUbAll(h_var_ub);
+  }
 
-  for (i_t i = 0; i < num_cols; ++i) {
+  for (size_t i = 0; i < h_var_types.size(); ++i) {
     builder.setColIntegral(i, h_var_types[i] == var_t::INTEGER);
   }
 
-  builder.setRowLhsAll(h_constr_lb);
-  builder.setRowRhsAll(h_constr_ub);
+  if (!h_constr_lb.empty() && !h_constr_ub.empty()) {
+    builder.setRowLhsAll(h_constr_lb);
+    builder.setRowRhsAll(h_constr_ub);
+  }
 
   // Add constraints row by row
-  for (i_t i = 0; i < num_rows; ++i) {
+  for (size_t i = 0; i < h_constr_lb.size(); ++i) {
     // Get row entries
     i_t row_start   = h_offsets[i];
     i_t row_end     = h_offsets[i + 1];
@@ -89,13 +116,12 @@ papilo::Problem<f_t> build_papilo_problem(const optimization_problem_t<i_t, f_t>
     if (h_constr_ub[i] == std::numeric_limits<f_t>::infinity()) { builder.setRowRhs(i, 0); }
   }
 
-  for (i_t i = 0; i < num_cols; ++i) {
+  for (size_t i = 0; i < h_var_lb.size(); ++i) {
     builder.setColLbInf(i, h_var_lb[i] == -std::numeric_limits<f_t>::infinity());
     builder.setColUbInf(i, h_var_ub[i] == std::numeric_limits<f_t>::infinity());
     if (h_var_lb[i] == -std::numeric_limits<f_t>::infinity()) { builder.setColLb(i, 0); }
     if (h_var_ub[i] == std::numeric_limits<f_t>::infinity()) { builder.setColUb(i, 0); }
   }
-
   return builder.build();
 }
 
@@ -104,6 +130,7 @@ optimization_problem_t<i_t, f_t> build_optimization_problem(
   papilo::Problem<f_t> const& papilo_problem, raft::handle_t const* handle_ptr)
 {
   optimization_problem_t<i_t, f_t> op_problem(handle_ptr);
+  if (papilo_problem.getNRows() == 0 && papilo_problem.getNCols() == 0) { return op_problem; }
 
   auto obj = papilo_problem.getObjective();
   op_problem.set_objective_coefficients(obj.coefficients.data(), obj.coefficients.size());
@@ -204,14 +231,15 @@ void set_presolve_methods(papilo::Presolve<f_t>& presolver, problem_category_t c
   // fast presolvers
   presolver.addPresolveMethod(uptr(new papilo::SingletonCols<f_t>()));
   presolver.addPresolveMethod(uptr(new papilo::CoefficientStrengthening<f_t>()));
-  presolver.addPresolveMethod(uptr(new papilo::ConstraintPropagation<f_t>()));
+  // presolver.addPresolveMethod(uptr(new papilo::ConstraintPropagation<f_t>()));
 
   // medium presolvers
   presolver.addPresolveMethod(uptr(new papilo::FixContinuous<f_t>()));
   presolver.addPresolveMethod(uptr(new papilo::SimpleProbing<f_t>()));
   presolver.addPresolveMethod(uptr(new papilo::ParallelRowDetection<f_t>()));
   presolver.addPresolveMethod(uptr(new papilo::ParallelColDetection<f_t>()));
-  presolver.addPresolveMethod(uptr(new papilo::SingletonStuffing<f_t>()));
+  // FIXME: Postsolve fails with this method
+  //  presolver.addPresolveMethod(uptr(new papilo::SingletonStuffing<f_t>()));
   presolver.addPresolveMethod(uptr(new papilo::DualFix<f_t>()));
   presolver.addPresolveMethod(uptr(new papilo::SimplifyInequalities<f_t>()));
 
@@ -234,9 +262,11 @@ void set_presolve_options(papilo::Presolve<f_t>& presolver,
                           f_t absolute_tolerance,
                           double time_limit)
 {
-  presolver.getPresolveOptions().tlim    = time_limit;
-  presolver.getPresolveOptions().epsilon = absolute_tolerance;
-  presolver.getPresolveOptions().feastol = absolute_tolerance;
+  presolver.getPresolveOptions().tlim                            = time_limit;
+  presolver.getPresolveOptions().epsilon                         = absolute_tolerance;
+  presolver.getPresolveOptions().feastol                         = absolute_tolerance;
+  presolver.getPresolveOptions().threads                         = 1;
+  presolver.getPresolveOptions().constraint_propagation_parallel = 0;
   if (category == problem_category_t::LP) {
     presolver.getPresolveOptions().componentsmaxint = -1;
     presolver.getPresolveOptions().detectlindep     = 0;

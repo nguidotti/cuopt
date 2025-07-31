@@ -355,6 +355,7 @@ static optimization_problem_solution_t<i_t, f_t> run_pdlp_solver(
   const std::chrono::high_resolution_clock::time_point& start_time,
   bool is_batch_mode)
 {
+  std::cout << "problem.n_constraints: " << problem.n_constraints << std::endl;
   if (problem.n_constraints == 0) {
     CUOPT_LOG_INFO("No constraints in the problem: PDLP can't be run, use Dual Simplex instead.");
     return optimization_problem_solution_t<i_t, f_t>{pdlp_termination_status_t::NumericalError,
@@ -564,8 +565,8 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
                                                    bool is_batch_mode)
 {
   try {
-    const f_t time_limit =
-      settings.time_limit == 0 ? std::numeric_limits<f_t>::max() : settings.time_limit;
+    // const f_t time_limit =
+    // settings.time_limit == 0 ? std::numeric_limits<f_t>::max() : settings.time_limit;
 
     // Create log stream for file logging and add it to default logger
     init_logger_t log(settings.log_file, settings.log_to_console);
@@ -583,7 +584,7 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
       problem_checking_t<i_t, f_t>::check_initial_solution_representation(op_problem, settings);
     }
 
-    auto timer = cuopt::timer_t(time_limit);
+    auto presolve_timer = cuopt::timer_t(settings.time_limit);
     detail::problem_t<i_t, f_t> problem(op_problem);
 
     if (settings.user_problem_file != "") {
@@ -593,11 +594,15 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
 
     double presolve_time = 0.0;
     std::unique_ptr<detail::third_party_presolve_t<i_t, f_t>> presolver;
+    auto run_presolve = settings.presolve;
+    run_presolve      = run_presolve && op_problem.get_sense() == false;
+    run_presolve = run_presolve && settings.get_pdlp_warm_start_data().total_pdlp_iterations_ == -1;
+    if (!run_presolve) { CUOPT_LOG_INFO("Presolve is disabled, skipping"); }
 
-    if (settings.presolve) {
+    if (run_presolve) {
       // allocate no more than 10% of the time limit to presolve.
       // Note that this is not the presolve time, but the time limit for presolve.
-      const double presolve_time_limit = 0.1 * time_limit;
+      const double presolve_time_limit = 0.1 * settings.time_limit;
       presolver            = std::make_unique<detail::third_party_presolve_t<i_t, f_t>>();
       auto reduced_problem = presolver->apply(op_problem,
                                               cuopt::linear_programming::problem_category_t::LP,
@@ -608,7 +613,7 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
           pdlp_termination_status_t::PrimalInfeasible, op_problem.get_handle_ptr()->get_stream());
       }
       problem       = detail::problem_t<i_t, f_t>(reduced_problem);
-      presolve_time = timer.elapsed_time();
+      presolve_time = presolve_timer.elapsed_time();
       CUOPT_LOG_INFO("Third party presolve time: %f", presolve_time);
     }
 
@@ -635,8 +640,7 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
       cuopt::device_copy(solution.get_dual_solution(), op_problem.get_handle_ptr()->get_stream());
     auto reduced_costs =
       cuopt::device_copy(solution.get_reduced_cost(), op_problem.get_handle_ptr()->get_stream());
-    if (settings.presolve) {
-      // Dual postsolve is not supported yet in Papilo.
+    if (run_presolve) {
       presolver->undo(primal_solution,
                       dual_solution,
                       reduced_costs,
@@ -652,13 +656,12 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
     optimization_problem_solution_t<i_t, f_t> sol(primal_solution,
                                                   dual_solution,
                                                   reduced_costs,
+                                                  solution.get_pdlp_warm_start_data(),
                                                   op_problem.get_objective_name(),
                                                   op_problem.get_variable_names(),
                                                   op_problem.get_row_names(),
                                                   full_stats,
-                                                  solution.get_termination_status(),
-                                                  op_problem.get_handle_ptr(),
-                                                  true);
+                                                  solution.get_termination_status());
 
     if (settings.sol_file != "") {
       CUOPT_LOG_INFO("Writing solution to file %s", settings.sol_file.c_str());
