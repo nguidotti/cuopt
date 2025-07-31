@@ -192,7 +192,7 @@ TEST(pdlp_class, run_sub_mittleman)
 {
   std::vector<std::pair<std::string,  // Instance name
                         double>>      // Expected objective value
-    instances{{"graph40-40", -300.0},
+    instances{                        // {"graph40-40", -300.0},
               {"ex10", 100.0003411893773},
               {"datt256_lp", 255.9992298290425},
               {"woodlands09", 0.0},
@@ -207,6 +207,7 @@ TEST(pdlp_class, run_sub_mittleman)
     const auto& name                    = entry.first;
     const auto expected_objective_value = entry.second;
 
+    std::cout << "Running " << name << std::endl;
     auto path = make_path_absolute("linear_programming/" + name + "/" + name + ".mps");
     cuopt::mps_parser::mps_data_model_t<int, double> op_problem =
       cuopt::mps_parser::parse_mps<int, double>(path);

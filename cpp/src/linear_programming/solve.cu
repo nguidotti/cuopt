@@ -634,41 +634,42 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
 
     auto solution = solve_lp_with_method(op_problem, problem, settings, is_batch_mode);
 
-    auto primal_solution =
-      cuopt::device_copy(solution.get_primal_solution(), op_problem.get_handle_ptr()->get_stream());
-    auto dual_solution =
-      cuopt::device_copy(solution.get_dual_solution(), op_problem.get_handle_ptr()->get_stream());
-    auto reduced_costs =
-      cuopt::device_copy(solution.get_reduced_cost(), op_problem.get_handle_ptr()->get_stream());
     if (run_presolve) {
+      auto primal_solution = cuopt::device_copy(solution.get_primal_solution(),
+                                                op_problem.get_handle_ptr()->get_stream());
+      auto dual_solution =
+        cuopt::device_copy(solution.get_dual_solution(), op_problem.get_handle_ptr()->get_stream());
+      auto reduced_costs =
+        cuopt::device_copy(solution.get_reduced_cost(), op_problem.get_handle_ptr()->get_stream());
+
       presolver->undo(primal_solution,
                       dual_solution,
                       reduced_costs,
                       cuopt::linear_programming::problem_category_t::LP,
                       op_problem.get_handle_ptr()->get_stream());
+
+      auto full_stats = solution.get_additional_termination_information();
+      // add third party presolve time to cuopt presolve time
+      full_stats.solve_time += presolve_time;
+
+      // Create a new solution with the full problem solution
+      solution = optimization_problem_solution_t<i_t, f_t>(primal_solution,
+                                                           dual_solution,
+                                                           reduced_costs,
+                                                           solution.get_pdlp_warm_start_data(),
+                                                           op_problem.get_objective_name(),
+                                                           op_problem.get_variable_names(),
+                                                           op_problem.get_row_names(),
+                                                           full_stats,
+                                                           solution.get_termination_status());
     }
-
-    auto full_stats = solution.get_additional_termination_information();
-    // add third party presolve time to cuopt presolve time
-    full_stats.solve_time += presolve_time;
-
-    // Create a new solution with the full problem solution
-    optimization_problem_solution_t<i_t, f_t> sol(primal_solution,
-                                                  dual_solution,
-                                                  reduced_costs,
-                                                  solution.get_pdlp_warm_start_data(),
-                                                  op_problem.get_objective_name(),
-                                                  op_problem.get_variable_names(),
-                                                  op_problem.get_row_names(),
-                                                  full_stats,
-                                                  solution.get_termination_status());
 
     if (settings.sol_file != "") {
       CUOPT_LOG_INFO("Writing solution to file %s", settings.sol_file.c_str());
-      sol.write_to_sol_file(settings.sol_file, op_problem.get_handle_ptr()->get_stream());
+      solution.write_to_sol_file(settings.sol_file, op_problem.get_handle_ptr()->get_stream());
     }
 
-    return sol;
+    return solution;
   } catch (const cuopt::logic_error& e) {
     CUOPT_LOG_ERROR("Error in solve_lp: %s", e.what());
     return optimization_problem_solution_t<i_t, f_t>{e, op_problem.get_handle_ptr()->get_stream()};

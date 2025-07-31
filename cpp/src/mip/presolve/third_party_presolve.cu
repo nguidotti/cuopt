@@ -231,7 +231,7 @@ void set_presolve_methods(papilo::Presolve<f_t>& presolver, problem_category_t c
   // fast presolvers
   presolver.addPresolveMethod(uptr(new papilo::SingletonCols<f_t>()));
   presolver.addPresolveMethod(uptr(new papilo::CoefficientStrengthening<f_t>()));
-  // presolver.addPresolveMethod(uptr(new papilo::ConstraintPropagation<f_t>()));
+  presolver.addPresolveMethod(uptr(new papilo::ConstraintPropagation<f_t>()));
 
   // medium presolvers
   presolver.addPresolveMethod(uptr(new papilo::FixContinuous<f_t>()));
@@ -239,7 +239,7 @@ void set_presolve_methods(papilo::Presolve<f_t>& presolver, problem_category_t c
   presolver.addPresolveMethod(uptr(new papilo::ParallelRowDetection<f_t>()));
   presolver.addPresolveMethod(uptr(new papilo::ParallelColDetection<f_t>()));
   // FIXME: Postsolve fails with this method
-  //  presolver.addPresolveMethod(uptr(new papilo::SingletonStuffing<f_t>()));
+  // presolver.addPresolveMethod(uptr(new papilo::SingletonStuffing<f_t>()));
   presolver.addPresolveMethod(uptr(new papilo::DualFix<f_t>()));
   presolver.addPresolveMethod(uptr(new papilo::SimplifyInequalities<f_t>()));
 
@@ -248,12 +248,12 @@ void set_presolve_methods(papilo::Presolve<f_t>& presolver, problem_category_t c
   presolver.addPresolveMethod(uptr(new papilo::DominatedCols<f_t>()));
   presolver.addPresolveMethod(uptr(new papilo::Probing<f_t>()));
 
-  if (category == problem_category_t::MIP) {
-    presolver.addPresolveMethod(uptr(new papilo::DualInfer<f_t>));
-    presolver.addPresolveMethod(uptr(new papilo::SimpleSubstitution<f_t>()));
-    presolver.addPresolveMethod(uptr(new papilo::Sparsify<f_t>()));
-    presolver.addPresolveMethod(uptr(new papilo::Substitution<f_t>()));
-  }
+  // if (category == problem_category_t::MIP) {
+  presolver.addPresolveMethod(uptr(new papilo::DualInfer<f_t>));
+  presolver.addPresolveMethod(uptr(new papilo::SimpleSubstitution<f_t>()));
+  presolver.addPresolveMethod(uptr(new papilo::Sparsify<f_t>()));
+  presolver.addPresolveMethod(uptr(new papilo::Substitution<f_t>()));
+  // }
 }
 
 template <typename f_t>
@@ -262,15 +262,13 @@ void set_presolve_options(papilo::Presolve<f_t>& presolver,
                           f_t absolute_tolerance,
                           double time_limit)
 {
-  presolver.getPresolveOptions().tlim                            = time_limit;
-  presolver.getPresolveOptions().epsilon                         = absolute_tolerance;
-  presolver.getPresolveOptions().feastol                         = absolute_tolerance;
-  presolver.getPresolveOptions().threads                         = 1;
-  presolver.getPresolveOptions().constraint_propagation_parallel = 0;
-  if (category == problem_category_t::LP) {
-    presolver.getPresolveOptions().componentsmaxint = -1;
-    presolver.getPresolveOptions().detectlindep     = 0;
-  }
+  presolver.getPresolveOptions().tlim    = time_limit;
+  presolver.getPresolveOptions().epsilon = absolute_tolerance;
+  presolver.getPresolveOptions().feastol = absolute_tolerance;
+  // if (category == problem_category_t::LP) {
+  //   presolver.getPresolveOptions().componentsmaxint = -1;
+  //   presolver.getPresolveOptions().detectlindep     = 0;
+  // }
 }
 
 template <typename i_t, typename f_t>
@@ -320,11 +318,11 @@ void third_party_presolve_t<i_t, f_t>::undo(rmm::device_uvector<f_t>& primal_sol
 
   papilo::Solution<f_t> reduced_sol(primal_sol_vec_h);
   papilo::Solution<f_t> full_sol;
-  if (category == problem_category_t::LP) {
-    reduced_sol.type         = papilo::SolutionType::kPrimalDual;
-    reduced_sol.dual         = dual_sol_vec_h;
-    reduced_sol.reducedCosts = reduced_costs_vec_h;
-  }
+  // if (category == problem_category_t::LP) {
+  //   reduced_sol.type         = papilo::SolutionType::kPrimalDual;
+  //   reduced_sol.dual         = dual_sol_vec_h;
+  //   reduced_sol.reducedCosts = reduced_costs_vec_h;
+  // }
 
   papilo::Message Msg{};
   Msg.setVerbosityLevel(papilo::VerbosityLevel::kQuiet);
@@ -335,12 +333,17 @@ void third_party_presolve_t<i_t, f_t>::undo(rmm::device_uvector<f_t>& primal_sol
   check_postsolve_status(status);
 
   primal_solution.resize(full_sol.primal.size(), stream_view);
-  dual_solution.resize(full_sol.dual.size(), stream_view);
-  reduced_costs.resize(full_sol.reducedCosts.size(), stream_view);
+  dual_solution.resize(full_sol.primal.size(), stream_view);
+  reduced_costs.resize(full_sol.primal.size(), stream_view);
   raft::copy(primal_solution.data(), full_sol.primal.data(), full_sol.primal.size(), stream_view);
-  raft::copy(dual_solution.data(), full_sol.dual.data(), full_sol.dual.size(), stream_view);
-  raft::copy(
-    reduced_costs.data(), full_sol.reducedCosts.data(), full_sol.reducedCosts.size(), stream_view);
+  thrust::fill(rmm::exec_policy(stream_view),
+               dual_solution.data(),
+               dual_solution.data() + dual_solution.size(),
+               std::numeric_limits<f_t>::signaling_NaN());
+  thrust::fill(rmm::exec_policy(stream_view),
+               reduced_costs.data(),
+               reduced_costs.data() + reduced_costs.size(),
+               std::numeric_limits<f_t>::signaling_NaN());
 }
 
 #if MIP_INSTANTIATE_FLOAT
