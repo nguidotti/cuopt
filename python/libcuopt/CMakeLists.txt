@@ -46,27 +46,6 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(argparse)
 
-# Try to find Boost in the system
-find_package(Boost 1.65 QUIET COMPONENTS system filesystem thread)
-
-if(NOT Boost_FOUND)
-  message(STATUS "Boost not found in system, trying alternative locations...")
-
-  # Try common Boost installation paths
-  set(Boost_USE_STATIC_LIBS OFF)
-  set(Boost_USE_MULTITHREADED ON)
-  set(Boost_USE_STATIC_RUNTIME OFF)
-
-  # Try to find Boost again with more options
-  find_package(Boost 1.65 COMPONENTS system filesystem thread)
-
-  if(NOT Boost_FOUND)
-    message(FATAL_ERROR "Boost not found. Please install Boost 1.65 or later with components: system, filesystem, thread")
-  endif()
-else()
-  message(STATUS "Using system Boost installation")
-endif()
-
 set(BUILD_TESTS OFF)
 set(BUILD_BENCHMARKS OFF)
 set(CUOPT_BUILD_TESTUTIL OFF)
