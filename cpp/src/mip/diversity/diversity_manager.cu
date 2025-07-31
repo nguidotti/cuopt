@@ -28,6 +28,7 @@
 
 constexpr bool from_dir    = false;
 constexpr bool fj_only_run = false;
+constexpr bool fp_only_run = true;
 
 namespace cuopt::linear_programming::detail {
 
@@ -293,7 +294,7 @@ void diversity_manager_t<i_t, f_t>::generate_initial_solutions()
                   population.var_threshold);
   population.print();
   auto new_sol_vector = population.get_external_solutions();
-  if (!fj_only_run) { recombine_and_ls_with_all(new_sol_vector); }
+  if (!fj_only_run && !fp_only_run) { recombine_and_ls_with_all(new_sol_vector); }
 }
 
 template <typename i_t, typename f_t>
@@ -384,6 +385,16 @@ void diversity_manager_t<i_t, f_t>::run_fj_alone(solution_t<i_t, f_t>& solution)
 
 // returns the best feasible solution
 template <typename i_t, typename f_t>
+void diversity_manager_t<i_t, f_t>::run_fp_alone(solution_t<i_t, f_t>& solution)
+{
+  CUOPT_LOG_INFO("Running FP alone!");
+  solution.round_nearest();
+  ls.run_fp(solution, timer, false);
+  CUOPT_LOG_INFO("FP alone finished!");
+}
+
+// returns the best feasible solution
+template <typename i_t, typename f_t>
 solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
 {
   population.timer        = timer;
@@ -418,7 +429,7 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
     std::min(max_time_on_probing, time_limit * time_ratio_of_probing_cache);
   timer_t probing_timer{time_for_probing_cache};
   if (check_b_b_preemption()) { return population.best_feasible(); }
-  if (!fj_only_run) {
+  if (!fj_only_run && !fp_only_run) {
     compute_probing_cache(ls.constraint_prop.bounds_update, *problem_ptr, probing_timer);
   }
   // careful, assign the correct probing cache
@@ -436,7 +447,7 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
   }  // Mutex is unlocked here
   if (bb_thread_solution_exists) {
     ls.lp_optimal_exists = true;
-  } else if (!fj_only_run) {
+  } else if (!fj_only_run && !fp_only_run) {
     relaxed_lp_settings_t lp_settings;
     lp_settings.time_limit            = lp_time_limit;
     lp_settings.tolerance             = context.settings.tolerances.absolute_tolerance;
@@ -477,8 +488,10 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
   }
   population.allocate_solutions();
   if (check_b_b_preemption()) { return population.best_feasible(); }
-  // generate a population with 5 solutions(FP+FJ)
-  generate_initial_solutions();
+  if (!fp_only_run) {
+    // generate a population with 5 solutions(FP+FJ)
+    generate_initial_solutions();
+  }
   if (context.settings.benchmark_info_ptr != nullptr) {
     context.settings.benchmark_info_ptr->objective_of_initial_population =
       population.best_feasible().get_user_objective();
@@ -486,6 +499,11 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
 
   if (fj_only_run) {
     run_fj_alone(population.best_feasible());
+    return population.best_feasible();
+  }
+
+  if (fp_only_run) {
+    run_fp_alone(population.best_feasible());
     return population.best_feasible();
   }
 

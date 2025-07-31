@@ -381,7 +381,6 @@ void feasibility_pump_t<i_t, f_t>::reset()
   total_fp_time_until_cycle = 0;
   fp_fj_cycle_time_begin    = timer.remaining_time();
   max_n_of_integers         = 0;
-  run_intensive_restart     = false;
   config.alpha              = default_alpha;
   last_distances.resize(0);
 }

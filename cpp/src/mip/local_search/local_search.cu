@@ -140,7 +140,6 @@ bool local_search_t<i_t, f_t>::run_fj_until_timer(solution_t<i_t, f_t>& solution
   return is_feasible;
 }
 
-// SIMULATED ANNEALING not fully implemented yet, placeholder
 template <typename i_t, typename f_t>
 bool local_search_t<i_t, f_t>::run_fj_annealing(solution_t<i_t, f_t>& solution,
                                                 timer_t timer,
@@ -325,26 +324,99 @@ void local_search_t<i_t, f_t>::resize_vectors(problem_t<i_t, f_t>& problem,
 }
 
 template <typename i_t, typename f_t>
-bool local_search_t<i_t, f_t>::run_fp(solution_t<i_t, f_t>& solution, timer_t timer)
+bool local_search_t<i_t, f_t>::run_fp(solution_t<i_t, f_t>& solution,
+                                      timer_t timer,
+                                      bool feasibility_run)
 {
   const i_t n_fp_iterations = 1000000;
   bool is_feasible          = false;
+  double best_objective     = std::numeric_limits<double>::max();
+  rmm::device_uvector<f_t> best_solution(solution.assignment, solution.handle_ptr->get_stream());
   for (i_t i = 0; i < n_fp_iterations && !timer.check_time_limit(); ++i) {
-    if (timer.check_time_limit()) { return false; }
+    if (timer.check_time_limit()) {
+      is_feasible = false;
+      break;
+    }
     CUOPT_LOG_DEBUG("fp_loop it %d", i);
     is_feasible = fp.run_single_fp_descent(solution);
     // if feasible return true
     if (is_feasible) {
-      return true;
+      if (feasibility_run) {
+        is_feasible = true;
+        break;
+      } else {
+        CUOPT_LOG_DEBUG("Found feasible in FP with obj %f. Continue with FJ!",
+                        solution.get_objective());
+        if (solution.get_objective() < best_objective) {
+          CUOPT_LOG_DEBUG("Found better feasible in FP with obj %f. Continue with FJ!",
+                          solution.get_objective());
+          best_objective = solution.get_objective();
+          raft::copy(best_solution.data(),
+                     solution.assignment.data(),
+                     solution.assignment.size(),
+                     solution.handle_ptr->get_stream());
+        }
+        fp.config.alpha = default_alpha;
+        ls_config_t<i_t, f_t> ls_config;
+        // assign current objective
+        ls_config.best_objective_of_parents = solution.get_objective();
+        ls_config.n_local_mins              = 500;
+        is_feasible                         = run_fj_annealing(solution, timer, ls_config);
+        if (is_feasible && solution.get_objective() < best_objective) {
+          raft::copy(solution.assignment.data(),
+                     best_solution.data(),
+                     solution.assignment.size(),
+                     solution.handle_ptr->get_stream());
+          best_objective = solution.get_objective();
+        }
+      }
     }
     // if not feasible, it means it is a cycle
     else {
-      if (timer.check_time_limit()) { return false; }
+      if (timer.check_time_limit()) {
+        is_feasible = false;
+        break;
+      }
       is_feasible = fp.restart_fp(solution);
-      if (is_feasible) { return true; }
+      if (is_feasible) {
+        if (feasibility_run) {
+          is_feasible = true;
+          break;
+        } else {
+          CUOPT_LOG_DEBUG("Found feasible in FP with obj %f. Continue with FJ!",
+                          solution.get_objective());
+          if (solution.get_objective() < best_objective) {
+            CUOPT_LOG_DEBUG("Found better feasible in FP with obj %f. Continue with FJ!",
+                            solution.get_objective());
+            best_objective = solution.get_objective();
+            raft::copy(best_solution.data(),
+                       solution.assignment.data(),
+                       solution.assignment.size(),
+                       solution.handle_ptr->get_stream());
+          }
+          fp.config.alpha = default_alpha;
+          ls_config_t<i_t, f_t> ls_config;
+          // assign current objective
+          ls_config.best_objective_of_parents = solution.get_objective();
+          ls_config.n_local_mins              = 500;
+          is_feasible                         = run_fj_annealing(solution, timer, ls_config);
+          if (is_feasible && solution.get_objective() < best_objective) {
+            raft::copy(solution.assignment.data(),
+                       best_solution.data(),
+                       solution.assignment.size(),
+                       solution.handle_ptr->get_stream());
+            best_objective = solution.get_objective();
+          }
+        }
+      }
     }
   }
-  return false;
+  raft::copy(solution.assignment.data(),
+             best_solution.data(),
+             solution.assignment.size(),
+             solution.handle_ptr->get_stream());
+  solution.handle_ptr->sync_stream();
+  return is_feasible;
 }
 
 template <typename i_t, typename f_t>
