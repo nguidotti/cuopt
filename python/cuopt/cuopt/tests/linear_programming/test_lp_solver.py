@@ -526,6 +526,7 @@ def test_warm_start():
     settings.set_parameter(CUOPT_PDLP_SOLVER_MODE, PDLPSolverMode.Stable2)
     settings.set_optimality_tolerance(1e-3)
     settings.set_parameter(CUOPT_INFEASIBILITY_DETECTION, False)
+    settings.set_parameter(CUOPT_PRESOLVE, False)
 
     # Solving from scratch until 1e-3
     solution = solver.Solve(data_model_obj, settings)
