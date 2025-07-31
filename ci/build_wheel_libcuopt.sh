@@ -21,20 +21,9 @@ source rapids-init-pip
 package_name="libcuopt"
 package_dir="python/libcuopt"
 
-# Install Boost
-if [ -f /etc/os-release ]; then
-    . /etc/os-release
-    if [[ "$ID" == "rocky" ]]; then
-        echo "Detected Rocky Linux. Installing Boost via dnf..."
-        dnf install -y boost-devel
-    elif [[ "$ID" == "ubuntu" ]]; then
-        echo "Detected Ubuntu. Installing Boost via apt..."
-        apt-get update
-        apt-get install -y libboost-dev
-    else
-        echo "Unknown OS: $ID. Please install Boost development libraries manually."
-        exit 1
-    fi
+# Install Boost and TBB
+ci/utils/install_boost_tbb.sh
+
 else
     echo "/etc/os-release not found. Cannot determine OS. Please install Boost development libraries manually."
     exit 1

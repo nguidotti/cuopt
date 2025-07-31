@@ -13,7 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-cmake_minimum_required(VERSION 3.26.4 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.30.4 FATAL_ERROR)
+
+# Add our custom Find modules to the module path
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/thirdparty")
 
 include(GNUInstallDirs)
 
@@ -158,7 +161,11 @@ else()
   find_package(RAFT REQUIRED)
 endif()
 
-find_package(TBB REQUIRED)
+find_package(TBB QUIET)
+
+if(NOT TBB_FOUND)
+  message(FATAL_ERROR "TBB is required but was not found. Please install the TBB development package (e.g., libtbb-dev or tbb-devel) and try again.")
+endif()
 
 FetchContent_Declare(
   papilo
@@ -257,6 +264,7 @@ target_link_libraries(cuopt
   PRIVATE
   ${CUOPT_PRIVATE_CUDA_LIBS}
   )
+
 
 # ##################################################################################################
 # - generate tests --------------------------------------------------------------------------------
