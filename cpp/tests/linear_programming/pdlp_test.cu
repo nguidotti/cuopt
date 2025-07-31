@@ -36,11 +36,6 @@
 #include <utilities/copy_helpers.hpp>
 #include <utilities/error.hpp>
 
-// Papilo includes
-#include <papilo/core/Presolve.hpp>
-#include <papilo/core/PresolveMethod.hpp>
-#include <papilo/io/MpsParser.hpp>
-
 #include <raft/sparse/detail/cusparse_macros.h>
 #include <raft/sparse/detail/cusparse_wrappers.h>
 #include <raft/core/handle.hpp>
@@ -70,303 +65,141 @@ static bool is_incorrect_objective(double reference, double objective)
   return std::abs((reference - objective) / reference) > 0.01;
 }
 
-// Function to compare cuopt and papilo models
-void compare_models(const cuopt::mps_parser::mps_data_model_t<int, double>& cuopt_model,
-                    const papilo::Problem<double>& papilo_model,
-                    const std::string& instance_name)
+TEST(pdlp_class, run_double)
 {
-  std::cout << "\n=== Comparing models for instance: " << instance_name << " ===" << std::endl;
+  const raft::handle_t handle_{};
 
-  // Problem dimensions
-  std::cout << "\n--- Problem Dimensions ---" << std::endl;
-  std::cout << "CuOpt  - Variables: " << cuopt_model.get_n_variables()
-            << ", Constraints: " << cuopt_model.get_n_constraints()
-            << ", NNZ: " << cuopt_model.get_nnz() << std::endl;
-  std::cout << "Papilo - Variables: " << papilo_model.getNCols()
-            << ", Constraints: " << papilo_model.getNRows() << std::endl;
+  auto path = make_path_absolute("linear_programming/afiro_original.mps");
+  cuopt::mps_parser::mps_data_model_t<int, double> op_problem =
+    cuopt::mps_parser::parse_mps<int, double>(path, true);
 
-  // Problem name
-  std::cout << "\n--- Problem Names ---" << std::endl;
-  std::cout << "CuOpt problem name: '" << cuopt_model.get_problem_name() << "'" << std::endl;
-  std::cout << "Papilo problem name: '" << papilo_model.getName() << "'" << std::endl;
+  auto solver_settings   = pdlp_solver_settings_t<int, double>{};
+  solver_settings.method = cuopt::linear_programming::method_t::PDLP;
 
-  // Objective properties
-  std::cout << "\n--- Objective Properties ---" << std::endl;
-  std::cout << "CuOpt  - Maximize: " << cuopt_model.get_sense()
-            << ", Offset: " << cuopt_model.get_objective_offset()
-            << ", Scaling: " << cuopt_model.get_objective_scaling_factor() << std::endl;
-  std::cout << "Papilo - Offset: " << papilo_model.getObjective().offset << std::endl;
-
-  // Print some vectors using cuopt::print
-  std::cout << "\n--- Objective Coefficients (first 10) ---" << std::endl;
-  auto cuopt_obj  = cuopt_model.get_objective_coefficients();
-  auto papilo_obj = papilo_model.getObjective().coefficients;
-  if (!cuopt_obj.empty()) {
-    std::vector<double> cuopt_obj_subset(cuopt_obj.begin(),
-                                         cuopt_obj.begin() + std::min(10ul, cuopt_obj.size()));
-    cuopt::print("CuOpt objective coefficients", cuopt_obj_subset);
-  }
-  if (!papilo_obj.empty()) {
-    std::vector<double> papilo_obj_subset(papilo_obj.begin(),
-                                          papilo_obj.begin() + std::min(10ul, papilo_obj.size()));
-    cuopt::print("Papilo objective coefficients", papilo_obj_subset);
-  }
-
-  // Variable bounds
-  std::cout << "\n--- Variable Bounds (first 10) ---" << std::endl;
-  auto cuopt_lb  = cuopt_model.get_variable_lower_bounds();
-  auto cuopt_ub  = cuopt_model.get_variable_upper_bounds();
-  auto papilo_lb = papilo_model.getLowerBounds();
-  auto papilo_ub = papilo_model.getUpperBounds();
-
-  if (!cuopt_lb.empty()) {
-    std::vector<double> cuopt_lb_subset(cuopt_lb.begin(),
-                                        cuopt_lb.begin() + std::min(10ul, cuopt_lb.size()));
-    cuopt::print("CuOpt variable lower bounds", cuopt_lb_subset);
-  }
-  if (!cuopt_ub.empty()) {
-    std::vector<double> cuopt_ub_subset(cuopt_ub.begin(),
-                                        cuopt_ub.begin() + std::min(10ul, cuopt_ub.size()));
-    cuopt::print("CuOpt variable upper bounds", cuopt_ub_subset);
-  }
-  if (!papilo_lb.empty()) {
-    std::vector<double> papilo_lb_subset(papilo_lb.begin(),
-                                         papilo_lb.begin() + std::min(10ul, papilo_lb.size()));
-    cuopt::print("Papilo variable lower bounds", papilo_lb_subset);
-  }
-  if (!papilo_ub.empty()) {
-    std::vector<double> papilo_ub_subset(papilo_ub.begin(),
-                                         papilo_ub.begin() + std::min(10ul, papilo_ub.size()));
-    cuopt::print("Papilo variable upper bounds", papilo_ub_subset);
-  }
-
-  // Constraint bounds
-  std::cout << "\n--- Constraint Bounds (first 10) ---" << std::endl;
-  auto cuopt_clb          = cuopt_model.get_constraint_lower_bounds();
-  auto cuopt_cub          = cuopt_model.get_constraint_upper_bounds();
-  auto& constraint_matrix = papilo_model.getConstraintMatrix();
-  auto papilo_clb         = constraint_matrix.getLeftHandSides();
-  auto papilo_crb         = constraint_matrix.getRightHandSides();
-
-  if (!cuopt_clb.empty()) {
-    std::vector<double> cuopt_clb_subset(cuopt_clb.begin(),
-                                         cuopt_clb.begin() + std::min(10ul, cuopt_clb.size()));
-    cuopt::print("CuOpt constraint lower bounds", cuopt_clb_subset);
-  }
-  if (!cuopt_cub.empty()) {
-    std::vector<double> cuopt_cub_subset(cuopt_cub.begin(),
-                                         cuopt_cub.begin() + std::min(10ul, cuopt_cub.size()));
-    cuopt::print("CuOpt constraint upper bounds", cuopt_cub_subset);
-  }
-  if (!papilo_clb.empty()) {
-    std::vector<double> papilo_clb_subset(papilo_clb.begin(),
-                                          papilo_clb.begin() + std::min(10ul, papilo_clb.size()));
-    cuopt::print("Papilo constraint left hand sides", papilo_clb_subset);
-  }
-  if (!papilo_crb.empty()) {
-    std::vector<double> papilo_crb_subset(papilo_crb.begin(),
-                                          papilo_crb.begin() + std::min(10ul, papilo_crb.size()));
-    cuopt::print("Papilo constraint right hand sides", papilo_crb_subset);
-  }
-
-  // Constraint matrix values
-  std::cout << "\n--- Constraint Matrix Values (first 10) ---" << std::endl;
-  auto cuopt_A         = cuopt_model.get_constraint_matrix_values();
-  auto cuopt_A_indices = cuopt_model.get_constraint_matrix_indices();
-  auto cuopt_A_offsets = cuopt_model.get_constraint_matrix_offsets();
-
-  if (!cuopt_A.empty()) {
-    std::vector<double> cuopt_A_subset(cuopt_A.begin(),
-                                       cuopt_A.begin() + std::min(10ul, cuopt_A.size()));
-    cuopt::print("CuOpt matrix values", cuopt_A_subset);
-  }
-  if (!cuopt_A_indices.empty()) {
-    std::vector<int> cuopt_indices_subset(
-      cuopt_A_indices.begin(), cuopt_A_indices.begin() + std::min(10ul, cuopt_A_indices.size()));
-    cuopt::print("CuOpt matrix indices", cuopt_indices_subset);
-  }
-  if (!cuopt_A_offsets.empty()) {
-    std::vector<int> cuopt_offsets_subset(
-      cuopt_A_offsets.begin(), cuopt_A_offsets.begin() + std::min(10ul, cuopt_A_offsets.size()));
-    cuopt::print("CuOpt matrix offsets", cuopt_offsets_subset);
-  }
-
-  // Variable names
-  std::cout << "\n--- Variable Names (first 5) ---" << std::endl;
-  auto cuopt_var_names  = cuopt_model.get_variable_names();
-  auto papilo_var_names = papilo_model.getVariableNames();
-
-  std::cout << "CuOpt variable names: ";
-  for (size_t i = 0; i < std::min(5ul, cuopt_var_names.size()); ++i) {
-    std::cout << "'" << cuopt_var_names[i] << "' ";
-  }
-  std::cout << std::endl;
-
-  std::cout << "Papilo variable names: ";
-  for (size_t i = 0; i < std::min(5ul, papilo_var_names.size()); ++i) {
-    std::cout << "'" << papilo_var_names[i] << "' ";
-  }
-  std::cout << std::endl;
-
-  // Row names
-  std::cout << "\n--- Row Names (first 5) ---" << std::endl;
-  auto cuopt_row_names  = cuopt_model.get_row_names();
-  auto papilo_row_names = papilo_model.getConstraintNames();
-
-  std::cout << "CuOpt row names: ";
-  for (size_t i = 0; i < std::min(5ul, cuopt_row_names.size()); ++i) {
-    std::cout << "'" << cuopt_row_names[i] << "' ";
-  }
-  std::cout << std::endl;
-
-  std::cout << "Papilo row names: ";
-  for (size_t i = 0; i < std::min(5ul, papilo_row_names.size()); ++i) {
-    std::cout << "'" << papilo_row_names[i] << "' ";
-  }
-  std::cout << std::endl;
-
-  std::cout << "\n=== End comparison for " << instance_name << " ===\n" << std::endl;
+  optimization_problem_solution_t<int, double> solution =
+    solve_lp(&handle_, op_problem, solver_settings);
+  EXPECT_EQ((int)solution.get_termination_status(), CUOPT_TERIMINATION_STATUS_OPTIMAL);
+  EXPECT_FALSE(is_incorrect_objective(
+    afiro_primal_objective, solution.get_additional_termination_information().primal_objective));
 }
 
-// TEST(pdlp_class, run_double)
-// {
-//   const raft::handle_t handle_{};
+TEST(pdlp_class, run_double_very_low_accuracy)
+{
+  const raft::handle_t handle_{};
 
-//   auto path = make_path_absolute("linear_programming/afiro_original.mps");
-//   cuopt::mps_parser::mps_data_model_t<int, double> op_problem =
-//     cuopt::mps_parser::parse_mps<int, double>(path, true);
+  auto path = make_path_absolute("linear_programming/afiro_original.mps");
+  cuopt::mps_parser::mps_data_model_t<int, double> op_problem =
+    cuopt::mps_parser::parse_mps<int, double>(path, true);
 
-//   auto solver_settings   = pdlp_solver_settings_t<int, double>{};
-//   solver_settings.method = cuopt::linear_programming::method_t::PDLP;
+  cuopt::linear_programming::pdlp_solver_settings_t<int, double> settings =
+    cuopt::linear_programming::pdlp_solver_settings_t<int, double>{};
+  // With all 0 afiro with return an error
+  // Setting absolute tolerance to the minimal value of 1e-12 will make it work
+  settings.tolerances.absolute_dual_tolerance   = settings.minimal_absolute_tolerance;
+  settings.tolerances.relative_dual_tolerance   = 0.0;
+  settings.tolerances.absolute_primal_tolerance = settings.minimal_absolute_tolerance;
+  settings.tolerances.relative_primal_tolerance = 0.0;
+  settings.tolerances.absolute_gap_tolerance    = settings.minimal_absolute_tolerance;
+  settings.tolerances.relative_gap_tolerance    = 0.0;
+  settings.method                               = cuopt::linear_programming::method_t::PDLP;
 
-//   optimization_problem_solution_t<int, double> solution =
-//     solve_lp(&handle_, op_problem, solver_settings);
-//   EXPECT_EQ((int)solution.get_termination_status(), CUOPT_TERIMINATION_STATUS_OPTIMAL);
-//   EXPECT_FALSE(is_incorrect_objective(
-//     afiro_primal_objective, solution.get_additional_termination_information().primal_objective));
-// }
+  optimization_problem_solution_t<int, double> solution = solve_lp(&handle_, op_problem, settings);
+  EXPECT_EQ((int)solution.get_termination_status(), CUOPT_TERIMINATION_STATUS_OPTIMAL);
+  EXPECT_FALSE(is_incorrect_objective(
+    afiro_primal_objective, solution.get_additional_termination_information().primal_objective));
+}
 
-// TEST(pdlp_class, run_double_very_low_accuracy)
-// {
-//   const raft::handle_t handle_{};
+TEST(pdlp_class, run_double_initial_solution)
+{
+  const raft::handle_t handle_{};
 
-//   auto path = make_path_absolute("linear_programming/afiro_original.mps");
-//   cuopt::mps_parser::mps_data_model_t<int, double> op_problem =
-//     cuopt::mps_parser::parse_mps<int, double>(path, true);
+  auto path = make_path_absolute("linear_programming/afiro_original.mps");
+  cuopt::mps_parser::mps_data_model_t<int, double> op_problem =
+    cuopt::mps_parser::parse_mps<int, double>(path, true);
 
-//   cuopt::linear_programming::pdlp_solver_settings_t<int, double> settings =
-//     cuopt::linear_programming::pdlp_solver_settings_t<int, double>{};
-//   // With all 0 afiro with return an error
-//   // Setting absolute tolerance to the minimal value of 1e-12 will make it work
-//   settings.tolerances.absolute_dual_tolerance   = settings.minimal_absolute_tolerance;
-//   settings.tolerances.relative_dual_tolerance   = 0.0;
-//   settings.tolerances.absolute_primal_tolerance = settings.minimal_absolute_tolerance;
-//   settings.tolerances.relative_primal_tolerance = 0.0;
-//   settings.tolerances.absolute_gap_tolerance    = settings.minimal_absolute_tolerance;
-//   settings.tolerances.relative_gap_tolerance    = 0.0;
-//   settings.method                               = cuopt::linear_programming::method_t::PDLP;
+  std::vector<double> inital_primal_sol(op_problem.get_n_variables());
+  std::fill(inital_primal_sol.begin(), inital_primal_sol.end(), 1.0);
+  op_problem.set_initial_primal_solution(inital_primal_sol.data(), inital_primal_sol.size());
 
-//   optimization_problem_solution_t<int, double> solution = solve_lp(&handle_, op_problem,
-//   settings); EXPECT_EQ((int)solution.get_termination_status(),
-//   CUOPT_TERIMINATION_STATUS_OPTIMAL); EXPECT_FALSE(is_incorrect_objective(
-//     afiro_primal_objective, solution.get_additional_termination_information().primal_objective));
-// }
+  auto solver_settings   = pdlp_solver_settings_t<int, double>{};
+  solver_settings.method = cuopt::linear_programming::method_t::PDLP;
 
-// TEST(pdlp_class, run_double_initial_solution)
-// {
-//   const raft::handle_t handle_{};
+  optimization_problem_solution_t<int, double> solution =
+    solve_lp(&handle_, op_problem, solver_settings);
+  EXPECT_EQ((int)solution.get_termination_status(), CUOPT_TERIMINATION_STATUS_OPTIMAL);
+  EXPECT_FALSE(is_incorrect_objective(
+    afiro_primal_objective, solution.get_additional_termination_information().primal_objective));
+}
 
-//   auto path = make_path_absolute("linear_programming/afiro_original.mps");
-//   cuopt::mps_parser::mps_data_model_t<int, double> op_problem =
-//     cuopt::mps_parser::parse_mps<int, double>(path, true);
+TEST(pdlp_class, run_iteration_limit)
+{
+  const raft::handle_t handle_{};
 
-//   std::vector<double> inital_primal_sol(op_problem.get_n_variables());
-//   std::fill(inital_primal_sol.begin(), inital_primal_sol.end(), 1.0);
-//   op_problem.set_initial_primal_solution(inital_primal_sol.data(), inital_primal_sol.size());
+  auto path = make_path_absolute("linear_programming/afiro_original.mps");
+  cuopt::mps_parser::mps_data_model_t<int, double> op_problem =
+    cuopt::mps_parser::parse_mps<int, double>(path, true);
 
-//   auto solver_settings   = pdlp_solver_settings_t<int, double>{};
-//   solver_settings.method = cuopt::linear_programming::method_t::PDLP;
+  cuopt::linear_programming::pdlp_solver_settings_t<int, double> settings =
+    cuopt::linear_programming::pdlp_solver_settings_t<int, double>{};
 
-//   optimization_problem_solution_t<int, double> solution =
-//     solve_lp(&handle_, op_problem, solver_settings);
-//   EXPECT_EQ((int)solution.get_termination_status(), CUOPT_TERIMINATION_STATUS_OPTIMAL);
-//   EXPECT_FALSE(is_incorrect_objective(
-//     afiro_primal_objective, solution.get_additional_termination_information().primal_objective));
-// }
+  settings.iteration_limit = 10;
+  // To make sure it doesn't return before the iteration limit
+  settings.set_optimality_tolerance(0);
+  settings.method = cuopt::linear_programming::method_t::PDLP;
 
-// TEST(pdlp_class, run_iteration_limit)
-// {
-//   const raft::handle_t handle_{};
+  optimization_problem_solution_t<int, double> solution = solve_lp(&handle_, op_problem, settings);
+  EXPECT_EQ((int)solution.get_termination_status(), CUOPT_TERIMINATION_STATUS_ITERATION_LIMIT);
+  // By default we would return all 0, we now return what we currently have so not all 0
+  EXPECT_FALSE(thrust::all_of(handle_.get_thrust_policy(),
+                              solution.get_primal_solution().begin(),
+                              solution.get_primal_solution().end(),
+                              thrust::placeholders::_1 == 0.0));
+}
 
-//   auto path = make_path_absolute("linear_programming/afiro_original.mps");
-//   cuopt::mps_parser::mps_data_model_t<int, double> op_problem =
-//     cuopt::mps_parser::parse_mps<int, double>(path, true);
+TEST(pdlp_class, run_time_limit)
+{
+  const raft::handle_t handle_{};
+  auto path = make_path_absolute("linear_programming/savsched1/savsched1.mps");
+  cuopt::mps_parser::mps_data_model_t<int, double> op_problem =
+    cuopt::mps_parser::parse_mps<int, double>(path);
 
-//   cuopt::linear_programming::pdlp_solver_settings_t<int, double> settings =
-//     cuopt::linear_programming::pdlp_solver_settings_t<int, double>{};
+  cuopt::linear_programming::pdlp_solver_settings_t<int, double> settings =
+    cuopt::linear_programming::pdlp_solver_settings_t<int, double>{};
 
-//   settings.iteration_limit = 10;
-//   // To make sure it doesn't return before the iteration limit
-//   settings.set_optimality_tolerance(0);
-//   settings.method = cuopt::linear_programming::method_t::PDLP;
+  // 200 ms
+  constexpr double time_limit_seconds = 0.2;
+  settings.time_limit                 = time_limit_seconds;
+  // To make sure it doesn't return before the time limit
+  settings.set_optimality_tolerance(0);
+  settings.method = cuopt::linear_programming::method_t::PDLP;
 
-//   optimization_problem_solution_t<int, double> solution = solve_lp(&handle_, op_problem,
-//   settings); EXPECT_EQ((int)solution.get_termination_status(),
-//   CUOPT_TERIMINATION_STATUS_ITERATION_LIMIT);
-//   // By default we would return all 0, we now return what we currently have so not all 0
-//   EXPECT_FALSE(thrust::all_of(handle_.get_thrust_policy(),
-//                               solution.get_primal_solution().begin(),
-//                               solution.get_primal_solution().end(),
-//                               thrust::placeholders::_1 == 0.0));
-// }
+  optimization_problem_solution_t<int, double> solution = solve_lp(&handle_, op_problem, settings);
 
-// TEST(pdlp_class, run_time_limit)
-// {
-//   const raft::handle_t handle_{};
-//   auto path = make_path_absolute("linear_programming/savsched1/savsched1.mps");
-//   cuopt::mps_parser::mps_data_model_t<int, double> op_problem =
-//     cuopt::mps_parser::parse_mps<int, double>(path);
-
-//   cuopt::linear_programming::pdlp_solver_settings_t<int, double> settings =
-//     cuopt::linear_programming::pdlp_solver_settings_t<int, double>{};
-
-//   // 200 ms
-//   constexpr double time_limit_seconds = 0.2;
-//   settings.time_limit                 = time_limit_seconds;
-//   // To make sure it doesn't return before the time limit
-//   settings.set_optimality_tolerance(0);
-//   settings.method = cuopt::linear_programming::method_t::PDLP;
-
-//   optimization_problem_solution_t<int, double> solution = solve_lp(&handle_, op_problem,
-//   settings);
-
-//   EXPECT_EQ((int)solution.get_termination_status(), CUOPT_TERIMINATION_STATUS_TIME_LIMIT);
-//   // By default we would return all 0, we now return what we currently have so not all 0
-//   EXPECT_FALSE(thrust::all_of(handle_.get_thrust_policy(),
-//                               solution.get_primal_solution().begin(),
-//                               solution.get_primal_solution().end(),
-//                               thrust::placeholders::_1 == 0.0));
-//   // Check that indeed it didn't run for more than x time
-//   EXPECT_TRUE(solution.get_additional_termination_information().solve_time <
-//               (time_limit_seconds * 5) * 1000);
-// }
+  EXPECT_EQ((int)solution.get_termination_status(), CUOPT_TERIMINATION_STATUS_TIME_LIMIT);
+  // By default we would return all 0, we now return what we currently have so not all 0
+  EXPECT_FALSE(thrust::all_of(handle_.get_thrust_policy(),
+                              solution.get_primal_solution().begin(),
+                              solution.get_primal_solution().end(),
+                              thrust::placeholders::_1 == 0.0));
+  // Check that indeed it didn't run for more than x time
+  EXPECT_TRUE(solution.get_additional_termination_information().solve_time <
+              (time_limit_seconds * 5) * 1000);
+}
 
 TEST(pdlp_class, run_sub_mittleman)
 {
   std::vector<std::pair<std::string,  // Instance name
                         double>>      // Expected objective value
-    instances{
-      // {"graph40-40", -300.0},
-      //{"ex10", 100.0003411893773},
-      {"datt256_lp", 255.9992298290425},
-      // {"woodlands09", 0.0},
-      // {"savsched1", 217.4054085795689},
-      // {"nug08-3rd", 214.0141488989151},
-      // {"qap15", 1040.999546647414},
-      // {"scpm1", 413.7787723060584},
-      // {"neos3", 27773.54059633068},
-      // {"a2864", -282.9962521965164}
-    };
+    instances{                        // {"graph40-40", -300.0},
+              {"ex10", 100.0003411893773},
+              {"datt256_lp", 255.9992298290425},
+              {"woodlands09", 0.0},
+              {"savsched1", 217.4054085795689},
+              {"nug08-3rd", 214.0141488989151},
+              {"qap15", 1040.999546647414},
+              {"scpm1", 413.7787723060584},
+              {"neos3", 27773.54059633068},
+              {"a2864", -282.9962521965164}};
 
   for (const auto& entry : instances) {
     const auto& name                    = entry.first;
@@ -374,80 +207,8 @@ TEST(pdlp_class, run_sub_mittleman)
 
     std::cout << "Running " << name << std::endl;
     auto path = make_path_absolute("linear_programming/" + name + "/" + name + ".mps");
-
-    // Parse with CuOpt
-    cuopt::mps_parser::mps_data_model_t<int, double> cuopt_op_problem =
-      cuopt::mps_parser::parse_mps<int, double>(path);
-
-    // Parse with Papilo
-    auto papilo_problem_opt = papilo::MpsParser<double>::loadProblem(path);
-    if (!papilo_problem_opt) {
-      std::cout << "Failed to parse " << name << " with Papilo parser" << std::endl;
-      continue;
-    }
-    auto papilo_problem = papilo_problem_opt.value();
-
-    // Presolve the Papilo problem using cuOpt's configuration
-    std::cout << "Original Papilo problem - Variables: " << papilo_problem.getNCols()
-              << ", Constraints: " << papilo_problem.getNRows() << std::endl;
-
-    papilo::Presolve<double> presolve;
-
-    // Add cuOpt's specific presolve methods (same as in third_party_presolve.cu)
-    using uptr = std::unique_ptr<papilo::PresolveMethod<double>>;
-
-    // fast presolvers
-    presolve.addPresolveMethod(uptr(new papilo::SingletonCols<double>()));
-    presolve.addPresolveMethod(uptr(new papilo::CoefficientStrengthening<double>()));
-    presolve.addPresolveMethod(uptr(new papilo::ConstraintPropagation<double>()));
-
-    // medium presolvers
-    presolve.addPresolveMethod(uptr(new papilo::FixContinuous<double>()));
-    presolve.addPresolveMethod(uptr(new papilo::SimpleProbing<double>()));
-    presolve.addPresolveMethod(uptr(new papilo::ParallelRowDetection<double>()));
-    presolve.addPresolveMethod(uptr(new papilo::ParallelColDetection<double>()));
-    // Note: SingletonStuffing excluded due to postsolve issues in cuOpt
-    presolve.addPresolveMethod(uptr(new papilo::DualFix<double>()));
-    presolve.addPresolveMethod(uptr(new papilo::SimplifyInequalities<double>()));
-
-    // exhaustive presolvers
-    presolve.addPresolveMethod(uptr(new papilo::ImplIntDetection<double>()));
-    presolve.addPresolveMethod(uptr(new papilo::DominatedCols<double>()));
-    presolve.addPresolveMethod(uptr(new papilo::Probing<double>()));
-
-    // Set cuOpt's presolve options for LP problems
-    constexpr double absolute_tolerance            = 1e-4;  // typical LP tolerance
-    constexpr double time_limit                    = 10.0;  // 10 seconds default
-    presolve.getPresolveOptions().tlim             = time_limit;
-    presolve.getPresolveOptions().epsilon          = absolute_tolerance;
-    presolve.getPresolveOptions().feastol          = absolute_tolerance;
-    presolve.getPresolveOptions().componentsmaxint = -1;  // for LP problems
-    presolve.getPresolveOptions().detectlindep     = 0;   // for LP problems
-
-    papilo::PresolveResult<double> presolve_result = presolve.apply(papilo_problem);
-
-    std::cout << "Presolve status: ";
-    switch (presolve_result.status) {
-      case papilo::PresolveStatus::kUnchanged: std::cout << "Unchanged"; break;
-      case papilo::PresolveStatus::kReduced: std::cout << "Reduced"; break;
-      case papilo::PresolveStatus::kUnbndOrInfeas: std::cout << "Unbounded or Infeasible"; break;
-      case papilo::PresolveStatus::kUnbounded: std::cout << "Unbounded"; break;
-      case papilo::PresolveStatus::kInfeasible: std::cout << "Infeasible"; break;
-    }
-    std::cout << std::endl;
-
-    std::cout << "Presolved Papilo problem - Variables: " << papilo_problem.getNCols()
-              << ", Constraints: " << papilo_problem.getNRows() << std::endl;
-
-    // Check if presolving detected infeasibility/unboundedness
-    if (presolve_result.status == papilo::PresolveStatus::kInfeasible ||
-        presolve_result.status == papilo::PresolveStatus::kUnbounded ||
-        presolve_result.status == papilo::PresolveStatus::kUnbndOrInfeas) {
-      std::cout << "Skipping " << name << " due to presolve status" << std::endl;
-      continue;
-    }
-
-    // Compare the two models
+    cuopt::mps_parser::mps_data_model_t<int, double> op_problem =
+      cuopt::mps_parser::parse_mps<int, double>(path
     compare_models(cuopt_op_problem, papilo_problem, name);
 
     // Testing for each solver_mode is ok as it's parsing that is the bottleneck here, not
@@ -460,18 +221,16 @@ TEST(pdlp_class, run_sub_mittleman)
     for (auto solver_mode : solver_mode_list) {
       auto settings             = pdlp_solver_settings_t<int, double>{};
       settings.pdlp_solver_mode = solver_mode;
-      settings.method           = cuopt::linear_programming::method_t::PDLP;
       settings.presolve         = true;
       const raft::handle_t handle_{};
-      optimization_problem_solution_t<int, double> solution =
+      optimization_problem_on_t<int, double> solution =
         solve_lp(&handle_, cuopt_op_problem, settings);
       EXPECT_EQ((int)solution.get_termination_status(), CUOPT_TERIMINATION_STATUS_OPTIMAL);
-      EXPECT_FALSE(
-        is_incorrect_objective(expected_objective_value,
-                               solution.get_additional_termination_information().primal_objective));
+      EXPECT_FALSE(is_incorrect_objective(
+        expected_objective_value, ution.get_additional_termination_information().primal_objective));
       test_objective_sanity(cuopt_op_problem,
                             solution.get_primal_solution(),
-                            solution.get_additional_termination_information().primal_objective);
+                            sn.get_additional_termination_information().primal_objective);
       test_constraint_sanity(cuopt_op_problem, solution);
     }
   }

@@ -248,12 +248,10 @@ void set_presolve_methods(papilo::Presolve<f_t>& presolver, problem_category_t c
   presolver.addPresolveMethod(uptr(new papilo::DominatedCols<f_t>()));
   presolver.addPresolveMethod(uptr(new papilo::Probing<f_t>()));
 
-  // if (category == problem_category_t::MIP) {
-  // presolver.addPresolveMethod(uptr(new papilo::DualInfer<f_t>));
-  // presolver.addPresolveMethod(uptr(new papilo::SimpleSubstitution<f_t>()));
-  // presolver.addPresolveMethod(uptr(new papilo::Sparsify<f_t>()));
-  // presolver.addPresolveMethod(uptr(new papilo::Substitution<f_t>()));
-  // }
+  presolver.addPresolveMethod(uptr(new papilo::DualInfer<f_t>));
+  presolver.addPresolveMethod(uptr(new papilo::SimpleSubstitution<f_t>()));
+  presolver.addPresolveMethod(uptr(new papilo::Sparsify<f_t>()));
+  presolver.addPresolveMethod(uptr(new papilo::Substitution<f_t>()));
 }
 
 template <typename f_t>
@@ -265,10 +263,6 @@ void set_presolve_options(papilo::Presolve<f_t>& presolver,
   presolver.getPresolveOptions().tlim    = time_limit;
   presolver.getPresolveOptions().epsilon = absolute_tolerance;
   presolver.getPresolveOptions().feastol = absolute_tolerance;
-  // if (category == problem_category_t::LP) {
-  presolver.getPresolveOptions().componentsmaxint = -1;
-  presolver.getPresolveOptions().detectlindep     = 0;
-  // }
 }
 
 template <typename i_t, typename f_t>
@@ -318,11 +312,6 @@ void third_party_presolve_t<i_t, f_t>::undo(rmm::device_uvector<f_t>& primal_sol
 
   papilo::Solution<f_t> reduced_sol(primal_sol_vec_h);
   papilo::Solution<f_t> full_sol;
-  // if (category == problem_category_t::LP) {
-  //   reduced_sol.type         = papilo::SolutionType::kPrimalDual;
-  //   reduced_sol.dual         = dual_sol_vec_h;
-  //   reduced_sol.reducedCosts = reduced_costs_vec_h;
-  // }
 
   papilo::Message Msg{};
   Msg.setVerbosityLevel(papilo::VerbosityLevel::kQuiet);
