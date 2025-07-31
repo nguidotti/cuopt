@@ -214,12 +214,11 @@ mip_solution_t<i_t, f_t> solve_mip(optimization_problem_t<i_t, f_t>& op_problem,
     // this is for PDLP, i think this should be part of pdlp solver
     setup_device_symbols(op_problem.get_handle_ptr()->get_stream());
 
-    auto reduced_solution = run_mip(problem, settings, timer);
-
-    auto primal_solution = cuopt::device_copy(reduced_solution.get_solution(),
-                                              op_problem.get_handle_ptr()->get_stream());
+    auto sol = run_mip(problem, settings, timer);
 
     if (run_presolve) {
+      auto primal_solution =
+        cuopt::device_copy(sol.get_solution(), op_problem.get_handle_ptr()->get_stream());
       rmm::device_uvector<f_t> dual_solution(0, op_problem.get_handle_ptr()->get_stream());
       rmm::device_uvector<f_t> reduced_costs(0, op_problem.get_handle_ptr()->get_stream());
       presolver->undo(primal_solution,
@@ -227,24 +226,24 @@ mip_solution_t<i_t, f_t> solve_mip(optimization_problem_t<i_t, f_t>& op_problem,
                       reduced_costs,
                       cuopt::linear_programming::problem_category_t::MIP,
                       op_problem.get_handle_ptr()->get_stream());
+      detail::problem_t<i_t, f_t> full_problem(op_problem);
+      detail::solution_t<i_t, f_t> full_sol(full_problem);
+      full_sol.copy_new_assignment(cuopt::host_copy(primal_solution));
+      full_sol.compute_feasibility();
+      if (!full_sol.get_feasible()) {
+        CUOPT_LOG_WARN("The solution is not feasible after post solve");
+      }
+
+      auto full_stats = sol.get_stats();
+      // add third party presolve time to cuopt presolve time
+      full_stats.presolve_time += presolve_time;
+
+      // FIXME:: reduced_solution.get_stats() is not correct, we need to compute the stats for the
+      // full problem
+      full_sol.post_process_completed = true;  // hack
+      sol                             = full_sol.get_solution(true, full_stats, true);
     }
 
-    detail::problem_t<i_t, f_t> full_problem(op_problem);
-    detail::solution_t<i_t, f_t> full_sol(full_problem);
-    full_sol.copy_new_assignment(cuopt::host_copy(primal_solution));
-    full_sol.compute_feasibility();
-    if (!full_sol.get_feasible()) {
-      CUOPT_LOG_WARN("The solution is not feasible after post solve");
-    }
-
-    auto full_stats = reduced_solution.get_stats();
-    // add third party presolve time to cuopt presolve time
-    full_stats.presolve_time += presolve_time;
-
-    // FIXME:: reduced_solution.get_stats() is not correct, we need to compute the stats for the
-    // full problem
-    full_sol.post_process_completed = true;  // hack
-    auto sol                        = full_sol.get_solution(true, full_stats, true);
     if (settings.sol_file != "") {
       CUOPT_LOG_INFO("Writing solution to file %s", settings.sol_file.c_str());
       sol.write_to_sol_file(settings.sol_file, op_problem.get_handle_ptr()->get_stream());
