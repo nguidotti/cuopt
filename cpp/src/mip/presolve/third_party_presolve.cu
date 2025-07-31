@@ -283,6 +283,9 @@ optimization_problem_t<i_t, f_t> third_party_presolve_t<i_t, f_t>::apply(
   set_presolve_methods<f_t>(presolver, category);
   set_presolve_options<f_t>(presolver, category, absolute_tolerance, time_limit);
 
+  // Disable papilo logs
+  presolver.setVerbosityLevel(papilo::VerbosityLevel::kQuiet);
+
   auto result = presolver.apply(papilo_problem);
   if (result.status == papilo::PresolveStatus::kInfeasible) {
     return optimization_problem_t<i_t, f_t>(op_problem.get_handle_ptr());

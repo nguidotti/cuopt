@@ -190,7 +190,7 @@ TEST(pdlp_class, run_sub_mittleman)
 {
   std::vector<std::pair<std::string,  // Instance name
                         double>>      // Expected objective value
-    instances{                        // {"graph40-40", -300.0},
+    instances{{"graph40-40", -300.0},
               {"ex10", 100.0003411893773},
               {"datt256_lp", 255.9992298290425},
               {"woodlands09", 0.0},
@@ -208,8 +208,7 @@ TEST(pdlp_class, run_sub_mittleman)
     std::cout << "Running " << name << std::endl;
     auto path = make_path_absolute("linear_programming/" + name + "/" + name + ".mps");
     cuopt::mps_parser::mps_data_model_t<int, double> op_problem =
-      cuopt::mps_parser::parse_mps<int, double>(path
-    compare_models(cuopt_op_problem, papilo_problem, name);
+      cuopt::mps_parser::parse_mps<int, double>(path);
 
     // Testing for each solver_mode is ok as it's parsing that is the bottleneck here, not
     // solving
@@ -221,17 +220,17 @@ TEST(pdlp_class, run_sub_mittleman)
     for (auto solver_mode : solver_mode_list) {
       auto settings             = pdlp_solver_settings_t<int, double>{};
       settings.pdlp_solver_mode = solver_mode;
-      settings.presolve         = true;
       const raft::handle_t handle_{};
-      optimization_problem_on_t<int, double> solution =
-        solve_lp(&handle_, cuopt_op_problem, settings);
+      optimization_problem_solution_t<int, double> solution =
+        solve_lp(&handle_, op_problem, settings);
       EXPECT_EQ((int)solution.get_termination_status(), CUOPT_TERIMINATION_STATUS_OPTIMAL);
-      EXPECT_FALSE(is_incorrect_objective(
-        expected_objective_value, ution.get_additional_termination_information().primal_objective));
-      test_objective_sanity(cuopt_op_problem,
+      EXPECT_FALSE(
+        is_incorrect_objective(expected_objective_value,
+                               solution.get_additional_termination_information().primal_objective));
+      test_objective_sanity(op_problem,
                             solution.get_primal_solution(),
-                            sn.get_additional_termination_information().primal_objective);
-      test_constraint_sanity(cuopt_op_problem, solution);
+                            solution.get_additional_termination_information().primal_objective);
+      test_constraint_sanity(op_problem, solution);
     }
   }
 }
