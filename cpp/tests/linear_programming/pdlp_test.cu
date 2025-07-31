@@ -102,8 +102,6 @@ TEST(pdlp_class, run_double_very_low_accuracy)
   settings.tolerances.absolute_gap_tolerance    = settings.minimal_absolute_tolerance;
   settings.tolerances.relative_gap_tolerance    = 0.0;
   settings.method                               = cuopt::linear_programming::method_t::PDLP;
-  // Model sensible, disabling presolve
-  settings.presolve = false;
 
   optimization_problem_solution_t<int, double> solution = solve_lp(&handle_, op_problem, settings);
   EXPECT_EQ((int)solution.get_termination_status(), CUOPT_TERIMINATION_STATUS_OPTIMAL);
@@ -728,7 +726,6 @@ TEST(pdlp_class, best_primal_so_far_iteration)
   solver_settings.iteration_limit         = 3000;
   solver_settings.per_constraint_residual = true;
   solver_settings.method                  = cuopt::linear_programming::method_t::PDLP;
-  solver_settings.presolve                = false;
 
   cuopt::mps_parser::mps_data_model_t<int, double> op_problem1 =
     cuopt::mps_parser::parse_mps<int, double>(path);
@@ -758,7 +755,6 @@ TEST(pdlp_class, best_primal_so_far_time)
   solver_settings.per_constraint_residual = true;
   solver_settings.pdlp_solver_mode        = cuopt::linear_programming::pdlp_solver_mode_t::Stable1;
   solver_settings.method                  = cuopt::linear_programming::method_t::PDLP;
-  solver_settings.presolve                = false;
 
   cuopt::mps_parser::mps_data_model_t<int, double> op_problem1 =
     cuopt::mps_parser::parse_mps<int, double>(path);
@@ -828,7 +824,6 @@ TEST(pdlp_class, warm_start)
     solver_settings.set_optimality_tolerance(1e-2);
     solver_settings.detect_infeasibility = false;
     solver_settings.method               = cuopt::linear_programming::method_t::PDLP;
-    solver_settings.presolve             = false;
 
     cuopt::mps_parser::mps_data_model_t<int, double> mps_data_model =
       cuopt::mps_parser::parse_mps<int, double>(path);
@@ -887,9 +882,8 @@ TEST(pdlp_class, run_empty_matrix_pdlp)
   cuopt::mps_parser::mps_data_model_t<int, double> op_problem =
     cuopt::mps_parser::parse_mps<int, double>(path);
 
-  auto solver_settings     = pdlp_solver_settings_t<int, double>{};
-  solver_settings.method   = cuopt::linear_programming::method_t::PDLP;
-  solver_settings.presolve = false;
+  auto solver_settings   = pdlp_solver_settings_t<int, double>{};
+  solver_settings.method = cuopt::linear_programming::method_t::PDLP;
 
   optimization_problem_solution_t<int, double> solution =
     solve_lp(&handle_, op_problem, solver_settings);
@@ -905,9 +899,8 @@ TEST(pdlp_class, run_empty_matrix_dual_simplex)
   cuopt::mps_parser::mps_data_model_t<int, double> op_problem =
     cuopt::mps_parser::parse_mps<int, double>(path);
 
-  auto solver_settings     = pdlp_solver_settings_t<int, double>{};
-  solver_settings.method   = cuopt::linear_programming::method_t::Concurrent;
-  solver_settings.presolve = false;
+  auto solver_settings   = pdlp_solver_settings_t<int, double>{};
+  solver_settings.method = cuopt::linear_programming::method_t::Concurrent;
 
   optimization_problem_solution_t<int, double> solution =
     solve_lp(&handle_, op_problem, solver_settings);

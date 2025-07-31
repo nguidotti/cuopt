@@ -30,7 +30,6 @@ from cuopt.linear_programming.solver.solver_parameters import (
     CUOPT_METHOD,
     CUOPT_MIP_HEURISTICS_ONLY,
     CUOPT_PDLP_SOLVER_MODE,
-    CUOPT_PRESOLVE,
     CUOPT_PRIMAL_INFEASIBLE_TOLERANCE,
     CUOPT_RELATIVE_DUAL_TOLERANCE,
     CUOPT_RELATIVE_GAP_TOLERANCE,
@@ -76,8 +75,6 @@ def test_solver():
     settings = solver_settings.SolverSettings()
     settings.set_optimality_tolerance(1e-2)
     settings.set_parameter(CUOPT_METHOD, SolverMethod.PDLP)
-    # Reduces to an empty problem
-    settings.set_parameter(CUOPT_PRESOLVE, False)
 
     solution = solver.Solve(data_model_obj, settings)
     assert solution.get_termination_reason() == "Optimal"
@@ -97,8 +94,6 @@ def test_parser_and_solver():
 
     settings = solver_settings.SolverSettings()
     settings.set_optimality_tolerance(1e-2)
-    # Reduces to an empty problem
-    settings.set_parameter(CUOPT_PRESOLVE, False)
     solution = solver.Solve(data_model_obj, settings)
     assert solution.get_termination_reason() == "Optimal"
 
@@ -434,8 +429,6 @@ def test_parse_var_names():
 
     settings = solver_settings.SolverSettings()
     settings.set_parameter(CUOPT_METHOD, SolverMethod.PDLP)
-    # To match original dict
-    settings.set_parameter(CUOPT_PRESOLVE, False)
     solution = solver.Solve(data_model_obj, settings)
 
     expected_dict = {
@@ -526,7 +519,6 @@ def test_warm_start():
     settings.set_parameter(CUOPT_PDLP_SOLVER_MODE, PDLPSolverMode.Stable2)
     settings.set_optimality_tolerance(1e-3)
     settings.set_parameter(CUOPT_INFEASIBILITY_DETECTION, False)
-    settings.set_parameter(CUOPT_PRESOLVE, False)
 
     # Solving from scratch until 1e-3
     solution = solver.Solve(data_model_obj, settings)
