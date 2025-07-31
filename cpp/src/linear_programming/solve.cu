@@ -355,6 +355,7 @@ static optimization_problem_solution_t<i_t, f_t> run_pdlp_solver(
   const std::chrono::high_resolution_clock::time_point& start_time,
   bool is_batch_mode)
 {
+  std::cout << "problem.n_constraints: " << problem.n_constraints << std::endl;
   if (problem.n_constraints == 0) {
     CUOPT_LOG_INFO("No constraints in the problem: PDLP can't be run, use Dual Simplex instead.");
     return optimization_problem_solution_t<i_t, f_t>{pdlp_termination_status_t::NumericalError,
@@ -593,8 +594,12 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
 
     double presolve_time = 0.0;
     std::unique_ptr<detail::third_party_presolve_t<i_t, f_t>> presolver;
+    auto run_presolve = settings.presolve;
+    run_presolve      = run_presolve && op_problem.get_sense() == false;
+    run_presolve = run_presolve && settings.get_pdlp_warm_start_data().total_pdlp_iterations_ == -1;
+    if (!run_presolve) { CUOPT_LOG_INFO("Presolve is disabled, skipping"); }
 
-    if (settings.presolve) {
+    if (run_presolve) {
       // allocate no more than 10% of the time limit to presolve.
       // Note that this is not the presolve time, but the time limit for presolve.
       const double presolve_time_limit = 0.1 * time_limit;
@@ -635,7 +640,7 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
       cuopt::device_copy(solution.get_dual_solution(), op_problem.get_handle_ptr()->get_stream());
     auto reduced_costs =
       cuopt::device_copy(solution.get_reduced_cost(), op_problem.get_handle_ptr()->get_stream());
-    if (settings.presolve) {
+    if (run_presolve) {
       // Dual postsolve is not supported yet in Papilo.
       presolver->undo(primal_solution,
                       dual_solution,

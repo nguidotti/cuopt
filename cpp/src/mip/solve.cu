@@ -182,7 +182,13 @@ mip_solution_t<i_t, f_t> solve_mip(optimization_problem_t<i_t, f_t>& op_problem,
     std::unique_ptr<detail::third_party_presolve_t<i_t, f_t>> presolver;
     detail::problem_t<i_t, f_t> problem(op_problem, settings.get_tolerances());
 
-    if (settings.presolve) {
+    auto run_presolve = settings.presolve;
+    run_presolve      = run_presolve && op_problem.get_sense() == false;
+    run_presolve      = run_presolve && settings.get_mip_callbacks().empty();
+
+    if (!run_presolve) { CUOPT_LOG_INFO("Presolve is disabled, skipping"); }
+
+    if (run_presolve) {
       // allocate not more than 10% of the time limit to presolve.
       // Note that this is not the presolve time, but the time limit for presolve.
       const double presolve_time_limit = 0.1 * time_limit;
@@ -213,7 +219,7 @@ mip_solution_t<i_t, f_t> solve_mip(optimization_problem_t<i_t, f_t>& op_problem,
     auto primal_solution = cuopt::device_copy(reduced_solution.get_solution(),
                                               op_problem.get_handle_ptr()->get_stream());
 
-    if (settings.presolve) {
+    if (run_presolve) {
       rmm::device_uvector<f_t> dual_solution(0, op_problem.get_handle_ptr()->get_stream());
       rmm::device_uvector<f_t> reduced_costs(0, op_problem.get_handle_ptr()->get_stream());
       presolver->undo(primal_solution,

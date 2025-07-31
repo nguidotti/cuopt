@@ -34,6 +34,10 @@ papilo::Problem<f_t> build_papilo_problem(const optimization_problem_t<i_t, f_t>
   const i_t num_rows = op_problem.get_n_constraints();
   const i_t nnz      = op_problem.get_nnz();
 
+  cuopt_expects(op_problem.get_sense() == false,
+                error_type_t::ValidationError,
+                "Papilo does not support maximization problems");
+
   builder.reserve(nnz, num_rows, num_cols);
 
   // Get problem data from optimization problem
@@ -126,7 +130,7 @@ optimization_problem_t<i_t, f_t> build_optimization_problem(
   papilo::Problem<f_t> const& papilo_problem, raft::handle_t const* handle_ptr)
 {
   optimization_problem_t<i_t, f_t> op_problem(handle_ptr);
-  if (papilo_problem.getNRows() == 0 || papilo_problem.getNCols() == 0) { return op_problem; }
+  if (papilo_problem.getNRows() == 0 && papilo_problem.getNCols() == 0) { return op_problem; }
 
   auto obj = papilo_problem.getObjective();
   op_problem.set_objective_coefficients(obj.coefficients.data(), obj.coefficients.size());
@@ -227,7 +231,7 @@ void set_presolve_methods(papilo::Presolve<f_t>& presolver, problem_category_t c
   // fast presolvers
   presolver.addPresolveMethod(uptr(new papilo::SingletonCols<f_t>()));
   presolver.addPresolveMethod(uptr(new papilo::CoefficientStrengthening<f_t>()));
-  presolver.addPresolveMethod(uptr(new papilo::ConstraintPropagation<f_t>()));
+  // presolver.addPresolveMethod(uptr(new papilo::ConstraintPropagation<f_t>()));
 
   // medium presolvers
   presolver.addPresolveMethod(uptr(new papilo::FixContinuous<f_t>()));
@@ -258,9 +262,11 @@ void set_presolve_options(papilo::Presolve<f_t>& presolver,
                           f_t absolute_tolerance,
                           double time_limit)
 {
-  presolver.getPresolveOptions().tlim    = time_limit;
-  presolver.getPresolveOptions().epsilon = absolute_tolerance;
-  presolver.getPresolveOptions().feastol = absolute_tolerance;
+  presolver.getPresolveOptions().tlim                            = time_limit;
+  presolver.getPresolveOptions().epsilon                         = absolute_tolerance;
+  presolver.getPresolveOptions().feastol                         = absolute_tolerance;
+  presolver.getPresolveOptions().threads                         = 1;
+  presolver.getPresolveOptions().constraint_propagation_parallel = 0;
   if (category == problem_category_t::LP) {
     presolver.getPresolveOptions().componentsmaxint = -1;
     presolver.getPresolveOptions().detectlindep     = 0;
