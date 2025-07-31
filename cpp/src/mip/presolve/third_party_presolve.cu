@@ -249,10 +249,10 @@ void set_presolve_methods(papilo::Presolve<f_t>& presolver, problem_category_t c
   presolver.addPresolveMethod(uptr(new papilo::Probing<f_t>()));
 
   // if (category == problem_category_t::MIP) {
-  presolver.addPresolveMethod(uptr(new papilo::DualInfer<f_t>));
-  presolver.addPresolveMethod(uptr(new papilo::SimpleSubstitution<f_t>()));
-  presolver.addPresolveMethod(uptr(new papilo::Sparsify<f_t>()));
-  presolver.addPresolveMethod(uptr(new papilo::Substitution<f_t>()));
+  // presolver.addPresolveMethod(uptr(new papilo::DualInfer<f_t>));
+  // presolver.addPresolveMethod(uptr(new papilo::SimpleSubstitution<f_t>()));
+  // presolver.addPresolveMethod(uptr(new papilo::Sparsify<f_t>()));
+  // presolver.addPresolveMethod(uptr(new papilo::Substitution<f_t>()));
   // }
 }
 
@@ -266,8 +266,8 @@ void set_presolve_options(papilo::Presolve<f_t>& presolver,
   presolver.getPresolveOptions().epsilon = absolute_tolerance;
   presolver.getPresolveOptions().feastol = absolute_tolerance;
   // if (category == problem_category_t::LP) {
-  //   presolver.getPresolveOptions().componentsmaxint = -1;
-  //   presolver.getPresolveOptions().detectlindep     = 0;
+  presolver.getPresolveOptions().componentsmaxint = -1;
+  presolver.getPresolveOptions().detectlindep     = 0;
   // }
 }
 
