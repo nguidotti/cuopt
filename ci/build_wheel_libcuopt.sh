@@ -24,11 +24,6 @@ package_dir="python/libcuopt"
 # Install Boost and TBB
 ci/utils/install_boost_tbb.sh
 
-else
-    echo "/etc/os-release not found. Cannot determine OS. Please install Boost development libraries manually."
-    exit 1
-fi
-
 export SKBUILD_CMAKE_ARGS="-DCUOPT_BUILD_WHEELS=ON;-DDISABLE_DEPRECATION_WARNING=ON"
 
 # For pull requests we are enabling assert mode.
