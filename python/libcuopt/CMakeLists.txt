@@ -45,6 +45,20 @@ FetchContent_Declare(
   GIT_TAG v3.2
 )
 FetchContent_MakeAvailable(argparse)
+FetchContent_Declare(
+  tbb
+  GIT_REPOSITORY https://github.com/oneapi-src/oneTBB.git
+  GIT_TAG v2022.2.0
+)
+FetchContent_MakeAvailable(tbb)
+
+FetchContent_Declare(
+  boost
+  GIT_REPOSITORY https://github.com/boostorg/boost.git
+  GIT_TAG boost-1.85.0
+)
+FetchContent_MakeAvailable(boost)
+
 
 set(BUILD_TESTS OFF)
 set(BUILD_BENCHMARKS OFF)
@@ -54,9 +68,6 @@ set(CUDA_STATIC_RUNTIME ON)
 add_subdirectory(../../cpp cuopt-cpp)
 
 target_link_libraries(cuopt PRIVATE argparse)
-if(Boost_FOUND)
-  target_link_libraries(cuopt PRIVATE Boost::system Boost::filesystem Boost::thread)
-endif()
 target_link_libraries(cuopt_cli PRIVATE argparse)
 
 set(rpaths
