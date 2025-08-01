@@ -355,7 +355,6 @@ static optimization_problem_solution_t<i_t, f_t> run_pdlp_solver(
   const std::chrono::high_resolution_clock::time_point& start_time,
   bool is_batch_mode)
 {
-  std::cout << "problem.n_constraints: " << problem.n_constraints << std::endl;
   if (problem.n_constraints == 0) {
     CUOPT_LOG_INFO("No constraints in the problem: PDLP can't be run, use Dual Simplex instead.");
     return optimization_problem_solution_t<i_t, f_t>{pdlp_termination_status_t::NumericalError,
