@@ -388,7 +388,6 @@ template <typename i_t, typename f_t>
 void diversity_manager_t<i_t, f_t>::run_fp_alone(solution_t<i_t, f_t>& solution)
 {
   CUOPT_LOG_INFO("Running FP alone!");
-  solution.round_nearest();
   ls.run_fp(solution, timer, false);
   CUOPT_LOG_INFO("FP alone finished!");
 }
@@ -422,7 +421,7 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
   population.initialize_population();
   if (check_b_b_preemption()) { return population.best_feasible(); }
   // before probing cache or LP, run FJ to generate initial primal feasible solution
-  if (!from_dir) { generate_quick_feasible_solution(); }
+  if (!from_dir && !fp_only_run && !fj_only_run) { generate_quick_feasible_solution(); }
   constexpr f_t time_ratio_of_probing_cache = diversity_config_t::time_ratio_of_probing_cache;
   constexpr f_t max_time_on_probing         = diversity_config_t::max_time_on_probing;
   f_t time_for_probing_cache =
@@ -503,8 +502,9 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
   }
 
   if (fp_only_run) {
-    run_fp_alone(population.best_feasible());
-    return population.best_feasible();
+    auto sol = generate_solution(timer.remaining_time(), false);
+    run_fp_alone(sol);
+    return sol;
   }
 
   if (timer.check_time_limit()) { return population.best_feasible(); }
