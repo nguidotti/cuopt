@@ -189,10 +189,12 @@ bool local_search_t<i_t, f_t>::check_fj_on_lp_optimal(solution_t<i_t, f_t>& solu
                                                       bool perturb,
                                                       timer_t timer)
 {
-  raft::copy(solution.assignment.data(),
-             lp_optimal_solution.data(),
-             solution.assignment.size(),
-             solution.handle_ptr->get_stream());
+  if (lp_optimal_exists) {
+    raft::copy(solution.assignment.data(),
+               lp_optimal_solution.data(),
+               solution.assignment.size(),
+               solution.handle_ptr->get_stream());
+  }
   if (perturb) {
     CUOPT_LOG_DEBUG("Perturbating solution on initial fj on optimal run!");
     f_t perturbation_ratio = 0.2;
@@ -318,8 +320,6 @@ void local_search_t<i_t, f_t>::resize_vectors(problem_t<i_t, f_t>& problem,
                                               const raft::handle_t* handle_ptr)
 {
   fj_sol_on_lp_opt.resize(problem.n_variables, handle_ptr->get_stream());
-  fj.resize_vectors(handle_ptr);
-  // TODO resize LNS when it is used
   fp.resize_vectors(problem, handle_ptr);
 }
 
@@ -332,6 +332,14 @@ bool local_search_t<i_t, f_t>::run_fp(solution_t<i_t, f_t>& solution,
   bool is_feasible          = false;
   double best_objective     = std::numeric_limits<double>::max();
   rmm::device_uvector<f_t> best_solution(solution.assignment, solution.handle_ptr->get_stream());
+  if (!feasibility_run) {
+    solution.problem_ptr->add_cutting_plane_at_objective(solution.get_objective());
+    solution.resize_to_problem();
+    resize_vectors(*solution.problem_ptr, solution.handle_ptr);
+    lb_constraint_prop.temp_problem.setup(*solution.problem_ptr);
+    lb_constraint_prop.bounds_update.setup(lb_constraint_prop.temp_problem);
+    constraint_prop.bounds_update.resize(*solution.problem_ptr);
+  }
   for (i_t i = 0; i < n_fp_iterations && !timer.check_time_limit(); ++i) {
     if (timer.check_time_limit()) {
       is_feasible = false;
@@ -355,19 +363,23 @@ bool local_search_t<i_t, f_t>::run_fp(solution_t<i_t, f_t>& solution,
                      solution.assignment.data(),
                      solution.assignment.size(),
                      solution.handle_ptr->get_stream());
+          solution.problem_ptr->add_cutting_plane_at_objective(solution.get_objective() +
+                                                               OBJECTIVE_EPSILON);
         }
         fp.config.alpha = default_alpha;
         ls_config_t<i_t, f_t> ls_config;
         // assign current objective
         ls_config.best_objective_of_parents = solution.get_objective();
-        ls_config.n_local_mins              = 500;
+        ls_config.n_local_mins              = 5000;
         is_feasible                         = run_fj_annealing(solution, timer, ls_config);
         if (is_feasible && solution.get_objective() < best_objective) {
-          raft::copy(solution.assignment.data(),
-                     best_solution.data(),
+          raft::copy(best_solution.data(),
+                     solution.assignment.data(),
                      solution.assignment.size(),
                      solution.handle_ptr->get_stream());
           best_objective = solution.get_objective();
+          solution.problem_ptr->add_cutting_plane_at_objective(solution.get_objective() +
+                                                               OBJECTIVE_EPSILON);
         }
       }
     }
@@ -393,19 +405,23 @@ bool local_search_t<i_t, f_t>::run_fp(solution_t<i_t, f_t>& solution,
                        solution.assignment.data(),
                        solution.assignment.size(),
                        solution.handle_ptr->get_stream());
+            solution.problem_ptr->add_cutting_plane_at_objective(solution.get_objective() +
+                                                                 OBJECTIVE_EPSILON);
           }
           fp.config.alpha = default_alpha;
           ls_config_t<i_t, f_t> ls_config;
           // assign current objective
           ls_config.best_objective_of_parents = solution.get_objective();
-          ls_config.n_local_mins              = 500;
+          ls_config.n_local_mins              = 5000;
           is_feasible                         = run_fj_annealing(solution, timer, ls_config);
           if (is_feasible && solution.get_objective() < best_objective) {
-            raft::copy(solution.assignment.data(),
-                       best_solution.data(),
+            raft::copy(best_solution.data(),
+                       solution.assignment.data(),
                        solution.assignment.size(),
                        solution.handle_ptr->get_stream());
             best_objective = solution.get_objective();
+            solution.problem_ptr->add_cutting_plane_at_objective(solution.get_objective() +
+                                                                 OBJECTIVE_EPSILON);
           }
         }
       }

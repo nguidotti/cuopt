@@ -1590,6 +1590,34 @@ f_t problem_t<i_t, f_t>::get_user_obj_from_solver_obj(f_t solver_obj)
   return presolve_data.objective_scaling_factor * (solver_obj + presolve_data.objective_offset);
 }
 
+template <typename i_t, typename f_t>
+void problem_t<i_t, f_t>::add_cutting_plane_at_objective(f_t objective)
+{
+  CUOPT_LOG_INFO("Adding cutting plane at objective %f", objective);
+  if (cutting_plane_added) {
+    // modify the RHS
+    i_t last_constraint = n_constraints - 1;
+    constraint_upper_bounds.set_element_async(last_constraint, objective, handle_ptr->get_stream());
+    return;
+  }
+  cutting_plane_added = true;
+  constraints_delta_t<i_t, f_t> h_constraints;
+  auto h_objective_coefficients = cuopt::host_copy(objective_coefficients);
+  handle_ptr->sync_stream();
+  std::vector<i_t> var_indices;
+  std::vector<f_t> constr_coeffs;
+  for (i_t i = 0; i < n_variables; ++i) {
+    if (h_objective_coefficients[i] != 0) {
+      var_indices.push_back(i);
+      constr_coeffs.push_back(h_objective_coefficients[i]);
+    }
+  }
+  h_constraints.add_constraint(
+    var_indices, constr_coeffs, -std::numeric_limits<f_t>::infinity(), objective);
+  insert_constraints(h_constraints);
+  compute_transpose_of_problem();
+}
+
 #if MIP_INSTANTIATE_FLOAT
 template class problem_t<int, float>;
 #endif

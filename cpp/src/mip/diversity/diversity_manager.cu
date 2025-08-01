@@ -503,8 +503,7 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
 
   if (fp_only_run) {
     auto sol = generate_solution(timer.remaining_time(), false);
-    ls.run_fj_until_timer(sol, population.weights, timer);
-    // run_fp_alone(sol);
+    run_fp_alone(sol);
     return sol;
   }
 
