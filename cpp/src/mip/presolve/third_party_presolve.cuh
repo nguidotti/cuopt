@@ -30,10 +30,11 @@ class third_party_presolve_t {
  public:
   third_party_presolve_t() = default;
 
-  optimization_problem_t<i_t, f_t> apply(optimization_problem_t<i_t, f_t> const& op_problem,
-                                         problem_category_t category,
-                                         f_t absolute_tolerance,
-                                         double time_limit);
+  std::pair<optimization_problem_t<i_t, f_t>, papilo::PresolveStatus> apply(
+    optimization_problem_t<i_t, f_t> const& op_problem,
+    problem_category_t category,
+    f_t absolute_tolerance,
+    double time_limit);
 
   void undo(rmm::device_uvector<f_t>& primal_solution,
             rmm::device_uvector<f_t>& dual_solution,
