@@ -161,7 +161,7 @@ else()
   find_package(RAFT REQUIRED)
 endif()
 
-# find_package(TBB REQUIRED)
+find_package(TBB REQUIRED)
 
 FetchContent_Declare(
   papilo
