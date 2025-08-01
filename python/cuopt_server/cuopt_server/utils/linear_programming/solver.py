@@ -378,10 +378,26 @@ def create_solver(LP_data, warmstart_data):
             solver_settings.set_parameter(
                 CUOPT_CROSSOVER, solver_config.crossover
             )
+
+        def is_mip(var_types):
+            if not var_types:
+                return False
+            elif "I" in var_types:
+                return True
+
+            return False
+
+        if solver_config.presolve is None:
+            if is_mip(LP_data.variable_types):
+                solver_config.presolve = True
+            else:
+                solver_config.presolve = False
+
         if solver_config.presolve is not None:
             solver_settings.set_parameter(
                 CUOPT_PRESOLVE, solver_config.presolve
             )
+
         if solver_config.log_to_console is not None:
             solver_settings.set_parameter(
                 CUOPT_LOG_TO_CONSOLE, solver_config.log_to_console

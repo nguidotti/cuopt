@@ -130,11 +130,26 @@ optimization_problem_t<i_t, f_t> build_optimization_problem(
   papilo::Problem<f_t> const& papilo_problem, raft::handle_t const* handle_ptr)
 {
   optimization_problem_t<i_t, f_t> op_problem(handle_ptr);
-  if (papilo_problem.getNRows() == 0 && papilo_problem.getNCols() == 0) { return op_problem; }
 
   auto obj = papilo_problem.getObjective();
-  op_problem.set_objective_coefficients(obj.coefficients.data(), obj.coefficients.size());
   op_problem.set_objective_offset(obj.offset);
+
+  if (papilo_problem.getNRows() == 0 && papilo_problem.getNCols() == 0) {
+    // FIXME: Shouldn't need to set offsets
+    std::vector<i_t> h_offsets{0};
+    std::vector<i_t> h_indices{};
+    std::vector<f_t> h_values{};
+    op_problem.set_csr_constraint_matrix(h_values.data(),
+                                         h_values.size(),
+                                         h_indices.data(),
+                                         h_indices.size(),
+                                         h_offsets.data(),
+                                         h_offsets.size());
+
+    return op_problem;
+  }
+
+  op_problem.set_objective_coefficients(obj.coefficients.data(), obj.coefficients.size());
 
   auto& constraint_matrix = papilo_problem.getConstraintMatrix();
   auto row_lower          = constraint_matrix.getLeftHandSides();
@@ -266,11 +281,11 @@ void set_presolve_options(papilo::Presolve<f_t>& presolver,
 }
 
 template <typename i_t, typename f_t>
-optimization_problem_t<i_t, f_t> third_party_presolve_t<i_t, f_t>::apply(
-  optimization_problem_t<i_t, f_t> const& op_problem,
-  problem_category_t category,
-  f_t absolute_tolerance,
-  double time_limit)
+std::pair<optimization_problem_t<i_t, f_t>, papilo::PresolveStatus>
+third_party_presolve_t<i_t, f_t>::apply(optimization_problem_t<i_t, f_t> const& op_problem,
+                                        problem_category_t category,
+                                        f_t absolute_tolerance,
+                                        double time_limit)
 {
   papilo::Problem<f_t> papilo_problem = build_papilo_problem(op_problem);
 
@@ -287,19 +302,20 @@ optimization_problem_t<i_t, f_t> third_party_presolve_t<i_t, f_t>::apply(
   presolver.setVerbosityLevel(papilo::VerbosityLevel::kQuiet);
 
   auto result = presolver.apply(papilo_problem);
-  if (result.status == papilo::PresolveStatus::kInfeasible) {
-    return optimization_problem_t<i_t, f_t>(op_problem.get_handle_ptr());
-  }
-
-  post_solve_storage_ = result.postsolve;
-
   check_presolve_status(result.status);
+  if (result.status == papilo::PresolveStatus::kInfeasible) {
+    return std::make_pair(optimization_problem_t<i_t, f_t>(op_problem.get_handle_ptr()),
+                          papilo::PresolveStatus::kInfeasible);
+  }
+  post_solve_storage_ = result.postsolve;
   CUOPT_LOG_INFO("Presolved problem:: Num variables: %d Num constraints: %d, NNZ: %d",
                  papilo_problem.getNCols(),
                  papilo_problem.getNRows(),
                  papilo_problem.getConstraintMatrix().getNnz());
 
-  return build_optimization_problem<i_t, f_t>(papilo_problem, op_problem.get_handle_ptr());
+  return std::make_pair(
+    build_optimization_problem<i_t, f_t>(papilo_problem, op_problem.get_handle_ptr()),
+    result.status);
 }
 
 template <typename i_t, typename f_t>
