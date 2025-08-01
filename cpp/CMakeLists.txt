@@ -73,7 +73,7 @@ set(CUOPT_CXX_FLAGS "")
 set(CUOPT_CUDA_FLAGS "")
 
 if(CMAKE_COMPILER_IS_GNUCXX)
-  list(APPEND CUOPT_CXX_FLAGS -Werror -Wno-error=deprecated-declarations)
+  list(APPEND CUOPT_CXX_FLAGS -Werror -Wno-error=deprecated-declarations -fpermissive)
 endif(CMAKE_COMPILER_IS_GNUCXX)
 
 if(DEFINE_ASSERT)
@@ -108,7 +108,7 @@ if(${CMAKE_CUDA_COMPILER_VERSION} VERSION_GREATER_EQUAL 12.8 AND CMAKE_CUDA_COMP
   set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -static-global-template-stub=false")
 endif()
 list(APPEND CUOPT_CUDA_FLAGS -Werror=cross-execution-space-call -Wno-deprecated-declarations -Xcompiler=-Werror)
-list(APPEND CUOPT_CUDA_FLAGS -Xcompiler=-Wall -Wno-error=non-template-friend)
+list(APPEND CUOPT_CUDA_FLAGS -Xcompiler=-Wall -Wno-error=non-template-friend -Xcompiler=-fpermissive)
 list(APPEND CUOPT_CUDA_FLAGS -Xfatbin=-compress-all)
 if(CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 12.9 AND CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 13.0)
   list(APPEND CUOPT_CUDA_FLAGS -Xfatbin=--compress-level=3)
