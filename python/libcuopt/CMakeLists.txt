@@ -45,12 +45,12 @@ FetchContent_Declare(
   GIT_TAG v3.2
 )
 FetchContent_MakeAvailable(argparse)
-FetchContent_Declare(
-  tbb
-  GIT_REPOSITORY https://github.com/oneapi-src/oneTBB.git
-  GIT_TAG v2022.2.0
-)
-FetchContent_MakeAvailable(tbb)
+# FetchContent_Declare(
+#   tbb
+#   GIT_REPOSITORY https://github.com/oneapi-src/oneTBB.git
+#   GIT_TAG v2022.2.0
+# )
+# FetchContent_MakeAvailable(tbb)
 
 FetchContent_Declare(
   boost

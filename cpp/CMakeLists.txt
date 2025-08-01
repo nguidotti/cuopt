@@ -161,7 +161,7 @@ else()
   find_package(RAFT REQUIRED)
 endif()
 
-find_package(TBB REQUIRED)
+# find_package(TBB REQUIRED)
 
 FetchContent_Declare(
   papilo
@@ -170,6 +170,7 @@ FetchContent_Declare(
 )
 
 set(BUILD_TESTING OFF CACHE BOOL "Disable test build for papilo")
+set(TBB OFF CACHE BOOL "Disable TBB")
 
 FetchContent_MakeAvailable(papilo)
 
@@ -256,7 +257,7 @@ target_link_libraries(cuopt
   CCCL::CCCL
   raft::raft
   cuopt::mps_parser
-  TBB::tbb
+  # TBB::tbb
   PRIVATE
   ${CUOPT_PRIVATE_CUDA_LIBS}
   )
