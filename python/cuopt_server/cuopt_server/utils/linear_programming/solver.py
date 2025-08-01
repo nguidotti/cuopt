@@ -380,7 +380,7 @@ def create_solver(LP_data, warmstart_data):
             )
 
         def is_mip(var_types):
-            if len(var_types) == 0:
+            if not var_types:
                 return False
             elif "I" in var_types:
                 return True
