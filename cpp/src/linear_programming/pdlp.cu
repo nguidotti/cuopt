@@ -142,6 +142,7 @@ pdlp_solver_t<i_t, f_t>::pdlp_solver_t(problem_t<i_t, f_t>& op_problem,
 
   // TODO how to handle batch mode here?
   if (settings.get_pdlp_warm_start_data().last_restart_duality_gap_dual_solution_.size() != 0) {
+    cuopt_expects(!settings.batch_mode, error_type_t::ValidationError, "Batch mode not supported for warm start");
     set_initial_primal_solution(settings.get_pdlp_warm_start_data().current_primal_solution_);
     set_initial_dual_solution(settings.get_pdlp_warm_start_data().current_dual_solution_);
     initial_step_size_     = settings.get_pdlp_warm_start_data().initial_step_size_;
@@ -149,15 +150,15 @@ pdlp_solver_t<i_t, f_t>::pdlp_solver_t(problem_t<i_t, f_t>& op_problem,
     total_pdlp_iterations_ = settings.get_pdlp_warm_start_data().total_pdlp_iterations_;
     pdhg_solver_.set_total_pdhg_iterations(
       settings.get_pdlp_warm_start_data().total_pdhg_iterations_);
-    restart_strategy_.last_candidate_kkt_score =
+    restart_strategy_.last_candidate_kkt_scores_[0] =
       settings.get_pdlp_warm_start_data().last_candidate_kkt_score_;
-    restart_strategy_.last_restart_kkt_score =
+    restart_strategy_.last_restart_kkt_scores_[0] =
       settings.get_pdlp_warm_start_data().last_restart_kkt_score_;
-    raft::copy(restart_strategy_.weighted_average_solution_.sum_primal_solutions_.data(),
+    raft::copy(restart_strategy_.weighted_average_solution_.get_sum_primal_solutions().data(),
                settings.get_pdlp_warm_start_data().sum_primal_solutions_.data(),
                settings.get_pdlp_warm_start_data().sum_primal_solutions_.size(),
                stream_view_);
-    raft::copy(restart_strategy_.weighted_average_solution_.sum_dual_solutions_.data(),
+    raft::copy(restart_strategy_.weighted_average_solution_.get_sum_dual_solutions().data(),
                settings.get_pdlp_warm_start_data().sum_dual_solutions_.data(),
                settings.get_pdlp_warm_start_data().sum_dual_solutions_.size(),
                stream_view_);
@@ -183,12 +184,12 @@ pdlp_solver_t<i_t, f_t>::pdlp_solver_t(problem_t<i_t, f_t>& op_problem,
                stream_view_);
 
     const auto value = settings.get_pdlp_warm_start_data().sum_solution_weight_;
-    restart_strategy_.weighted_average_solution_.sum_primal_solution_weights_.set_element_async(0,
+    restart_strategy_.weighted_average_solution_.get_sum_primal_solution_weights().set_element_async(0,
       value, stream_view_);
-    restart_strategy_.weighted_average_solution_.sum_dual_solution_weights_.set_element_async(0,
+    restart_strategy_.weighted_average_solution_.get_sum_dual_solution_weights().set_element_async(0,
       value, stream_view_);
-    restart_strategy_.weighted_average_solution_.iterations_since_last_restart_ =
-      settings.get_pdlp_warm_start_data().iterations_since_last_restart_;
+    restart_strategy_.weighted_average_solution_.set_iterations_since_last_restart(0,
+      settings.get_pdlp_warm_start_data().iterations_since_last_restart_);
   }
   // Checks performed below are assert only
   best_primal_quality_so_far_.primal_objective = (op_problem_scaled_.maximize)
@@ -502,11 +503,11 @@ pdlp_warm_start_data_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::get_filled_warmed_star
              pdhg_solver_.get_dual_solution().size(),
              stream_view_);
   raft::copy(tmp_sum_primal_solutions.data(),
-             restart_strategy_.weighted_average_solution_.sum_primal_solutions_.data(),
+             restart_strategy_.weighted_average_solution_.get_sum_primal_solutions().data(),
              primal_size_h_,
              stream_view_);
   raft::copy(tmp_sum_dual_solutions.data(),
-             restart_strategy_.weighted_average_solution_.sum_dual_solutions_.data(),
+             restart_strategy_.weighted_average_solution_.get_sum_dual_solutions().data(),
              dual_size_h_,
              stream_view_);
   raft::copy(tmp_unscaled_primal_avg_solution.data(),
@@ -530,24 +531,25 @@ pdlp_warm_start_data_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::get_filled_warmed_star
              primal_size_h_,
              stream_view_);
   }
+  // TODO batch mode
   return pdlp_warm_start_data_t<i_t, f_t>(
     (settings_.batch_mode ? tmp_primal_solution : pdhg_solver_.get_primal_solution()),
     (settings_.batch_mode ? tmp_dual_solution : pdhg_solver_.get_dual_solution()),
     (settings_.batch_mode ? tmp_unscaled_primal_avg_solution : unscaled_primal_avg_solution_),
     (settings_.batch_mode ? tmp_unscaled_dual_avg_solution : unscaled_dual_avg_solution_),
     (settings_.batch_mode ? tmp_current_AtY : pdhg_solver_.get_saddle_point_state().get_current_AtY()),
-    (settings_.batch_mode ? tmp_sum_primal_solutions : restart_strategy_.weighted_average_solution_.sum_primal_solutions_),
-    (settings_.batch_mode ? tmp_sum_dual_solutions : restart_strategy_.weighted_average_solution_.sum_dual_solutions_),
+    (settings_.batch_mode ? tmp_sum_primal_solutions : restart_strategy_.weighted_average_solution_.get_sum_primal_solutions()),
+    (settings_.batch_mode ? tmp_sum_dual_solutions : restart_strategy_.weighted_average_solution_.get_sum_dual_solutions()),
     (settings_.batch_mode ? tmp_last_restart_duality_gap_primal_solution : restart_strategy_.last_restart_duality_gap_.primal_solution_),
     (settings_.batch_mode ? tmp_last_restart_duality_gap_dual_solution : restart_strategy_.last_restart_duality_gap_.dual_solution_),
     get_primal_weight_h(),
     get_step_size_h(),
     total_pdlp_iterations_,
     pdhg_solver_.get_total_pdhg_iterations(),
-    restart_strategy_.last_candidate_kkt_score,
-    restart_strategy_.last_restart_kkt_score,
-    restart_strategy_.weighted_average_solution_.sum_primal_solution_weights_.element(0, stream_view_), // TODO handle batch
-    restart_strategy_.weighted_average_solution_.iterations_since_last_restart_);
+    restart_strategy_.last_candidate_kkt_scores_[0],
+    restart_strategy_.last_restart_kkt_scores_[0],
+    restart_strategy_.weighted_average_solution_.get_sum_primal_solution_weights().element(0, stream_view_), // TODO handle batch
+    restart_strategy_.get_iterations_since_last_restart(0));
 }
 
 template <typename i_t, typename f_t>
@@ -558,7 +560,7 @@ void pdlp_solver_t<i_t, f_t>::print_termination_criteria(
 {
   if (!inside_mip_) {
     if (best_id == -1 && settings_.batch_mode) {
-      std::tie(std::ignore, best_id) = restart_strategy_.compute_kkt_score(
+      std::tie(std::ignore, best_id) = restart_strategy_.compute_best_kkt_score(
         termination_strategy.get_convergence_information().get_l2_primal_residual(),
         termination_strategy.get_convergence_information().get_l2_dual_residual(),
         termination_strategy.get_convergence_information().get_gap(),
@@ -619,7 +621,7 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::return_best_s
     best_id = termination_strategy.get_optimal_solution_id();
   else
   {
-    std::tie(std::ignore, best_id) = restart_strategy_.compute_kkt_score(
+    std::tie(std::ignore, best_id) = restart_strategy_.compute_best_kkt_score(
       termination_strategy.get_convergence_information().get_l2_primal_residual(),
       termination_strategy.get_convergence_information().get_l2_dual_residual(),
       termination_strategy.get_convergence_information().get_gap(),
@@ -742,13 +744,13 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
   // If both are pdlp_termination_status_t::Optimal, return the one with the lowest KKT score
   if (average_termination_strategy_.has_optimal_status() &&
       current_termination_strategy_.has_optimal_status()) {
-    const auto [best_current_kkt_score, best_current_id] = restart_strategy_.compute_kkt_score(
+    const auto [best_current_kkt_score, best_current_id] = restart_strategy_.compute_best_kkt_score(
       current_termination_strategy_.get_convergence_information().get_l2_primal_residual(),
       current_termination_strategy_.get_convergence_information().get_l2_dual_residual(),
       current_termination_strategy_.get_convergence_information().get_gap(),
       primal_weight_);
 
-    const auto [best_average_kkt_score, best_average_id] = restart_strategy_.compute_kkt_score(
+    const auto [best_average_kkt_score, best_average_id] = restart_strategy_.compute_best_kkt_score(
       average_termination_strategy_.get_convergence_information().get_l2_primal_residual(),
       average_termination_strategy_.get_convergence_information().get_l2_dual_residual(),
       average_termination_strategy_.get_convergence_information().get_gap(),
@@ -1300,8 +1302,7 @@ void pdlp_solver_t<i_t, f_t>::take_step(i_t total_pdlp_iterations)
 #endif
     pdhg_solver_.take_step(primal_step_size_,
                            dual_step_size_,
-                           restart_strategy_.get_iterations_since_last_restart(),
-                           restart_strategy_.get_last_restart_was_average(),
+                           restart_strategy_.just_restarted_to_average(),
                            total_pdlp_iterations);
 
     step_size_strategy_.compute_step_sizes(

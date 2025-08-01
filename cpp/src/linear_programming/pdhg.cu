@@ -150,7 +150,6 @@ void pdhg_solver_t<i_t, f_t>::compute_next_dual_solution(rmm::device_uvector<f_t
     dual_projection<f_t>(dual_step_size.data()),
     stream_view_);
   } else {
-    // TMP: for now just copy in and out dual in the matrix to make sure SpMM is working
     raft::sparse::detail::cusparsespmm(handle_ptr_->get_cusparse_handle(),
                CUSPARSE_OPERATION_NON_TRANSPOSE,
                CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -192,9 +191,6 @@ void pdhg_solver_t<i_t, f_t>::compute_next_dual_solution(rmm::device_uvector<f_t
     batch_dual_projection<f_t>(),
     stream_view_);
   }
-#ifdef PDLP_DEBUG_MODE
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
-#endif
 }
 
 template <typename i_t, typename f_t>
@@ -226,9 +222,6 @@ void pdhg_solver_t<i_t, f_t>::compute_At_y()
                                                         (f_t*)cusparse_view_.buffer_transpose_batch.data(),
                                                         stream_view_));
   }
-#ifdef PDLP_DEBUG_MODE
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
-#endif
 }
 
 template <typename i_t, typename f_t>
@@ -292,16 +285,12 @@ void pdhg_solver_t<i_t, f_t>::compute_primal_projection_with_gradient(
     batch_primal_projection<f_t>(),
     stream_view_);
   }
-#ifdef PDLP_DEBUG_MODE
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
-#endif
 }
 
 template <typename i_t, typename f_t>
 void pdhg_solver_t<i_t, f_t>::compute_next_primal_dual_solution(
   rmm::device_uvector<f_t>& primal_step_size,
-  i_t iterations_since_last_restart,
-  bool last_restart_was_average,
+  bool just_restarted_to_average,
   rmm::device_uvector<f_t>& dual_step_size,
   i_t total_pdlp_iterations)
 {
@@ -320,8 +309,7 @@ void pdhg_solver_t<i_t, f_t>::compute_next_primal_dual_solution(
   // current)
   // Indeed, adaptative_step_size has already computed what was next (now current) A_t @ y,
   // so we don't need to recompute it here
-  if (total_pdhg_iterations_ == 0 ||
-      (iterations_since_last_restart == 0 && last_restart_was_average)) {
+  if (total_pdhg_iterations_ == 0 || just_restarted_to_average) {
 #ifdef PDLP_DEBUG_MODE
     std::cout << "    Very first or first iteration since last restart and was average, "
                  "recomputing A_t * Y"
@@ -358,8 +346,7 @@ void pdhg_solver_t<i_t, f_t>::compute_next_primal_dual_solution(
 template <typename i_t, typename f_t>
 void pdhg_solver_t<i_t, f_t>::take_step(rmm::device_uvector<f_t>& primal_step_size,
                                         rmm::device_uvector<f_t>& dual_step_size,
-                                        i_t iterations_since_last_restart,
-                                        bool last_restart_was_average,
+                                        bool just_restarted_to_average,
                                         i_t total_pdlp_iterations)
 {
 #ifdef PDLP_DEBUG_MODE
@@ -367,8 +354,7 @@ void pdhg_solver_t<i_t, f_t>::take_step(rmm::device_uvector<f_t>& primal_step_si
 #endif
 
   compute_next_primal_dual_solution(primal_step_size,
-                                    iterations_since_last_restart,
-                                    last_restart_was_average,
+                                    just_restarted_to_average,
                                     dual_step_size,
                                     total_pdlp_iterations);
   total_pdhg_iterations_ += 1;

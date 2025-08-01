@@ -49,8 +49,7 @@ class pdhg_solver_t {
 
   void take_step(rmm::device_uvector<f_t>& primal_step_size,
                  rmm::device_uvector<f_t>& dual_step_size,
-                 i_t iterations_since_last_restart,
-                 bool last_restart_was_average,
+                 bool just_restarted_to_average,
                  i_t total_pdlp_iterations);
   void update_solution(cusparse_view_t<i_t, f_t>& current_op_problem_evaluation_cusparse_view_);
 
@@ -59,9 +58,15 @@ class pdhg_solver_t {
 
   private:
   i_t total_pdhg_iterations_;
+  /**
+   * Compute the next primal and dual solution
+   * @param primal_step_size Step size for the primal solution
+   * @param just_restarted_to_average True if at least one solution was just restarted to average during last iteration. We thus need to recompute At @ Y
+   * @param dual_step_size Step size for the dual solution
+   * @param total_pdlp_iterations Total number of PDLP iterations
+   */
   void compute_next_primal_dual_solution(rmm::device_uvector<f_t>& primal_step_size,
-                                         i_t iterations_since_last_restart,
-                                         bool last_restart_was_average,
+                                         bool just_restarted_to_average,
                                          rmm::device_uvector<f_t>& dual_step_size,
                                          i_t total_pdlp_iterations);
   void compute_next_dual_solution(rmm::device_uvector<f_t>& dual_step_size);

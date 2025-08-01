@@ -53,6 +53,8 @@
 
 #include <cooperative_groups.h>
 
+#include <cuda/std/span>
+
 #include <cmath>
 
 namespace cg = cooperative_groups;
@@ -177,7 +179,6 @@ pdlp_restart_strategy_t<i_t, f_t>::pdlp_restart_strategy_t(
                                     last_restart_duality_gap_.primal_gradient_.data(),
                                     last_restart_duality_gap_.dual_gradient_.data())},
     gap_reduction_ratio_last_trial_{stream_view_},
-    last_restart_length_{0},
     // If KKT restart, don't need to init all of those
     center_point_{
       (is_KKT_restart<i_t, f_t>()) ? 0 : static_cast<size_t>(primal_size_h_ + dual_size_h_),
@@ -223,6 +224,15 @@ pdlp_restart_strategy_t<i_t, f_t>::pdlp_restart_strategy_t(
     reusable_device_scalar_1_{stream_view_},
     reusable_device_scalar_2_{stream_view_},
     reusable_device_scalar_3_{stream_view_},
+    last_candidate_kkt_scores_((is_KKT_restart<i_t, f_t>()) ? (batch_mode_ ? (0 + 3)/*@@*/ : 1) : 0),
+    last_restart_kkt_scores_((is_KKT_restart<i_t, f_t>()) ? (batch_mode_ ? (0 + 3)/*@@*/ : 1) : 0),
+    current_kkt_scores_((is_KKT_restart<i_t, f_t>()) ? (batch_mode_ ? (0 + 3)/*@@*/ : 1) : 0),
+    average_kkt_scores_((is_KKT_restart<i_t, f_t>()) ? (batch_mode_ ? (0 + 3)/*@@*/ : 1) : 0),
+    candidate_kkt_scores_((is_KKT_restart<i_t, f_t>()) ? (batch_mode_ ? (0 + 3)/*@@*/ : 1) : 0),
+    restart_to_average_((is_KKT_restart<i_t, f_t>()) ? (batch_mode_ ? (0 + 3)/*@@*/ : 1) : 0),
+    to_skip_restart_((is_KKT_restart<i_t, f_t>()) ? (batch_mode_ ? (0 + 3)/*@@*/ : 1) : 0),
+    kkt_conditions_met_((is_KKT_restart<i_t, f_t>()) ? (batch_mode_ ? (0 + 3)/*@@*/ : 1) : 0),
+    d_kkt_conditions_met_((is_KKT_restart<i_t, f_t>()) ? (batch_mode_ ? (0 + 3)/*@@*/ : 1) : 0, stream_view_),
     batched_dot_product_handler_(batch_mode_ ? batched_transform_reduce_handler_t<i_t, f_t>((0 + 3)/*@@*/, handle_ptr_) : batched_transform_reduce_handler_t<i_t, f_t>())
 {
   raft::common::nvtx::range fun_scope("Initializing restart strategy");
@@ -274,6 +284,32 @@ pdlp_restart_strategy_t<i_t, f_t>::pdlp_restart_strategy_t(
       std::min(deviceProp.multiProcessorCount * numBlocksPerSm,
                (primal_size_h_ + dual_size_h_ + numThreads - 1) / numThreads);
     shared_live_kernel_accumulator_.resize(nb_block_to_launch, handle_ptr->get_stream());
+    // In the context of trust region we always want to trigger the computation since batch mode is not supported
+    thrust::fill(handle_ptr_->get_thrust_policy(), d_kkt_conditions_met_.begin(), d_kkt_conditions_met_.end(), 1);
+  } else if (is_KKT_restart<i_t, f_t>()) {
+    std::fill(last_candidate_kkt_scores_.begin(), last_candidate_kkt_scores_.end(), f_t(0.0));
+    std::fill(last_restart_kkt_scores_.begin(), last_restart_kkt_scores_.end(), f_t(0.0));
+  }
+}
+
+template <typename i_t, typename f_t>
+void pdlp_restart_strategy_t<i_t, f_t>::batch_masked_copy(
+  const rmm::device_uvector<f_t>& source,
+  [[maybe_unused]] cuda::std::span<const int> mask,
+  [[maybe_unused]] const i_t solution_size,
+  rmm::device_uvector<f_t>& destination)
+{
+  // Could be fused but non batch mode allows to stay out of additional stream creation
+  if (!batch_mode_) {
+    cuopt_assert(source.size() == destination.size(), "source and destination must have the same size");
+    raft::copy(destination.data(), source.data(), source.size(), stream_view_);
+  } else {
+    cuopt_assert(source.size() % mask.size() == 0, "source and mask must be a multiple of each other");
+    cuopt_assert(source.size() % solution_size == 0, "source and solution_size must be a multiple of each other");
+    cuopt_assert(source.size() == destination.size(), "source and destination must have the same size");
+    batched_dot_product_handler_.batch_masked_transform_reduce([&](i_t climber, rmm::cuda_stream_view stream){
+      raft::copy(destination.data() + climber * solution_size, source.data() + climber * solution_size, solution_size, stream);
+    }, mask);
   }
 }
 
@@ -313,7 +349,7 @@ void pdlp_restart_strategy_t<i_t, f_t>::run_trust_region_restart(
   // Todo rename with the futur name
   cuopt_expects(!batch_mode_, error_type_t::RuntimeError, "Batch mode not supported for trust region restart (Methodical1). Use KKT restart instead (Fast1, Stable2).");
 
-  if (weighted_average_solution_.get_iterations_since_last_restart() == 0) {
+  if (weighted_average_solution_.get_iterations_since_last_restart(0) == 0) {
 #ifdef PDLP_VERBOSE_MODE
     std::cout << "    No internal iteration, can't restart yet, returning:" << std::endl;
 #endif
@@ -332,7 +368,7 @@ void pdlp_restart_strategy_t<i_t, f_t>::run_trust_region_restart(
                                        1,
                                        stream_view_);
 
-  i_t restart = should_do_artificial_restart(total_number_of_iterations);
+  bool restart = should_do_artificial_restart(total_number_of_iterations);
 
   compute_localized_duality_gaps(pdhg_solver.get_saddle_point_state(),
                                  primal_solution_avg,
@@ -418,7 +454,29 @@ __global__ void kernel_compute_kkt_score(raft::device_span<const f_t> l2_primal_
 }
 
 template <typename i_t, typename f_t>
-std::pair<f_t, i_t> pdlp_restart_strategy_t<i_t, f_t>::compute_kkt_score(
+void pdlp_restart_strategy_t<i_t, f_t>::compute_kkt_scores(
+  const rmm::device_uvector<f_t>& l2_primal_residual,
+  const rmm::device_uvector<f_t>& l2_dual_residual,
+  const rmm::device_uvector<f_t>& gap,
+  const rmm::device_uvector<f_t>& primal_weight,
+  std::vector<f_t>& kkt_scores)
+{
+  const int block_size = (batch_mode_ ? std::min(256, (0 + 3)/*@@*/) : 1);
+  const int grid_size = (batch_mode_ ? cuda::ceil_div((0 + 3)/*@@*/, block_size) : 1);
+  kernel_compute_kkt_score<i_t, f_t><<<grid_size, block_size, 0, stream_view_>>>(raft::device_span<const f_t>(l2_primal_residual.data(), l2_primal_residual.size()),
+                                                           raft::device_span<const f_t>(l2_dual_residual.data(), l2_dual_residual.size()),
+                                                           raft::device_span<const f_t>(gap.data(), gap.size()),
+                                                           raft::device_span<const f_t>(primal_weight.data(), primal_weight.size()),
+                                                           raft::device_span<f_t>(thrust::raw_pointer_cast(tmp_kkt_score_.data()), tmp_kkt_score_.size()),
+                                                           batch_mode_ ? (0 + 3)/*@@*/ : 1);
+  RAFT_CUDA_TRY(cudaPeekAtLastError());
+  // Sync to make sure tmp_kkt_score_ which is host pinned memory has been written to
+  RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
+  std::copy(tmp_kkt_score_.begin(), tmp_kkt_score_.end(), kkt_scores.begin());
+}
+
+template <typename i_t, typename f_t>
+std::pair<f_t, i_t> pdlp_restart_strategy_t<i_t, f_t>::compute_best_kkt_score(
   const rmm::device_uvector<f_t>& l2_primal_residual,
   const rmm::device_uvector<f_t>& l2_dual_residual,
   const rmm::device_uvector<f_t>& gap,
@@ -434,30 +492,26 @@ std::pair<f_t, i_t> pdlp_restart_strategy_t<i_t, f_t>::compute_kkt_score(
                                                            batch_mode_ ? (0 + 3)/*@@*/ : 1);
   RAFT_CUDA_TRY(cudaPeekAtLastError());
   RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
-  if (batch_mode_) {
-    const auto min = std::min_element(tmp_kkt_score_.begin(), tmp_kkt_score_.end());
-    return std::make_pair(*min, std::distance(tmp_kkt_score_.begin(), min));
-  } else {
-    return std::make_pair(tmp_kkt_score_[0], 0);
-  }
+  const auto min = std::min_element(tmp_kkt_score_.begin(), tmp_kkt_score_.end());
+  return std::make_pair(*min, std::distance(tmp_kkt_score_.begin(), min));
 }
 
 template <typename i_t, typename f_t>
-bool pdlp_restart_strategy_t<i_t, f_t>::kkt_decay(f_t candidate_kkt_score)
+bool pdlp_restart_strategy_t<i_t, f_t>::kkt_decay(i_t candidate_kkt_score_idx)
 {
 #ifdef PDLP_DEBUG_MODE
-  std::cout << "last_candidate_kkt_score=" << last_candidate_kkt_score << std::endl;
-  std::cout << "last_restart_kkt_score=" << last_restart_kkt_score << std::endl;
+  std::cout << "last_candidate_kkt_score=" << last_candidate_kkt_scores_[candidate_kkt_score_idx] << std::endl;
+  std::cout << "last_restart_kkt_score=" << last_restart_kkt_scores_[candidate_kkt_score_idx] << std::endl;
 #endif
-  if (candidate_kkt_score <
-      pdlp_hyper_params::host_default_sufficient_reduction_for_restart * last_restart_kkt_score) {
+  if (candidate_kkt_scores_[candidate_kkt_score_idx] <
+      pdlp_hyper_params::host_default_sufficient_reduction_for_restart * last_restart_kkt_scores_[candidate_kkt_score_idx]) {
 #ifdef PDLP_DEBUG_MODE
     std::cout << "kkt_sufficient_decay restart" << std::endl;
 #endif
     return true;
-  } else if (candidate_kkt_score < pdlp_hyper_params::host_default_necessary_reduction_for_restart *
-                                     last_restart_kkt_score &&
-             candidate_kkt_score > last_candidate_kkt_score) {
+  } else if (candidate_kkt_scores_[candidate_kkt_score_idx] < pdlp_hyper_params::host_default_necessary_reduction_for_restart *
+                                     last_restart_kkt_scores_[candidate_kkt_score_idx] &&
+             candidate_kkt_scores_[candidate_kkt_score_idx] > last_candidate_kkt_scores_[candidate_kkt_score_idx]) {
 #ifdef PDLP_DEBUG_MODE
     std::cout << "kkt_necessary_decay restart" << std::endl;
 #endif
@@ -467,11 +521,21 @@ bool pdlp_restart_strategy_t<i_t, f_t>::kkt_decay(f_t candidate_kkt_score)
 }
 
 template <typename i_t, typename f_t>
-bool pdlp_restart_strategy_t<i_t, f_t>::kkt_restart_conditions(f_t candidate_kkt_score,
-                                                               i_t total_number_of_iterations)
+void pdlp_restart_strategy_t<i_t, f_t>::fill_kkt_restart_conditions(i_t total_number_of_iterations)
 {
-  return should_do_artificial_restart(total_number_of_iterations) == 1 ||
-         kkt_decay(candidate_kkt_score);
+  cuopt_assert(kkt_conditions_met_.size() == to_skip_restart_.size(), "kkt_conditions_met_ and to_skip_restart_ must have the same size");
+  cuopt_assert(kkt_conditions_met_.size() == d_kkt_conditions_met_.size(), "kkt_conditions_met_ and d_kkt_conditions_met_ must have the same size");
+
+  for (size_t i = 0; i < kkt_conditions_met_.size(); ++i) {
+    if (to_skip_restart_[i])
+      kkt_conditions_met_[i] = 0;
+    else
+    {
+      kkt_conditions_met_[i] = should_do_artificial_restart(total_number_of_iterations, i) ||
+                             kkt_decay(i);
+    }
+  }
+  raft::copy(d_kkt_conditions_met_.data(), thrust::raw_pointer_cast(kkt_conditions_met_.data()), kkt_conditions_met_.size(), stream_view_);
 }
 
 template <typename i_t, typename f_t>
@@ -503,7 +567,7 @@ void pdlp_restart_strategy_t<i_t, f_t>::update_distance(pdhg_solver_t<i_t, f_t>&
 }
 
 template <typename i_t, typename f_t>
-bool pdlp_restart_strategy_t<i_t, f_t>::run_kkt_restart(
+void pdlp_restart_strategy_t<i_t, f_t>::run_kkt_restart(
   pdhg_solver_t<i_t, f_t>& pdhg_solver,
   rmm::device_uvector<f_t>& primal_solution_avg,
   rmm::device_uvector<f_t>& dual_solution_avg,
@@ -515,76 +579,91 @@ bool pdlp_restart_strategy_t<i_t, f_t>::run_kkt_restart(
   const rmm::device_uvector<f_t>& step_size,
   i_t total_number_of_iterations)
 {
+  cuopt_assert(current_kkt_scores_.size() == kkt_conditions_met_.size(), "current_kkt_scores_ and kkt_conditions_met_ must have the same size");
+  cuopt_assert(current_kkt_scores_.size() == to_skip_restart_.size(), "current_kkt_scores_ and to_skip_restart_ must have the same size");
+  cuopt_assert(current_kkt_scores_.size() == restart_to_average_.size(), "current_kkt_scores_ and restart_to_average_ must have the same size");
+  cuopt_assert(current_kkt_scores_.size() == candidate_kkt_scores_.size(), "current_kkt_scores_ and candidate_kkt_scores_ must have the same size");
+  cuopt_assert(current_kkt_scores_.size() == last_candidate_kkt_scores_.size(), "current_kkt_scores_ and last_candidate_kkt_scores_ must have the same size");
+  cuopt_assert(current_kkt_scores_.size() == last_restart_kkt_scores_.size(), "current_kkt_scores_ and last_restart_kkt_scores_ must have the same size");
+
 #ifdef PDLP_DEBUG_MODE
   RAFT_CUDA_TRY(cudaDeviceSynchronize());
   std::cout << "Running KKT scheme" << std::endl;
+  std::cout << "  Current convergeance information:" << std::endl;
+  for (size_t i = 0; i < current_convergence_information.get_l2_primal_residual().size(); ++i) {
+    std::cout << "    l2_primal_residual="
+            << current_convergence_information.get_l2_primal_residual().element(i, stream_view_)
+            << "    l2_dual_residual="
+            << current_convergence_information.get_l2_dual_residual().element(i, stream_view_)
+            << "    gap=" << current_convergence_information.get_gap().element(i, stream_view_)
+            << std::endl;
+  }
 #endif
+
   // For KKT restart we need current and average convergeance information:
   // Primal / Dual residual and duality gap
   // Both of them are computed before to know if optimality has been reached
 
-#ifdef PDLP_DEBUG_MODE
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
-  // TODO: batch mode
-  std::cout << "  Current convergeance information:"
-            << "    l2_primal_residual="
-            << current_convergence_information.get_l2_primal_residual().element(0, stream_view_)
-            << "    l2_dual_residual="
-            << current_convergence_information.get_l2_dual_residual().element(0, stream_view_)
-            << "    gap=" << current_convergence_information.get_gap().element(0, stream_view_)
-            << std::endl;
-#endif
-
-  // TODO: batch mode
-  f_t current_kkt_score;
-  std::tie(current_kkt_score, std::ignore) =
-    compute_kkt_score(current_convergence_information.get_l2_primal_residual(),
-                      current_convergence_information.get_l2_dual_residual(),
-                      current_convergence_information.get_gap(),
-                      primal_weight);
+  // Fill the current kkt scores
+  compute_kkt_scores(current_convergence_information.get_l2_primal_residual(),
+                    current_convergence_information.get_l2_dual_residual(),
+                    current_convergence_information.get_gap(),
+                    primal_weight,
+                    current_kkt_scores_);
 
   // Before computing average, check if it's a first iteration after a restart
   // Then there is no average since it's reset after each restart and no kkt candidate yet
-  if (weighted_average_solution_.get_iterations_since_last_restart() == 0) {
-#ifdef PDLP_DEBUG_MODE
-    std::cout << "    First call too kkt restart, returning:" << std::endl;
-#endif
-    last_candidate_kkt_score = current_kkt_score;
-    last_restart_kkt_score   = current_kkt_score;
-    return false;
+  for (size_t i = 0; i < current_kkt_scores_.size(); ++i) {
+    if (weighted_average_solution_.get_iterations_since_last_restart(i) == 0) {
+  #ifdef PDLP_DEBUG_MODE
+      std::cout << "    First call too kkt restart " << i << ", skipping:" << std::endl;
+  #endif
+      last_candidate_kkt_scores_[i] = current_kkt_scores_[i];
+      last_restart_kkt_scores_[i]   = current_kkt_scores_[i];
+      to_skip_restart_[i] = 1;
+    }
+    else
+      to_skip_restart_[i] = 0;
   }
 
-  // TODO: batch mode
-  f_t average_kkt_score;
-  std::tie(average_kkt_score, std::ignore) =
-    compute_kkt_score(average_convergence_information.get_l2_primal_residual(),
+  // Fill the average kkt scores only if not all are skipped (it's ok to fill all even if only some are skipped)
+  if (std::any_of(to_skip_restart_.begin(), to_skip_restart_.end(), [](int to_skip_restart) { return !to_skip_restart; })) {
+    compute_kkt_scores(average_convergence_information.get_l2_primal_residual(),
                       average_convergence_information.get_l2_dual_residual(),
                       average_convergence_information.get_gap(),
-                      primal_weight);
+                      primal_weight,
+                      average_kkt_scores_);
+  }
 
-  f_t candidate_kkt_score;
-  bool restart_to_average;
+  std::fill(restart_to_average_.begin(), restart_to_average_.end(), 0);
 
-  if (current_kkt_score < average_kkt_score) {
-    restart_to_average  = false;
-    candidate_kkt_score = current_kkt_score;
-  } else {
-    restart_to_average  = true;
-    candidate_kkt_score = average_kkt_score;
+  for (size_t i = 0; i < current_kkt_scores_.size(); ++i) {
+    // Skip climbers which are going through their first iteration
+    if (to_skip_restart_[i] == 1) {
+      continue;
+    }
+    if (current_kkt_scores_[i] < average_kkt_scores_[i])
+      candidate_kkt_scores_[i] = current_kkt_scores_[i];
+    else {
+      restart_to_average_[i] = 1;
+      candidate_kkt_scores_[i] = average_kkt_scores_[i];
+    }
   }
 
 #ifdef PDLP_DEBUG_MODE
   RAFT_CUDA_TRY(cudaDeviceSynchronize());
-  std::cout << "    current_kkt_score=" << current_kkt_score << "\n"
-            << "    average_kkt_score=" << average_kkt_score << "\n"
-            << "    candidate_kkt_score=" << candidate_kkt_score << "\n"
-            << "    restart_to_average=" << restart_to_average << std::endl;
+  for (size_t i = 0; i < current_kkt_scores_.size(); ++i) {
+    if (!to_skip_restart_[i]) {
+      std::cout << "    current_kkt_score=" << current_kkt_scores_[i] << "\n"
+                << "    average_kkt_score=" << average_kkt_scores_[i] << "\n"
+                << "    candidate_kkt_score=" << candidate_kkt_scores_[i] << "\n"
+                << "    restart_to_average=" << restart_to_average_[i] << std::endl;
+    }
+  }
 #endif
 
-  bool has_restarted = false;
-
-  if (kkt_restart_conditions(candidate_kkt_score, total_number_of_iterations)) {
-    has_restarted = true;
+  fill_kkt_restart_conditions(total_number_of_iterations);
+  if (std::any_of(kkt_conditions_met_.begin(), kkt_conditions_met_.end(), [](int kkt_met) { return kkt_met; })) {
 
     // If restart, need to compute distance travaled from last either from current or average
     // This is necessary to compute the new primal weight
@@ -597,57 +676,53 @@ bool pdlp_restart_strategy_t<i_t, f_t>::run_kkt_restart(
     // Set which localized_duality_gap_container will be used for candidate
     // (We could save the container copy but compute_distance_traveled_from_last_restart works with
     // containers)
-    if (restart_to_average && !pdlp_hyper_params::never_restart_to_average) {
+    // TODO batch mode: different strategy per climber
+    if (std::any_of(restart_to_average_.begin(), restart_to_average_.end(), [](int restart_to_average) { return restart_to_average; }) && !pdlp_hyper_params::never_restart_to_average) {
 #ifdef PDLP_DEBUG_MODE
       RAFT_CUDA_TRY(cudaDeviceSynchronize());
-      std::cout << "    KKT restart to average" << std::endl;
+      for (size_t i = 0; i < restart_to_average_.size(); ++i) {
+        std::cout << " KKT restart to average: [" << i << "]=" << restart_to_average_[i] << std::endl;
+      }
 #endif
-
-      raft::copy(avg_duality_gap_.primal_solution_.data(),
-                 primal_solution_avg.data(),
-                 primal_solution_avg.size(),
-                 stream_view_);
-      raft::copy(avg_duality_gap_.dual_solution_.data(),
-                 dual_solution_avg.data(),
-                 dual_solution_avg.size(),
-                 stream_view_);
+      batch_masked_copy(primal_solution_avg, make_span(restart_to_average_), primal_size_h_, avg_duality_gap_.primal_solution_);
+      batch_masked_copy(dual_solution_avg, make_span(restart_to_average_), dual_size_h_, avg_duality_gap_.dual_solution_);
       candidate_duality_gap_ = &avg_duality_gap_;
     } else {
 #ifdef PDLP_DEBUG_MODE
       RAFT_CUDA_TRY(cudaDeviceSynchronize());
       std::cout << "    KKT no restart to average" << std::endl;
 #endif
-      raft::copy(current_duality_gap_.primal_solution_.data(),
-                 pdhg_solver.get_saddle_point_state().get_primal_solution().data(),
-                 pdhg_solver.get_saddle_point_state().get_primal_solution().size(),
-                 stream_view_);
-      raft::copy(current_duality_gap_.dual_solution_.data(),
-                 pdhg_solver.get_saddle_point_state().get_dual_solution().data(),
-                 pdhg_solver.get_saddle_point_state().get_dual_solution().size(),
-                 stream_view_);
+      batch_masked_copy(pdhg_solver.get_saddle_point_state().get_primal_solution(),
+                      make_span(kkt_conditions_met_),
+                      primal_size_h_,
+                      current_duality_gap_.primal_solution_);
+      batch_masked_copy(pdhg_solver.get_saddle_point_state().get_dual_solution(),
+                      make_span(kkt_conditions_met_),
+                      dual_size_h_,
+                      current_duality_gap_.dual_solution_);
       candidate_duality_gap_ = &current_duality_gap_;
     }
 
-    // Comupute distance traveled
+    // Comupute distance traveled only on the climbers which have met kkt_conditions
     compute_distance_traveled_from_last_restart(*candidate_duality_gap_,
                                                 primal_weight,
                                                 pdhg_solver.get_primal_tmp_resource(),
                                                 pdhg_solver.get_dual_tmp_resource());
 
-    if (restart_to_average && !pdlp_hyper_params::never_restart_to_average) {
+    // TODO batch mode: different strategy per climber
+    if (std::any_of(restart_to_average_.begin(), restart_to_average_.end(), [](int restart_to_average) { return restart_to_average; }) && !pdlp_hyper_params::never_restart_to_average) {
       // Candidate is pointing to the average
-      raft::copy(pdhg_solver.get_primal_solution().data(),
-                 candidate_duality_gap_->primal_solution_.data(),
-                 candidate_duality_gap_->primal_solution_.size(),
-                 stream_view_);
-      raft::copy(pdhg_solver.get_dual_solution().data(),
-                 candidate_duality_gap_->dual_solution_.data(),
-                 candidate_duality_gap_->dual_solution_.size(),
-                 stream_view_);
-      set_last_restart_was_average(true);
-    } else
-      set_last_restart_was_average(false);
+      batch_masked_copy(candidate_duality_gap_->primal_solution_,
+                      make_span(restart_to_average_),
+                      primal_size_h_,
+                      pdhg_solver.get_primal_solution());
+      batch_masked_copy(candidate_duality_gap_->dual_solution_,
+                      make_span(restart_to_average_),
+                      dual_size_h_,
+                      pdhg_solver.get_dual_solution());
+    }
 
+    // TODO batch mode: different strategy per climber
     if (pdlp_hyper_params::compute_last_restart_before_new_primal_weight) {
       // Save last restart data (primal/dual solution and distance traveled)
       update_last_restart_information(*candidate_duality_gap_, primal_weight);
@@ -661,10 +736,18 @@ bool pdlp_restart_strategy_t<i_t, f_t>::run_kkt_restart(
     }
 
     // Reset average
-    weighted_average_solution_.reset_weighted_average_solution();
+    // TODO batch mode: different strategy per climber (some should only be reset if they have restarted to average)
+    if (!batch_mode_)
+      weighted_average_solution_.reset_weighted_average_solution();
+    else
+      weighted_average_solution_.reset_weighted_average_solution(make_span(kkt_conditions_met_));
 
     // Set last restart candidate
-    last_restart_kkt_score = candidate_kkt_score;
+    for (size_t i = 0; i < candidate_kkt_scores_.size(); ++i) {
+      if (kkt_conditions_met_[i]) {
+        last_restart_kkt_scores_[i] = candidate_kkt_scores_[i];
+      }
+    }
   } else {
 #ifdef PDLP_DEBUG_MODE
     RAFT_CUDA_TRY(cudaDeviceSynchronize());
@@ -673,19 +756,24 @@ bool pdlp_restart_strategy_t<i_t, f_t>::run_kkt_restart(
   }
 
   // Record last kkt candidate
-  last_candidate_kkt_score = candidate_kkt_score;
+  for (size_t i = 0; i < candidate_kkt_scores_.size(); ++i) {
+    if (!to_skip_restart_[i])
+      last_candidate_kkt_scores_[i] = candidate_kkt_scores_[i];
+  }
 
 #ifdef PDLP_DEBUG_MODE
   RAFT_CUDA_TRY(cudaDeviceSynchronize());
-  std::cout << "last_restart_kkt_score=" << last_restart_kkt_score
-            << "last_candidate_kkt_score=" << last_candidate_kkt_score << std::endl;
+  for (size_t i = 0; i < last_restart_kkt_scores_.size(); ++i) {
+    if (!to_skip_restart_[i]) {
+      std::cout << "last_restart_kkt_score=" << last_restart_kkt_scores_[i]
+                << "last_candidate_kkt_score=" << last_candidate_kkt_scores_[i] << std::endl;
+    }
+  }
 #endif
-
-  return has_restarted;
 }
 
 template <typename i_t, typename f_t>
-void pdlp_restart_strategy_t<i_t, f_t>::compute_restart(
+void pdlp_restart_strategy_t<i_t, f_t>::compute_restart( 
   pdhg_solver_t<i_t, f_t>& pdhg_solver,
   rmm::device_uvector<f_t>& primal_solution_avg,
   rmm::device_uvector<f_t>& dual_solution_avg,
@@ -732,10 +820,11 @@ __global__ void compute_new_primal_weight_kernel(
   raft::device_span<const f_t> step_size,
   raft::device_span<f_t> primal_step_size,
   raft::device_span<f_t> dual_step_size,
+  raft::device_span<const int> kkt_conditions_met,
   int batch_size)
 {
   const int id = threadIdx.x + blockIdx.x * blockDim.x;
-  if (id >= batch_size) { return; }
+  if (id >= batch_size || !kkt_conditions_met[id]) { return; }
 
   f_t primal_distance = raft::sqrt(duality_gap_view.primal_distance_traveled[id]);
   f_t dual_distance   = raft::sqrt(duality_gap_view.dual_distance_traveled[id]);
@@ -794,10 +883,12 @@ void pdlp_restart_strategy_t<i_t, f_t>::compute_new_primal_weight(
                                                                                         make_span(step_size),
                                                                                         make_span(primal_step_size),
                                                                                         make_span(dual_step_size),
+                                                                                        make_span(d_kkt_conditions_met_),
                                                                                         (batch_mode_ ? (0 + 3)/*@@*/ : 1));
   RAFT_CUDA_TRY(cudaPeekAtLastError());
 }
 
+// Compute the distance squared moved from the last restart period only on the climbers that have restarted
 template <typename i_t, typename f_t>
 void pdlp_restart_strategy_t<i_t, f_t>::distance_squared_moved_from_last_restart_period(
   const rmm::device_uvector<f_t>& new_solution,
@@ -837,14 +928,14 @@ void pdlp_restart_strategy_t<i_t, f_t>::distance_squared_moved_from_last_restart
             << "  New location=" << debugb.value(stream_view_) << std::endl;
 #endif
 
-raft::linalg::binaryOp(tmp.data(),
-                      old_solution.data(),
-                      new_solution.data(),
-                      new_solution.size(),
-                      a_sub_scalar_times_b<f_t>(reusable_device_scalar_value_1_.data()),
-                      stream_view_);
-  // Both could be merged but for backward compatibility reason we keep it separate
-  if (!batch_mode_) {
+// Both could be merged but for backward compatibility reason we keep it separate
+if (!batch_mode_) {
+    raft::linalg::binaryOp(tmp.data(),
+                          old_solution.data(),
+                          new_solution.data(),
+                          new_solution.size(),
+                          a_sub_scalar_times_b<f_t>(reusable_device_scalar_value_1_.data()),
+                          stream_view_);
     RAFT_CUBLAS_TRY(raft::linalg::detail::cublasdot(handle_ptr_->get_cublas_handle(),
                                                     size_of_solutions_h,
                                                     tmp.data(),
@@ -854,29 +945,37 @@ raft::linalg::binaryOp(tmp.data(),
                                                     distance_moved.data(),
                                                     stream_view_));
  } else {
-   batched_dot_product_handler_.batch_transform_reduce([&](i_t climber, rmm::cuda_stream_view stream){
+   batched_dot_product_handler_.batch_masked_transform_reduce([&](i_t climber, rmm::cuda_stream_view stream){
+    raft::linalg::binaryOp(tmp.data() + climber * size_of_solutions_h,
+                          old_solution.data() + climber * size_of_solutions_h,
+                          new_solution.data() + climber * size_of_solutions_h,
+                          size_of_solutions_h,
+                          a_sub_scalar_times_b<f_t>(reusable_device_scalar_value_1_.data()),
+                          stream);
     RAFT_CUBLAS_TRY(raft::linalg::detail::cublasdot(handle_ptr_->get_cublas_handle(),
-      size_of_solutions_h,
-      tmp.data() + climber * size_of_solutions_h,
-      1,
-      tmp.data() + climber * size_of_solutions_h,
-      1,
+        size_of_solutions_h,
+        tmp.data() + climber * size_of_solutions_h,
+        1,
+        tmp.data() + climber * size_of_solutions_h,
+        1,
       distance_moved.data() + climber,
       stream));
-    });
+  }, make_span(kkt_conditions_met_));
  }
 }
 template <typename i_t, typename f_t>
 __global__ void compute_distance_traveled_last_restart_kernel(
   const typename localized_duality_gap_container_t<i_t, f_t>::view_t duality_gap_view,
   raft::device_span<const f_t> primal_weight,
+  raft::device_span<const int> kkt_conditions_met,
   int batch_size)
 {
   const int idx = threadIdx.x + blockIdx.x * blockDim.x;
-  if (idx >= batch_size) { return; }
+  if (idx >= batch_size || !kkt_conditions_met[idx]) { return; }
 
   const f_t primal_weight_ = primal_weight[idx];
 
+  // TODO: batch mode: different smoothing for climber
   duality_gap_view.distance_traveled[idx] = raft::sqrt(duality_gap_view.primal_distance_traveled[idx] *
                                     pdlp_hyper_params::primal_distance_smoothing * primal_weight_ +
                                   duality_gap_view.dual_distance_traveled[idx] *
@@ -892,21 +991,33 @@ void pdlp_restart_strategy_t<i_t, f_t>::update_last_restart_information(
   const int block_size = (batch_mode_ ? std::min(256, (0 + 3)/*@@*/) : 1);
   const int grid_size = (batch_mode_ ? cuda::ceil_div((0 + 3)/*@@*/, block_size) : 1);
   compute_distance_traveled_last_restart_kernel<i_t, f_t><<<grid_size, block_size, 0, stream_view_>>>(
-    duality_gap.view(), make_span(primal_weight), (batch_mode_ ? (0 + 3)/*@@*/ : 1));
+    duality_gap.view(), make_span(primal_weight), make_span(d_kkt_conditions_met_), (batch_mode_ ? (0 + 3)/*@@*/ : 1));
   RAFT_CUDA_TRY(cudaPeekAtLastError());
 
   cuopt_assert(last_restart_duality_gap_.primal_solution_.size() == duality_gap.primal_solution_.size(), "last_restart_duality_gap_.primal_solution_.size() != duality_gap.primal_solution_.size()");
   cuopt_assert(last_restart_duality_gap_.dual_solution_.size() == duality_gap.dual_solution_.size(), "last_restart_duality_gap_.dual_solution_.size() != duality_gap.dual_solution_.size()");
-  raft::copy(last_restart_duality_gap_.primal_solution_.data(),
-             duality_gap.primal_solution_.data(),
-             duality_gap.primal_solution_.size(),
-             stream_view_);
-  raft::copy(last_restart_duality_gap_.dual_solution_.data(),
-             duality_gap.dual_solution_.data(),
-             duality_gap.dual_solution_.size(),
-             stream_view_);
 
-  last_restart_length_ = weighted_average_solution_.get_iterations_since_last_restart();
+  if (!batch_mode_) {
+    raft::copy(last_restart_duality_gap_.primal_solution_.data(),
+              duality_gap.primal_solution_.data(),
+              duality_gap.primal_solution_.size(),
+              stream_view_);
+    raft::copy(last_restart_duality_gap_.dual_solution_.data(),
+              duality_gap.dual_solution_.data(),
+              duality_gap.dual_solution_.size(),
+              stream_view_);
+  } else {
+    batched_dot_product_handler_.batch_masked_transform_reduce([&](i_t climber, rmm::cuda_stream_view stream){
+        raft::copy(last_restart_duality_gap_.primal_solution_.data() + climber * primal_size_h_,
+                   duality_gap.primal_solution_.data() + climber * primal_size_h_,
+                 primal_size_h_,
+                 stream);
+        raft::copy(last_restart_duality_gap_.dual_solution_.data() + climber * dual_size_h_,
+                   duality_gap.dual_solution_.data() + climber * dual_size_h_,
+                   dual_size_h_,
+               stream);
+    }, make_span(kkt_conditions_met_));
+  }
 }
 
 template <typename i_t, typename f_t>
@@ -977,7 +1088,7 @@ void pdlp_restart_strategy_t<i_t, f_t>::should_do_adaptive_restart_normalized_du
   rmm::device_uvector<f_t>& tmp_primal,
   rmm::device_uvector<f_t>& tmp_dual,
   rmm::device_uvector<f_t>& primal_weight,
-  i_t& restart)
+  bool& restart)
 {
   raft::common::nvtx::range fun_scope("should_do_adaptive_restart_normalized_duality_gap");
 #ifdef PDLP_DEBUG_MODE
@@ -996,7 +1107,9 @@ void pdlp_restart_strategy_t<i_t, f_t>::should_do_adaptive_restart_normalized_du
   compute_distance_traveled_last_restart_kernel<i_t, f_t>
     <<<1, 1, 0, stream_view_>>>(candidate_duality_gap.view(),
                                 make_span(primal_weight),
-                                last_restart_duality_gap_.distance_traveled_.size());
+                                make_span(d_kkt_conditions_met_), // Not used
+                                last_restart_duality_gap_.distance_traveled_.size() // Not used
+                              );
   RAFT_CUDA_TRY(cudaPeekAtLastError());
 
   bound_optimal_objective(
@@ -1006,31 +1119,30 @@ void pdlp_restart_strategy_t<i_t, f_t>::should_do_adaptive_restart_normalized_du
     candidate_duality_gap.view(), last_restart_duality_gap_.view(), this->view());
   RAFT_CUDA_TRY(cudaPeekAtLastError());
 
-  restart = restart_triggered_.value(stream_view_);
+  restart = static_cast<bool>(restart_triggered_.value(stream_view_));
 }
 
 template <typename i_t, typename f_t>
-i_t pdlp_restart_strategy_t<i_t, f_t>::should_do_artificial_restart(
-  i_t total_number_of_iterations) const
+bool pdlp_restart_strategy_t<i_t, f_t>::should_do_artificial_restart(i_t total_number_of_iterations, i_t climber_id) const
 {
   // if long enough since last restart (artificial)
 #ifdef PDLP_DEBUG_MODE
   std::cout << "Artifical restart:\n"
             << "    iterations_since_last_restart="
-            << weighted_average_solution_.get_iterations_since_last_restart() << "\n"
+            << weighted_average_solution_.get_iterations_since_last_restart(climber_id) << "\n"
             << "    total_number_of_iteration=" << total_number_of_iterations << "\n"
             << "    pdlp_hyper_params::default_artificial_restart_threshold="
             << pdlp_hyper_params::default_artificial_restart_threshold << std::endl;
 #endif
-  if (weighted_average_solution_.get_iterations_since_last_restart() >=
+  if (weighted_average_solution_.get_iterations_since_last_restart(climber_id) >=
       pdlp_hyper_params::default_artificial_restart_threshold * total_number_of_iterations) {
 #ifdef PDLP_VERBOSE_MODE
     std::cout << "    Doing artifical restart" << std::endl;
 #endif
-    return 1;
+    return true;
   }
 
-  return 0;
+  return false;
 }
 
 template <typename i_t, typename f_t>
@@ -1785,7 +1897,7 @@ void pdlp_restart_strategy_t<i_t, f_t>::compute_distance_traveled_from_last_rest
   const int block_size = (batch_mode_ ? std::min(256, (0 + 3)/*@@*/) : 1);
   const int grid_size = (batch_mode_ ? cuda::ceil_div((0 + 3)/*@@*/, block_size) : 1);
   compute_distance_traveled_last_restart_kernel<i_t, f_t><<<grid_size, block_size, 0, stream_view_>>>(
-    duality_gap.view(), make_span(primal_weight), (batch_mode_ ? (0 + 3)/*@@*/ : 1));
+    duality_gap.view(), make_span(primal_weight), make_span(d_kkt_conditions_met_), (batch_mode_ ? (0 + 3)/*@@*/ : 1));
   RAFT_CUDA_TRY(cudaPeekAtLastError());
 }
 
@@ -1980,6 +2092,7 @@ void pdlp_restart_strategy_t<i_t, f_t>::reset_internal()
 {
   candidate_is_avg_.set_value_to_zero_async(stream_view_);
   restart_triggered_.set_value_to_zero_async(stream_view_);
+  
 }
 
 template <typename i_t, typename f_t>
@@ -1992,7 +2105,6 @@ typename pdlp_restart_strategy_t<i_t, f_t>::view_t pdlp_restart_strategy_t<i_t, 
     transformed_constraint_lower_bounds_.data(), transformed_constraint_lower_bounds_.size()};
   v.transformed_constraint_upper_bounds = raft::device_span<f_t>{
     transformed_constraint_upper_bounds_.data(), transformed_constraint_upper_bounds_.size()};
-  v.last_restart_length = last_restart_length_;
 
   v.weights = raft::device_span<f_t>{weights_.data(), weights_.size()};
 
@@ -2024,21 +2136,30 @@ typename pdlp_restart_strategy_t<i_t, f_t>::view_t pdlp_restart_strategy_t<i_t, 
 }
 
 template <typename i_t, typename f_t>
-i_t pdlp_restart_strategy_t<i_t, f_t>::get_iterations_since_last_restart() const
+i_t pdlp_restart_strategy_t<i_t, f_t>::get_iterations_since_last_restart(i_t climber_id) const
 {
-  return weighted_average_solution_.get_iterations_since_last_restart();
+  return weighted_average_solution_.get_iterations_since_last_restart(climber_id);
+}
+
+template <typename i_t, typename f_t>
+bool pdlp_restart_strategy_t<i_t, f_t>::just_restarted_to_average() const
+{
+  const auto& weighted_average_solution_iterations = weighted_average_solution_.get_iterations_since_last_restart();
+  cuopt_assert(weighted_average_solution_iterations.size() == restart_to_average_.size(), "weighted_average_solution_iterations and restart_to_average_ must have the same size");
+  for (size_t i = 0; i < restart_to_average_.size(); ++i) {
+    if (restart_to_average_[i] && weighted_average_solution_iterations[i] == 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 template <typename i_t, typename f_t>
 void pdlp_restart_strategy_t<i_t, f_t>::set_last_restart_was_average(bool value)
 {
-  last_restart_was_average_ = value;
-}
-
-template <typename i_t, typename f_t>
-bool pdlp_restart_strategy_t<i_t, f_t>::get_last_restart_was_average() const
-{
-  return last_restart_was_average_;
+  // This function should only be called in non batch mode
+  cuopt_assert(!batch_mode_, "set_last_restart_was_average is not supported in batch mode");
+  restart_to_average_[0] = value;
 }
 
 #define INSTANTIATE(F_TYPE)                                                                     \
@@ -2047,6 +2168,7 @@ bool pdlp_restart_strategy_t<i_t, f_t>::get_last_restart_was_average() const
   template __global__ void compute_distance_traveled_last_restart_kernel<int, F_TYPE>(          \
     const typename localized_duality_gap_container_t<int, F_TYPE>::view_t duality_gap_view,     \
     raft::device_span<const F_TYPE> primal_weight,                                                                \
+    raft::device_span<const int> kkt_conditions_met,                                                                \
     int batch_size);                                                                            \
                                                                                                 \
   template __global__ void pick_restart_candidate_kernel<int, F_TYPE>(                          \
@@ -2088,6 +2210,7 @@ bool pdlp_restart_strategy_t<i_t, f_t>::get_last_restart_was_average() const
     raft::device_span<const F_TYPE> step_size,                                                                    \
     raft::device_span<F_TYPE> primal_step_size,                                                                   \
     raft::device_span<F_TYPE> dual_step_size,                                                                     \
+    raft::device_span<const int> kkt_conditions_met,                                                              \
     int batch_size);                                                                            \
                                                                                                 \
   template __global__ void compute_subgradient_kernel<int, F_TYPE>(                             \

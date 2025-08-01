@@ -26,7 +26,10 @@
 #include <rmm/exec_policy.hpp>
 
 #include <thrust/transform.h>
+#include <thrust/universal_vector.h>
+
 #include <cuda/std/functional>
+#include <cuda/std/span>
 
 namespace cuopt {
 /**
@@ -229,6 +232,18 @@ template <typename T>
 raft::device_span<T> make_span(T* data, size_t size)
 {
   return raft::device_span<T>(data, size);
+}
+
+template <typename T>
+cuda::std::span<const T> make_span(std::vector<T> const& data)
+{
+  return cuda::std::span<const T>(data.data(), data.size());
+}
+
+template <typename T>
+cuda::std::span<const T> make_span(thrust::universal_host_pinned_vector<T> const& data)
+{
+  return cuda::std::span<const T>(thrust::raw_pointer_cast(data.data()), data.size());
 }
 
 // resizes the device vector if it the std vector is larger

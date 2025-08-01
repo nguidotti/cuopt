@@ -37,6 +37,8 @@
 
 #include <raft/core/device_span.hpp>
 
+#include <cuda/std/span>
+
 #include <thrust/universal_vector.h>
 
 namespace cuopt::linear_programming::detail {
@@ -107,11 +109,18 @@ class pdlp_restart_strategy_t {
                           const i_t dual_size,
                           bool batch_mode);
 
-  // Compute kkt score on passed argument using the container tmp_kkt score and stream view
-  std::pair<f_t, i_t> compute_kkt_score(const rmm::device_uvector<f_t>& l2_primal_residual,
+  // Fill the kkt_scores with the kkt scores
+  void compute_kkt_scores(const rmm::device_uvector<f_t>& l2_primal_residual,
                         const rmm::device_uvector<f_t>& l2_dual_residual,
                         const rmm::device_uvector<f_t>& gap,
-                        const rmm::device_uvector<f_t>& primal_weight);
+                        const rmm::device_uvector<f_t>& primal_weight,
+                        std::vector<f_t>& kkt_scores);
+
+  // Returns the best kkt score
+  std::pair<f_t, i_t> compute_best_kkt_score(const rmm::device_uvector<f_t>& l2_primal_residual,
+    const rmm::device_uvector<f_t>& l2_dual_residual,
+    const rmm::device_uvector<f_t>& gap,
+    const rmm::device_uvector<f_t>& primal_weight);
 
   void update_distance(pdhg_solver_t<i_t, f_t>& pdhg_solver,
                        rmm::device_uvector<f_t>& primal_weight,
@@ -144,14 +153,20 @@ class pdlp_restart_strategy_t {
    */
   view_t view();
 
-  i_t get_iterations_since_last_restart() const;
+  i_t get_iterations_since_last_restart(i_t climber_id) const;
 
-  void set_last_restart_was_average(bool value);
-  bool get_last_restart_was_average() const;
+  bool just_restarted_to_average() const;
 
-  i_t should_do_artificial_restart(i_t total_number_of_iterations) const;
+  bool should_do_artificial_restart(i_t total_number_of_iterations, i_t climber_id = 0) const;
 
  private:
+  // Version for single climber
+  void set_last_restart_was_average(bool value);
+  void batch_masked_copy(const rmm::device_uvector<f_t>& source,
+                      [[maybe_unused]] cuda::std::span<const int> mask,
+                      [[maybe_unused]] const i_t solution_size,
+                      rmm::device_uvector<f_t>& destination);
+
   void run_trust_region_restart(pdhg_solver_t<i_t, f_t>& pdhg_solver,
                                 rmm::device_uvector<f_t>& primal_solution_avg,
                                 rmm::device_uvector<f_t>& dual_solution_avg,
@@ -160,7 +175,7 @@ class pdlp_restart_strategy_t {
                                 rmm::device_uvector<f_t>& dual_step_size,
                                 rmm::device_uvector<f_t>& primal_weight,
                                 const rmm::device_uvector<f_t>& step_size);
-  bool run_kkt_restart(pdhg_solver_t<i_t, f_t>& pdhg_solver,
+  void run_kkt_restart(pdhg_solver_t<i_t, f_t>& pdhg_solver,
                        rmm::device_uvector<f_t>& primal_solution_avg,
                        rmm::device_uvector<f_t>& dual_solution_avg,
                        const convergence_information_t<i_t, f_t>& current_convergence_information,
@@ -170,8 +185,8 @@ class pdlp_restart_strategy_t {
                        rmm::device_uvector<f_t>& primal_weight,
                        const rmm::device_uvector<f_t>& step_size,
                        i_t total_number_of_iterations);
-  bool kkt_restart_conditions(f_t candidate_kkt_score, i_t total_number_of_iterations);
-  bool kkt_decay(f_t candidate_kkt_score);
+  void fill_kkt_restart_conditions(i_t total_number_of_iterations);
+  bool kkt_decay(i_t candidate_kkt_score_idx);
   void compute_localized_duality_gaps(saddle_point_state_t<i_t, f_t>& current_saddle_point_state,
                                       rmm::device_uvector<f_t>& primal_solution_avg,
                                       rmm::device_uvector<f_t>& dual_solution_avg,
@@ -205,7 +220,7 @@ class pdlp_restart_strategy_t {
     rmm::device_uvector<f_t>& tmp_primal,
     rmm::device_uvector<f_t>& tmp_dual,
     rmm::device_uvector<f_t>& primal_weight,
-    i_t& restart);
+    bool& restart);
 
   void bound_optimal_objective(cusparse_view_t<i_t, f_t>& existing_cusparse_view,
                                localized_duality_gap_container_t<i_t, f_t>& duality_gap,
@@ -285,7 +300,6 @@ class pdlp_restart_strategy_t {
   cusparse_view_t<i_t, f_t> last_restart_duality_gap_cusparse_view_;
 
   rmm::device_scalar<f_t> gap_reduction_ratio_last_trial_;
-  i_t last_restart_length_;
 
   // All mainly used in bound_objective
   // {
@@ -325,10 +339,18 @@ class pdlp_restart_strategy_t {
   rmm::device_scalar<f_t> reusable_device_scalar_2_;
   rmm::device_scalar<f_t> reusable_device_scalar_3_;
 
-  f_t last_candidate_kkt_score = f_t(0.0);
-  f_t last_restart_kkt_score   = f_t(0.0);
+  std::vector<f_t> last_candidate_kkt_scores_;
+  std::vector<f_t> last_restart_kkt_scores_;
+  std::vector<f_t> current_kkt_scores_;
+  std::vector<f_t> average_kkt_scores_;
+  std::vector<f_t> candidate_kkt_scores_;
+  // Using ints instead of bool as bool vector can (and is for std::vector) implemented using a bitfield
+  std::vector<int> restart_to_average_;
+  std::vector<int> to_skip_restart_;
+  thrust::universal_host_pinned_vector<int> kkt_conditions_met_;
+  // Using device vector since we'll often read kkt_conditions_met_ in kernels (pinned would be enough but is slower since read multiple times)
+  rmm::device_uvector<int> d_kkt_conditions_met_;
 
-  bool last_restart_was_average_ = false;
 
   batched_transform_reduce_handler_t<i_t, f_t> batched_dot_product_handler_;
 };

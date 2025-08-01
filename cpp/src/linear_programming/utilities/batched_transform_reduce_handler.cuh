@@ -18,6 +18,7 @@
 #pragma once
 
 #include <utilities/event_handler.cuh>
+#include <utilities/macros.cuh>
 
 #include <rmm/cuda_stream_pool.hpp>
 #include <rmm/device_uvector.hpp>
@@ -42,6 +43,8 @@ struct batched_transform_reduce_handler_t {
   template <typename func_t>
   void batch_transform_reduce(func_t&& func)
   {
+    cuopt_assert(batch_size_ != -1, "Calling batch_transform_reduce on a uninitialized batched_transform_reduce_handler_t");
+
     // We need to make sure operations on the main stream are done before capturing the parallel dot products
     // Create an event after anything that has happened on the main stram
     capture_event_.record(handle_ptr_->get_stream());
@@ -56,6 +59,34 @@ struct batched_transform_reduce_handler_t {
     }
     // Make the main stream wait for all those events to be done
     for (i_t climber = 0; climber < batch_size_; ++climber) {
+      dot_events_[climber].stream_wait(handle_ptr_->get_stream());
+    }
+  }
+
+  template <typename func_t>
+  void batch_masked_transform_reduce(func_t&& func, cuda::std::span<const i_t> mask)
+  {
+    cuopt_assert(batch_size_ != -1, "Calling batch_transform_reduce on a uninitialized batched_transform_reduce_handler_t");
+    cuopt_assert(mask.size() == batch_size_, "Mask size must be equal to batch size");
+
+    if (std::all_of(mask.begin(), mask.end(), [](i_t value) { return value == 0; })) {
+      return;
+    }
+
+    // We need to make sure operations on the main stream are done before capturing the parallel dot products
+    // Create an event after anything that has happened on the main stram
+    capture_event_.record(handle_ptr_->get_stream());
+    // All streams should wait for this event to be done
+    for (i_t climber = 0; climber < batch_size_ && mask[climber] == 1; ++climber) {
+      capture_event_.stream_wait(stream_pool_.get_stream(climber));
+    }
+    // Launch n operations on n streams and add an event after each stream to know when the operation is done
+    for (i_t climber = 0; climber < batch_size_ && mask[climber] == 1; ++climber) {
+      func(climber, stream_pool_.get_stream(climber));
+      dot_events_[climber].record(stream_pool_.get_stream(climber));
+    }
+    // Make the main stream wait for all those events to be done
+    for (i_t climber = 0; climber < batch_size_ && mask[climber] == 1; ++climber) {
       dot_events_[climber].stream_wait(handle_ptr_->get_stream());
     }
   }

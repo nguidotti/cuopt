@@ -25,6 +25,8 @@
 #include <raft/linalg/binary_op.cuh>
 #include <raft/linalg/divide.cuh>
 
+#include <thrust/logical.h>
+
 namespace cuopt::linear_programming::detail {
 template <typename i_t, typename f_t>
 weighted_average_solution_t<i_t, f_t>::weighted_average_solution_t(raft::handle_t const* handle_ptr,
@@ -35,12 +37,13 @@ weighted_average_solution_t<i_t, f_t>::weighted_average_solution_t(raft::handle_
     stream_view_(handle_ptr_->get_stream()),
     primal_size_h_(primal_size),
     dual_size_h_(dual_size),
-    sum_primal_solutions_{(batch_mode ? static_cast<size_t>((0 + 3)/*@@*/) : 1) * primal_size_h_, stream_view_},
-    sum_dual_solutions_{(batch_mode ? static_cast<size_t>((0 + 3)/*@@*/) : 1) * dual_size_h_, stream_view_},
-    sum_primal_solution_weights_{(batch_mode ? static_cast<size_t>((0 + 3)/*@@*/) : 1), stream_view_},
-    sum_dual_solution_weights_{(batch_mode ? static_cast<size_t>((0 + 3)/*@@*/) : 1), stream_view_},
-    iterations_since_last_restart_{0},
+    sum_primal_solutions_{static_cast<size_t>((batch_mode ? (0 + 3)/*@@*/ : 1) * primal_size_h_), stream_view_},
+    sum_dual_solutions_{static_cast<size_t>((batch_mode ? (0 + 3)/*@@*/ : 1) * dual_size_h_), stream_view_},
+    sum_primal_solution_weights_{static_cast<size_t>((batch_mode ? (0 + 3)/*@@*/ : 1)), stream_view_},
+    sum_dual_solution_weights_{static_cast<size_t>((batch_mode ? (0 + 3)/*@@*/ : 1)), stream_view_},
+    iterations_since_last_restart_((batch_mode ? (0 + 3)/*@@*/ : 1), 0),
     graph(stream_view_),
+    batched_memset_handler_(batch_mode ? batched_transform_reduce_handler_t<i_t, f_t>((0 + 3)/*@@*/, handle_ptr_) : batched_transform_reduce_handler_t<i_t, f_t>()),
     batch_mode_(batch_mode)
 {
   RAFT_CUDA_TRY(
@@ -54,17 +57,65 @@ weighted_average_solution_t<i_t, f_t>::weighted_average_solution_t(raft::handle_
 }
 
 template <typename i_t, typename f_t>
+rmm::device_uvector<f_t>& weighted_average_solution_t<i_t, f_t>::get_sum_primal_solutions()
+{
+  return sum_primal_solutions_;
+}
+
+template <typename i_t, typename f_t>
+rmm::device_uvector<f_t>& weighted_average_solution_t<i_t, f_t>::get_sum_dual_solutions()
+{
+  return sum_dual_solutions_;
+}
+
+template <typename i_t, typename f_t>
+rmm::device_uvector<f_t>& weighted_average_solution_t<i_t, f_t>::get_sum_primal_solution_weights()
+{
+  return sum_primal_solution_weights_;
+}
+
+template <typename i_t, typename f_t>
+rmm::device_uvector<f_t>& weighted_average_solution_t<i_t, f_t>::get_sum_dual_solution_weights()
+{
+  return sum_dual_solution_weights_;
+}
+
+template <typename i_t, typename f_t>
 void weighted_average_solution_t<i_t, f_t>::reset_weighted_average_solution()
 {
+  cuopt_assert(!batch_mode_, "This version of reset_weighted_average_solution should only be called in non batch mode");
   RAFT_CUDA_TRY(
-    cudaMemsetAsync(sum_primal_solutions_.data(), 0.0, (batch_mode_ ? static_cast<size_t>((0 + 3)/*@@*/) : 1) * sizeof(f_t) * primal_size_h_, stream_view_));
+    cudaMemsetAsync(sum_primal_solutions_.data(), 0, sizeof(f_t) * primal_size_h_, stream_view_));
   RAFT_CUDA_TRY(
-    cudaMemsetAsync(sum_dual_solutions_.data(), 0.0, (batch_mode_ ? static_cast<size_t>((0 + 3)/*@@*/) : 1) * sizeof(f_t) * dual_size_h_, stream_view_));
+    cudaMemsetAsync(sum_dual_solutions_.data(), 0, sizeof(f_t) * dual_size_h_, stream_view_));
   RAFT_CUDA_TRY(
-    cudaMemsetAsync(sum_primal_solution_weights_.data(), 0.0, (batch_mode_ ? static_cast<size_t>((0 + 3)/*@@*/) : 1) * sizeof(f_t), stream_view_));
+    cudaMemsetAsync(sum_primal_solution_weights_.data(), 0, sizeof(f_t), stream_view_));
   RAFT_CUDA_TRY(
-    cudaMemsetAsync(sum_dual_solution_weights_.data(), 0.0, (batch_mode_ ? static_cast<size_t>((0 + 3)/*@@*/) : 1) * sizeof(f_t), stream_view_));
-  iterations_since_last_restart_ = 0;
+    cudaMemsetAsync(sum_dual_solution_weights_.data(), 0, sizeof(f_t), stream_view_));
+  iterations_since_last_restart_[0] = 0;
+}
+
+template <typename i_t, typename f_t>
+void weighted_average_solution_t<i_t, f_t>::reset_weighted_average_solution(cuda::std::span<const i_t> mask)
+{
+  cuopt_assert(batch_mode_, "This version of reset_weighted_average_solution should only be called in batch mode");
+  cuopt_assert(mask.size() == iterations_since_last_restart_.size(), "mask and iterations_since_last_restart_ must have the same size");
+
+  for (size_t i = 0; i < mask.size(); ++i) {
+    if (mask[i]) {
+      iterations_since_last_restart_[i] = 0;
+    }
+  }
+  batched_memset_handler_.batch_masked_transform_reduce([&](i_t climber, rmm::cuda_stream_view stream){
+      RAFT_CUDA_TRY(
+        cudaMemsetAsync(sum_primal_solutions_.data() + climber * primal_size_h_, 0, sizeof(f_t) * primal_size_h_, stream));
+      RAFT_CUDA_TRY(
+        cudaMemsetAsync(sum_dual_solutions_.data() + climber * dual_size_h_, 0, sizeof(f_t) * dual_size_h_, stream));
+      RAFT_CUDA_TRY(
+        cudaMemsetAsync(sum_primal_solution_weights_.data() + climber, 0, sizeof(f_t), stream));
+    RAFT_CUDA_TRY(
+      cudaMemsetAsync(sum_dual_solution_weights_.data() + climber, 0, sizeof(f_t), stream));
+  }, mask);
 }
 
 template <typename i_t, typename f_t>
@@ -135,7 +186,7 @@ void weighted_average_solution_t<i_t, f_t>::add_current_solution_to_weighted_ave
   }
   graph.launch(total_pdlp_iterations);
 
-  iterations_since_last_restart_ += 1;
+  std::transform(iterations_since_last_restart_.begin(), iterations_since_last_restart_.end(), iterations_since_last_restart_.begin(), [](i_t x) { return x + 1; });
 }
 
 template <typename i_t, typename f_t>
@@ -143,12 +194,13 @@ void weighted_average_solution_t<i_t, f_t>::compute_averages(rmm::device_uvector
                                                              rmm::device_uvector<f_t>& avg_dual)
 {
   // no iterations have added to the sum, so avg is all zero vector
-  if (!iterations_since_last_restart_) {
-    RAFT_CUDA_TRY(
-      cudaMemsetAsync(avg_primal.data(), f_t(0.0), (batch_mode_ ? static_cast<size_t>((0 + 3)/*@@*/) : 1) * sizeof(f_t) * primal_size_h_, stream_view_));
-    RAFT_CUDA_TRY(
-      cudaMemsetAsync(avg_dual.data(), f_t(0.0), (batch_mode_ ? static_cast<size_t>((0 + 3)/*@@*/) : 1) * sizeof(f_t) * dual_size_h_, stream_view_));
-    return;
+  // TODO remove once tested on most instances
+  for (size_t i = 0; i < iterations_since_last_restart_.size(); ++i) {
+    if (iterations_since_last_restart_[i] == 0) {
+      bool primal_all_0 = thrust::all_of(handle_ptr_->get_thrust_policy(), avg_primal.data() + i * primal_size_h_, avg_primal.data() + i * primal_size_h_ + primal_size_h_, [] __host__ __device__ (f_t x) { return x == f_t(0.0); });
+      bool dual_all_0 = thrust::all_of(handle_ptr_->get_thrust_policy(), avg_dual.data() + i * dual_size_h_, avg_dual.data() + i * dual_size_h_ + dual_size_h_, [] __host__ __device__ (f_t x) { return x == f_t(0.0); });
+      cuopt_assert(primal_all_0 && dual_all_0, "Average solution is not all zero");
+    }
   }
 
   // compute sum_primal_solutions/primal_size
@@ -178,9 +230,22 @@ void weighted_average_solution_t<i_t, f_t>::compute_averages(rmm::device_uvector
 }
 
 template <typename i_t, typename f_t>
-i_t weighted_average_solution_t<i_t, f_t>::get_iterations_since_last_restart() const
+i_t weighted_average_solution_t<i_t, f_t>::get_iterations_since_last_restart(i_t climber_id) const
+{
+  return iterations_since_last_restart_[climber_id];
+}
+
+template <typename i_t, typename f_t>
+const std::vector<i_t>& weighted_average_solution_t<i_t, f_t>::get_iterations_since_last_restart() const
 {
   return iterations_since_last_restart_;
+}
+
+template <typename i_t, typename f_t>
+void weighted_average_solution_t<i_t, f_t>::set_iterations_since_last_restart(i_t climber_id, i_t iterations)
+{
+  cuopt_assert(climber_id < iterations_since_last_restart_.size(), "climber_id is out of bounds");
+  iterations_since_last_restart_[climber_id] = iterations;
 }
 
 #if MIP_INSTANTIATE_FLOAT

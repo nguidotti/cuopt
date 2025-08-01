@@ -320,9 +320,6 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
       sub_op<f_t>(),
       stream_view_);
   }
-#ifdef PDLP_DEBUG_MODE
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
-#endif
 
   // compute interaction (x'-x) . (A(y'-y))
   if (!batch_mode_) {

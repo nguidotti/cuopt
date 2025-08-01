@@ -17,6 +17,7 @@
 #pragma once
 
 #include <linear_programming/saddle_point.hpp>
+#include <linear_programming/utilities/batched_transform_reduce_handler.cuh>
 #include <linear_programming/utilities/ping_pong_graph.cuh>
 
 #include <raft/core/handle.hpp>
@@ -25,6 +26,8 @@
 #include <rmm/device_scalar.hpp>
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/std/span>
+
 namespace cuopt::linear_programming::detail {
 template <typename i_t, typename f_t>
 class weighted_average_solution_t {
@@ -32,6 +35,7 @@ class weighted_average_solution_t {
   weighted_average_solution_t(raft::handle_t const* handle_ptr, i_t primal_size, i_t dual_size, bool batch_mode = false);
 
   void reset_weighted_average_solution();
+  void reset_weighted_average_solution(cuda::std::span<const i_t> mask);
   void add_current_solution_to_weighted_average_solution(const f_t* primal_solution,
                                                          const f_t* dual_solution,
                                                          const rmm::device_uvector<f_t>& weight,
@@ -39,7 +43,15 @@ class weighted_average_solution_t {
 
   void compute_averages(rmm::device_uvector<f_t>& avg_primal, rmm::device_uvector<f_t>& avg_dual);
 
-  i_t get_iterations_since_last_restart() const;
+  i_t get_iterations_since_last_restart(i_t climber_id) const;
+  const std::vector<i_t>& get_iterations_since_last_restart() const;
+
+  void set_iterations_since_last_restart(i_t climber_id, i_t iterations);
+
+  rmm::device_uvector<f_t>& get_sum_primal_solutions();
+  rmm::device_uvector<f_t>& get_sum_dual_solutions();
+  rmm::device_uvector<f_t>& get_sum_primal_solution_weights();
+  rmm::device_uvector<f_t>& get_sum_dual_solution_weights();
 
  private:
   raft::handle_t const* handle_ptr_{nullptr};
@@ -48,16 +60,17 @@ class weighted_average_solution_t {
   i_t primal_size_h_;
   i_t dual_size_h_;
 
- public:
   rmm::device_uvector<f_t> sum_primal_solutions_;
   rmm::device_uvector<f_t> sum_dual_solutions_;
   rmm::device_uvector<f_t> sum_primal_solution_weights_;
   rmm::device_uvector<f_t> sum_dual_solution_weights_;
 
-  i_t iterations_since_last_restart_;
+  std::vector<i_t> iterations_since_last_restart_;
 
   // Graph to capture the average computation
   ping_pong_graph_t<i_t> graph;
+
+  batched_transform_reduce_handler_t<i_t, f_t> batched_memset_handler_;
 
   bool batch_mode_{false};
 };
