@@ -134,7 +134,20 @@ optimization_problem_t<i_t, f_t> build_optimization_problem(
   auto obj = papilo_problem.getObjective();
   op_problem.set_objective_offset(obj.offset);
 
-  if (papilo_problem.getNRows() == 0 && papilo_problem.getNCols() == 0) { return op_problem; }
+  if (papilo_problem.getNRows() == 0 && papilo_problem.getNCols() == 0) {
+    // FIXME: Shouldn't need to set offsets
+    std::vector<i_t> h_offsets{0};
+    std::vector<i_t> h_indices{};
+    std::vector<f_t> h_values{};
+    op_problem.set_csr_constraint_matrix(h_values.data(),
+                                         h_values.size(),
+                                         h_indices.data(),
+                                         h_indices.size(),
+                                         h_offsets.data(),
+                                         h_offsets.size());
+
+    return op_problem;
+  }
 
   op_problem.set_objective_coefficients(obj.coefficients.data(), obj.coefficients.size());
 
