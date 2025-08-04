@@ -327,6 +327,25 @@ void local_search_t<i_t, f_t>::resize_vectors(problem_t<i_t, f_t>& problem,
 }
 
 template <typename i_t, typename f_t>
+void save_best_fp_solution(solution_t<i_t, f_t>& solution,
+                           rmm::device_uvector<f_t>& best_solution,
+                           f_t& best_objective,
+                           bool feasibility_run)
+{
+  if (feasibility_run || solution.get_objective() < best_objective) {
+    CUOPT_LOG_DEBUG("Found better feasible in FP with obj %f. Continue with FJ!",
+                    solution.get_objective());
+    best_objective = solution.get_objective();
+    raft::copy(best_solution.data(),
+               solution.assignment.data(),
+               solution.assignment.size(),
+               solution.handle_ptr->get_stream());
+    solution.problem_ptr->add_cutting_plane_at_objective(solution.get_objective() -
+                                                         OBJECTIVE_EPSILON);
+  }
+}
+
+template <typename i_t, typename f_t>
 bool local_search_t<i_t, f_t>::run_fp(solution_t<i_t, f_t>& solution,
                                       timer_t timer,
                                       bool feasibility_run)
@@ -364,17 +383,6 @@ bool local_search_t<i_t, f_t>::run_fp(solution_t<i_t, f_t>& solution,
       } else {
         CUOPT_LOG_DEBUG("Found feasible in FP with obj %f. Continue with FJ!",
                         solution.get_objective());
-        if (solution.get_objective() < best_objective) {
-          CUOPT_LOG_DEBUG("Found better feasible in FP with obj %f. Continue with FJ!",
-                          solution.get_objective());
-          best_objective = solution.get_objective();
-          raft::copy(best_solution.data(),
-                     solution.assignment.data(),
-                     solution.assignment.size(),
-                     solution.handle_ptr->get_stream());
-          solution.problem_ptr->add_cutting_plane_at_objective(solution.get_objective() -
-                                                               OBJECTIVE_EPSILON);
-        }
         fp.config.alpha = default_alpha;
         ls_config_t<i_t, f_t> ls_config;
         // assign current objective
@@ -436,18 +444,18 @@ bool local_search_t<i_t, f_t>::run_fp(solution_t<i_t, f_t>& solution,
       }
     }
   }
-  raft::copy(solution.assignment.data(),
-             best_solution.data(),
-             solution.assignment.size(),
-             solution.handle_ptr->get_stream());
-  solution.handle_ptr->sync_stream();
   if (!feasibility_run) {
+    raft::copy(solution.assignment.data(),
+               best_solution.data(),
+               solution.assignment.size(),
+               solution.handle_ptr->get_stream());
     solution.problem_ptr = old_problem_ptr;
     solution.resize_to_problem();
     resize_vectors(*old_problem_ptr, solution.handle_ptr);
     lb_constraint_prop.temp_problem.setup(*old_problem_ptr);
     lb_constraint_prop.bounds_update.setup(lb_constraint_prop.temp_problem);
     constraint_prop.bounds_update.resize(*old_problem_ptr);
+    solution.handle_ptr->sync_stream();
   }
   return is_feasible;
 }
