@@ -80,6 +80,7 @@ class local_search_t {
   line_segment_search_t<i_t, f_t> line_segment_search;
   feasibility_pump_t<i_t, f_t> fp;
   std::mt19937 rng;
+  problem_t<i_t, f_t> problem_with_objective_cut;
 };
 
 }  // namespace cuopt::linear_programming::detail

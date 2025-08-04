@@ -241,7 +241,7 @@ template <typename i_t, typename f_t>
 void fj_t<i_t, f_t>::copy_weights(const weight_t<i_t, f_t>& weights,
                                   const raft::handle_t* handle_ptr)
 {
-  cuopt_assert(cstr_weights.size() == weights.cstr_weights.size(), "Size mismatch");
+  cstr_weights.resize(weights.cstr_weights.size(), handle_ptr->get_stream());
   raft::copy(cstr_weights.data(),
              weights.cstr_weights.data(),
              weights.cstr_weights.size(),

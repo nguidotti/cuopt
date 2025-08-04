@@ -49,7 +49,8 @@ local_search_t<i_t, f_t>::local_search_t(mip_solver_context_t<i_t, f_t>& context
        lb_constraint_prop,
        line_segment_search,
        lp_optimal_solution_),
-    rng(cuopt::seed_generator::get_seed())
+    rng(cuopt::seed_generator::get_seed()),
+    problem_with_objective_cut(*context.problem_ptr, context.problem_ptr->handle_ptr)
 {
 }
 
@@ -118,6 +119,8 @@ bool local_search_t<i_t, f_t>::run_local_search(solution_t<i_t, f_t>& solution,
   } else {
     is_feas = run_fj_annealing(solution, timer, ls_config);
   }
+  timer = timer_t(std::min(5., timer.remaining_time()));
+  run_fp(solution, timer, false);
   return is_feas;
 }
 
@@ -332,13 +335,19 @@ bool local_search_t<i_t, f_t>::run_fp(solution_t<i_t, f_t>& solution,
   bool is_feasible          = false;
   double best_objective     = std::numeric_limits<double>::max();
   rmm::device_uvector<f_t> best_solution(solution.assignment, solution.handle_ptr->get_stream());
+  problem_t<i_t, f_t>* old_problem_ptr = solution.problem_ptr;
   if (!feasibility_run) {
-    solution.problem_ptr->add_cutting_plane_at_objective(solution.get_objective());
+    if (!problem_with_objective_cut.cutting_plane_added) {
+      problem_with_objective_cut = std::move(problem_t<i_t, f_t>(*old_problem_ptr));
+    }
+    problem_with_objective_cut.add_cutting_plane_at_objective(solution.get_objective() -
+                                                              OBJECTIVE_EPSILON);
+    solution.problem_ptr = &problem_with_objective_cut;
     solution.resize_to_problem();
-    resize_vectors(*solution.problem_ptr, solution.handle_ptr);
-    lb_constraint_prop.temp_problem.setup(*solution.problem_ptr);
+    resize_vectors(problem_with_objective_cut, solution.handle_ptr);
+    lb_constraint_prop.temp_problem.setup(problem_with_objective_cut);
     lb_constraint_prop.bounds_update.setup(lb_constraint_prop.temp_problem);
-    constraint_prop.bounds_update.resize(*solution.problem_ptr);
+    constraint_prop.bounds_update.resize(problem_with_objective_cut);
   }
   for (i_t i = 0; i < n_fp_iterations && !timer.check_time_limit(); ++i) {
     if (timer.check_time_limit()) {
@@ -363,7 +372,7 @@ bool local_search_t<i_t, f_t>::run_fp(solution_t<i_t, f_t>& solution,
                      solution.assignment.data(),
                      solution.assignment.size(),
                      solution.handle_ptr->get_stream());
-          solution.problem_ptr->add_cutting_plane_at_objective(solution.get_objective() +
+          solution.problem_ptr->add_cutting_plane_at_objective(solution.get_objective() -
                                                                OBJECTIVE_EPSILON);
         }
         fp.config.alpha = default_alpha;
@@ -378,7 +387,7 @@ bool local_search_t<i_t, f_t>::run_fp(solution_t<i_t, f_t>& solution,
                      solution.assignment.size(),
                      solution.handle_ptr->get_stream());
           best_objective = solution.get_objective();
-          solution.problem_ptr->add_cutting_plane_at_objective(solution.get_objective() +
+          solution.problem_ptr->add_cutting_plane_at_objective(solution.get_objective() -
                                                                OBJECTIVE_EPSILON);
         }
       }
@@ -405,7 +414,7 @@ bool local_search_t<i_t, f_t>::run_fp(solution_t<i_t, f_t>& solution,
                        solution.assignment.data(),
                        solution.assignment.size(),
                        solution.handle_ptr->get_stream());
-            solution.problem_ptr->add_cutting_plane_at_objective(solution.get_objective() +
+            solution.problem_ptr->add_cutting_plane_at_objective(solution.get_objective() -
                                                                  OBJECTIVE_EPSILON);
           }
           fp.config.alpha = default_alpha;
@@ -420,7 +429,7 @@ bool local_search_t<i_t, f_t>::run_fp(solution_t<i_t, f_t>& solution,
                        solution.assignment.size(),
                        solution.handle_ptr->get_stream());
             best_objective = solution.get_objective();
-            solution.problem_ptr->add_cutting_plane_at_objective(solution.get_objective() +
+            solution.problem_ptr->add_cutting_plane_at_objective(solution.get_objective() -
                                                                  OBJECTIVE_EPSILON);
           }
         }
@@ -432,6 +441,14 @@ bool local_search_t<i_t, f_t>::run_fp(solution_t<i_t, f_t>& solution,
              solution.assignment.size(),
              solution.handle_ptr->get_stream());
   solution.handle_ptr->sync_stream();
+  if (!feasibility_run) {
+    solution.problem_ptr = old_problem_ptr;
+    solution.resize_to_problem();
+    resize_vectors(*old_problem_ptr, solution.handle_ptr);
+    lb_constraint_prop.temp_problem.setup(*old_problem_ptr);
+    lb_constraint_prop.bounds_update.setup(lb_constraint_prop.temp_problem);
+    constraint_prop.bounds_update.resize(*old_problem_ptr);
+  }
   return is_feasible;
 }
 
