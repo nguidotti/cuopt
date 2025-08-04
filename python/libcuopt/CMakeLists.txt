@@ -63,13 +63,6 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(argparse)
 
-#FetchContent_Declare(
-#  tbb
-#  GIT_REPOSITORY https://github.com/oneapi-src/oneTBB.git
-#  GIT_TAG v2022.2.0
-#)
-#FetchContent_MakeAvailable(tbb)
-
 FetchContent_Declare(
   boost
   GIT_REPOSITORY https://github.com/boostorg/boost.git
