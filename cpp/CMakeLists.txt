@@ -161,7 +161,7 @@ else()
   find_package(RAFT REQUIRED)
 endif()
 
-find_package(TBB REQUIRED)
+#find_package(TBB REQUIRED)
 
 FetchContent_Declare(
   papilo
@@ -256,7 +256,6 @@ target_link_libraries(cuopt
   CCCL::CCCL
   raft::raft
   cuopt::mps_parser
-  TBB::tbb
   PRIVATE
   ${CUOPT_PRIVATE_CUDA_LIBS}
   )
