@@ -119,7 +119,7 @@ bool local_search_t<i_t, f_t>::run_local_search(solution_t<i_t, f_t>& solution,
   } else {
     is_feas = run_fj_annealing(solution, timer, ls_config);
   }
-  timer = timer_t(std::min(20., timer.remaining_time()));
+  timer = timer_t(std::min(5., timer.remaining_time()));
   run_fp(solution, timer, false);
   return is_feas;
 }
