@@ -691,6 +691,7 @@ dependencies:
               - libcurand-dev
               - libcusolver-dev
               - libcusparse-dev
+              - libcudss-dev
               - cuda-nvtx-dev
           - matrix:
               cuda: "12.*"
@@ -698,6 +699,7 @@ dependencies:
               - libcurand-dev
               - libcusolver-dev
               - libcusparse-dev
+              - libcudss-dev
               - cuda-nvtx-dev
               - cuda-nvvm
               - cuda-crt
@@ -714,6 +716,7 @@ dependencies:
               - nvidia-curand-cu12
               - nvidia-cusparse-cu12
               - nvidia-cusolver-cu12
+              - nvidia-cudss-cu12
               - nvidia-nvtx-cu12
           # if use_cuda_wheels=false is provided, do not add dependencies on any CUDA wheels
           # (e.g. for DLFW and pip devcontainers)
@@ -728,6 +731,7 @@ dependencies:
               - nvidia-curand
               - nvidia-cusparse
               - nvidia-cusolver
+              - nvidia-cudss
               - nvidia-nvtx
   develop:
     common:
