@@ -166,7 +166,7 @@ endif()
 FetchContent_Declare(
   papilo
   GIT_REPOSITORY "https://github.com/scipopt/papilo.git"
-  GIT_TAG "main"
+  GIT_TAG "v2.4.3"
 )
 
 set(BUILD_TESTING OFF CACHE BOOL "Disable test build for papilo")
@@ -257,10 +257,6 @@ target_link_libraries(cuopt
   CCCL::CCCL
   raft::raft
   cuopt::mps_parser
-<<<<<<< HEAD
-=======
-  # TBB::tbb
->>>>>>> c2ba1392f546f25da57a1b8641a0676cd25c814d
   PRIVATE
   ${CUOPT_PRIVATE_CUDA_LIBS}
   )
