@@ -74,7 +74,7 @@ max_allowed_size_compressed = '75M'
 build-backend = "scikit_build_core.build"
 dependencies-file = "../../../../dependencies.yaml"
 commit-files = [
-    "GIT_COMMIT"
+    "cuopt_mps_parser/GIT_COMMIT"
 ]
 disable-cuda = true
 requires = [
