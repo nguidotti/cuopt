@@ -113,8 +113,8 @@ bool diversity_manager_t<i_t, f_t>::run_local_search(solution_t<i_t, f_t>& solut
                                                      timer_t& timer,
                                                      ls_config_t<i_t, f_t>& ls_config)
 {
-  // i_t ls_mab_option = mab_ls.select_mab_option();
-  // mab_ls_config_t<i_t, f_t>::get_local_search_and_lm_from_config(ls_mab_option, ls_config);
+  i_t ls_mab_option = mab_ls.select_mab_option();
+  mab_ls_config_t<i_t, f_t>::get_local_search_and_lm_from_config(ls_mab_option, ls_config);
   assignment_hash_map.insert(solution);
   constexpr i_t skip_solutions_threshold = 3;
   if (assignment_hash_map.check_skip_solution(solution, skip_solutions_threshold)) { return false; }
