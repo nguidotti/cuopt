@@ -233,6 +233,7 @@ set(CMAKE_LIBRARY_PATH ${CMAKE_CURRENT_BINARY_DIR}/libmps_parser/)
 target_link_libraries(cuopt
   PUBLIC
   CUDA::cublas
+  CUDA::cudss
   CUDA::cusparse
   rmm::rmm
   rapids_logger::rapids_logger
