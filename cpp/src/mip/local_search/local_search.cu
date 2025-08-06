@@ -364,7 +364,7 @@ void local_search_t<i_t, f_t>::save_solution_and_add_cutting_plane(
 }
 
 template <typename i_t, typename f_t>
-void local_search_t<i_t, f_t>::run_rp_restart(solution_t<i_t, f_t>& solution,
+void local_search_t<i_t, f_t>::run_fp_restart(solution_t<i_t, f_t>& solution,
                                               rmm::device_uvector<f_t>& best_solution,
                                               f_t& best_objective,
                                               timer_t timer)
