@@ -228,17 +228,18 @@ list(PREPEND CUOPT_PRIVATE_CUDA_LIBS CUDA::cublasLt)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/libmps_parser)
 set(CMAKE_LIBRARY_PATH ${CMAKE_CURRENT_BINARY_DIR}/libmps_parser/)
 
+find_package(cudss REQUIRED)
 
 target_link_libraries(cuopt
   PUBLIC
   CUDA::cublas
-  CUDA::cudss
   CUDA::cusparse
   rmm::rmm
   rapids_logger::rapids_logger
   CCCL::CCCL
   raft::raft
   cuopt::mps_parser
+  cudss
   PRIVATE
   ${CUOPT_PRIVATE_CUDA_LIBS}
   )
