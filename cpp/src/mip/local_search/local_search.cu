@@ -417,7 +417,7 @@ bool local_search_t<i_t, f_t>::run_fp(solution_t<i_t, f_t>& solution,
         CUOPT_LOG_DEBUG("Found feasible in FP with obj %f. Continue with FJ!",
                         solution.get_objective());
         save_solution_and_add_cutting_plane(solution, best_solution, best_objective);
-        run_rp_restart(solution, best_solution, best_objective, timer);
+        run_fp_restart(solution, best_solution, best_objective, timer);
       }
     }
     // if not feasible, it means it is a cycle
@@ -435,7 +435,7 @@ bool local_search_t<i_t, f_t>::run_fp(solution_t<i_t, f_t>& solution,
           CUOPT_LOG_DEBUG("Found feasible in FP with obj %f. Continue with FJ!",
                           solution.get_objective());
           save_solution_and_add_cutting_plane(solution, best_solution, best_objective);
-          run_rp_restart(solution, best_solution, best_objective, timer);
+          run_fp_restart(solution, best_solution, best_objective, timer);
         }
       }
     }
