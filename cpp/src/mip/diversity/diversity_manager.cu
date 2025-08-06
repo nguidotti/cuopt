@@ -86,7 +86,7 @@ diversity_manager_t<i_t, f_t>::diversity_manager_t(mip_solver_context_t<i_t, f_t
   if (env_max_config != nullptr) {
     try {
       max_config = std::stoi(env_max_config);
-      CUOPT_LOG_DEBUG("Using maximum configuration value from environment: %d", max_config);
+      CUOPT_LOG_INFO("Using maximum configuration value from environment: %d", max_config);
     } catch (const std::exception& e) {
       CUOPT_LOG_WARN("Failed to parse CUOPT_MAX_CONFIG environment variable: %s", e.what());
     }
@@ -97,7 +97,7 @@ diversity_manager_t<i_t, f_t>::diversity_manager_t(mip_solver_context_t<i_t, f_t
     if (env_config_id != nullptr) {
       try {
         config_id = std::stoi(env_config_id);
-        CUOPT_LOG_DEBUG("Using configuration ID from environment: %d", config_id);
+        CUOPT_LOG_INFO("Using configuration ID from environment: %d", config_id);
       } catch (const std::exception& e) {
         CUOPT_LOG_WARN("Failed to parse CUOPT_CONFIG_ID environment variable: %s", e.what());
       }
