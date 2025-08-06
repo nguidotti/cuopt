@@ -105,6 +105,8 @@ class sub_mip_recombiner_t : public recombiner_t<i_t, f_t> {
       branch_and_bound_settings.absolute_mip_gap_tol = context.settings.tolerances.absolute_mip_gap;
       branch_and_bound_settings.relative_mip_gap_tol = context.settings.tolerances.relative_mip_gap;
       branch_and_bound_settings.integer_tol = context.settings.tolerances.integrality_tolerance;
+      // disable B&B logs, so that it is not interfering with the main B&B thread
+      branch_and_bound_settings.log.log = false;
       dual_simplex::branch_and_bound_t<i_t, f_t> branch_and_bound(branch_and_bound_problem,
                                                                   branch_and_bound_settings);
       branch_and_bound.set_initial_guess(cuopt::host_copy(fixed_assignment));
