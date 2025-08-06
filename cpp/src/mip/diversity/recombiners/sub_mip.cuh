@@ -71,23 +71,6 @@ class sub_mip_recombiner_t : public recombiner_t<i_t, f_t> {
     this->compute_vars_to_fix(offspring, vars_to_fix, n_vars_from_other, n_vars_from_guiding);
     auto [fixed_problem, fixed_assignment, variable_map] = offspring.fix_variables(vars_to_fix);
     fixed_problem.check_problem_representation(true);
-    if (!guiding_solution.get_feasible() && !other_solution.get_feasible()) {
-      relaxed_lp_settings_t lp_settings;
-      lp_settings.time_limit = sub_mip_recombiner_config_t::infeasibility_detection_time_limit;
-      lp_settings.tolerance  = fixed_problem.tolerances.absolute_tolerance;
-      lp_settings.return_first_feasible = true;
-      lp_settings.save_state            = true;
-      lp_settings.check_infeasibility   = true;
-      // run lp with infeasibility detection on
-      auto lp_response =
-        get_relaxed_lp_solution(fixed_problem, fixed_assignment, offspring.lp_state, lp_settings);
-      if (lp_response.get_termination_status() == pdlp_termination_status_t::PrimalInfeasible ||
-          lp_response.get_termination_status() == pdlp_termination_status_t::DualInfeasible ||
-          lp_response.get_termination_status() == pdlp_termination_status_t::TimeLimit) {
-        CUOPT_LOG_DEBUG("SUB_MIP recombiner failed because LP found infeasible!");
-        return std::make_pair(offspring, false);
-      }
-    }
     // brute force rounding threshold is 8
     const bool run_sub_mip                             = fixed_problem.n_integer_vars > 8;
     dual_simplex::mip_status_t branch_and_bound_status = dual_simplex::mip_status_t::UNSET;
