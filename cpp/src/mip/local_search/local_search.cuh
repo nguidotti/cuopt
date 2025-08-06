@@ -69,6 +69,13 @@ class local_search_t {
   bool run_staged_fp(solution_t<i_t, f_t>& solution, timer_t timer, bool& early_exit);
   bool run_fp(solution_t<i_t, f_t>& solution, timer_t timer, bool feasibility_run = true);
   void resize_vectors(problem_t<i_t, f_t>& problem, const raft::handle_t* handle_ptr);
+  void save_solution_and_add_cutting_plane(solution_t<i_t, f_t>& solution,
+                                           rmm::device_uvector<f_t>& best_solution,
+                                           f_t& best_objective);
+  void run_rp_restart(solution_t<i_t, f_t>& solution,
+                      rmm::device_uvector<f_t>& best_solution,
+                      f_t& best_objective,
+                      timer_t timer);
 
   mip_solver_context_t<i_t, f_t>& context;
   rmm::device_uvector<f_t>& lp_optimal_solution;
