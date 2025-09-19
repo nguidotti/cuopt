@@ -201,6 +201,18 @@ class mip_node_t {
     }
   }
 
+  std::shared_ptr<mip_node_t<i_t, f_t>> create_detach_copy() const
+  {
+    std::shared_ptr<mip_node_t<i_t, f_t>> copy =
+      std::make_shared<mip_node_t<i_t, f_t>>(lower_bound, vstatus);
+    copy->branch_var       = branch_var;
+    copy->branch_dir       = branch_dir;
+    copy->branch_var_lower = branch_var_lower;
+    copy->branch_var_upper = branch_var_upper;
+    copy->fractional_val   = fractional_val;
+    return copy;
+  }
+
   node_status_t status;
   f_t lower_bound;
   i_t depth;
@@ -230,10 +242,23 @@ void remove_fathomed_nodes(std::vector<mip_node_t<i_t, f_t>*>& stack)
 template <typename i_t, typename f_t>
 class node_compare_t {
  public:
-  bool operator()(mip_node_t<i_t, f_t>& a, mip_node_t<i_t, f_t>& b)
+  bool operator()(mip_node_t<i_t, f_t>& a, mip_node_t<i_t, f_t>& b) const
   {
     return a.lower_bound >
            b.lower_bound;  // True if a comes before b, elements that come before are output last
+  }
+
+  bool operator()(mip_node_t<i_t, f_t>* a, mip_node_t<i_t, f_t>* b) const
+  {
+    return a->lower_bound >
+           b->lower_bound;  // True if a comes before b, elements that come before are output last
+  }
+
+  bool operator()(std::shared_ptr<mip_node_t<i_t, f_t>> a,
+                  std::shared_ptr<mip_node_t<i_t, f_t>> b) const
+  {
+    return a->lower_bound >
+           b->lower_bound;  // True if a comes before b, elements that come before are output last
   }
 };
 
