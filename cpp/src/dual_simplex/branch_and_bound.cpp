@@ -15,7 +15,6 @@
  * limitations under the License.
  */
 
-#include <cmath>
 #include <dual_simplex/branch_and_bound.hpp>
 #include <dual_simplex/initial_basis.hpp>
 #include <dual_simplex/logger.hpp>

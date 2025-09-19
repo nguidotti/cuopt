@@ -17,7 +17,6 @@
 
 #pragma once
 
-#include <cuopt/linear_programming/mip/solver_settings.hpp>
 #include <dual_simplex/initial_basis.hpp>
 #include <dual_simplex/mip_node.hpp>
 #include <dual_simplex/phase2.hpp>
