@@ -48,6 +48,9 @@ enum class mip_status_t {
 template <typename i_t, typename f_t>
 void upper_bound_callback(f_t upper_bound);
 
+// A min-heap for storing the starting nodes for the dives.
+// This has a maximum size of 8192, such that the container
+// will discard the least promising node if the queue is full.
 template <typename i_t, typename f_t>
 class dive_queue_t {
  private:
@@ -79,8 +82,6 @@ class dive_queue_t {
   void clear() { buffer.clear(); }
 };
 
-// Note that floating point atomics are only supported in C++20. So, we
-// are using omp atomic operations instead.
 template <typename i_t, typename f_t>
 class branch_and_bound_t {
  public:
@@ -162,8 +163,10 @@ class branch_and_bound_t {
   // Global status
   mip_status_t status_;
 
+  // Count the number of subtrees that are currently being explored.
   i_t active_subtrees_;
 
+  // Queue for storing the promising node for performing dives.
   std::mutex mutex_dive_queue_;
   dive_queue_t<i_t, f_t> dive_queue_;
 
@@ -177,14 +180,29 @@ class branch_and_bound_t {
   // Repairs low-quality solutions from the heuristics, if it is applicable.
   void repair_heuristic_solutions();
 
+  // Ramp-up phase of the solver, where we greedily expand the tree until
+  // a certain depth is reached. This is done recursively using OpenMP tasks.
+  void exploration_ramp_up(search_tree_t<i_t, f_t>* search_tree,
+                           mip_node_t<i_t, f_t>* node,
+                           lp_problem_t<i_t, f_t>& leaf_problem,
+                           csc_matrix_t<i_t, f_t>& Arow,
+                           i_t max_depth);
+
   // Explore the search tree using the best-first search with plunging strategy.
   void explore_subtree(search_tree_t<i_t, f_t>& search_tree,
                        mip_node_t<i_t, f_t>* start_node,
                        lp_problem_t<i_t, f_t>& leaf_problem,
                        csc_matrix_t<i_t, f_t>& Arow);
-  void best_first_thread(search_tree_t<i_t, f_t>& search_tree);
 
-  void diving_thread();
+  // Each "main" thread pop a node from the global heap and then perform a plunge
+  // (i.e., a shallow dive) into the subtree determined by the node.
+  void best_first_thread(search_tree_t<i_t, f_t>& search_tree,
+                         lp_problem_t<i_t, f_t>& leaf_problem,
+                         csc_matrix_t<i_t, f_t>& Arow);
+
+  // Each diving thread pop the first node from the dive queue and then perform
+  // a deep dive into the subtree determined by the node.
+  void diving_thread(lp_problem_t<i_t, f_t>& leaf_problem, csc_matrix_t<i_t, f_t>& Arow);
 
   // Solve the LP relaxation of a leaf node.
   mip_status_t solve_node_lp(search_tree_t<i_t, f_t>& search_tree,
@@ -204,6 +222,7 @@ class branch_and_bound_t {
                                    f_t upper_bound,
                                    logger_t& log);
 
+  // Sort the children based on the Martin's criteria.
   std::pair<mip_node_t<i_t, f_t>*, mip_node_t<i_t, f_t>*> child_selection(
     mip_node_t<i_t, f_t>* node_ptr);
 };
