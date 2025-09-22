@@ -750,9 +750,11 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(search_tree_t<i_t, f_t>& sear
         heap_.push(node);
         mutex_heap_.unlock();
 
-        mutex_dive_queue_.lock();
-        dive_queue_.push(node->detach_copy());
-        mutex_dive_queue_.unlock();
+        if (get_heap_size() > 4 * settings_.num_bfs_threads) {
+          mutex_dive_queue_.lock();
+          dive_queue_.push(node->detach_copy());
+          mutex_dive_queue_.unlock();
+        }
       }
 
 #pragma omp atomic update
@@ -845,13 +847,6 @@ void branch_and_bound_t<i_t, f_t>::diving_thread()
       stack.push_front(&subtree.root);
 
       while (stack.size() > 0 && get_status() == mip_status_t::RUNNING) {
-        if (stack.size() > 1 && dive_queue_.size() < 4 * settings_.num_diving_threads) {
-          std::lock_guard<std::mutex> lock(mutex_dive_queue_);
-          mip_node_t<i_t, f_t>* node = stack.back();
-          stack.pop_back();
-          dive_queue_.push(node->detach_copy());
-        }
-
         mip_node_t<i_t, f_t>* node_ptr = stack.front();
         stack.pop_front();
         f_t upper_bound = get_upper_bound();
@@ -869,7 +864,9 @@ void branch_and_bound_t<i_t, f_t>::diving_thread()
           auto [first, second] = child_selection(node_ptr);
 
           if (dive_queue_.size() < 4 * settings_.num_diving_threads) {
+            mutex_dive_queue_.lock();
             dive_queue_.push(second->detach_copy());
+            mutex_dive_queue_.unlock();
           } else {
             stack.push_front(second);
           }
