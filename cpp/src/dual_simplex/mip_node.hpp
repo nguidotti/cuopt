@@ -20,10 +20,10 @@
 #include <dual_simplex/initial_basis.hpp>
 #include <dual_simplex/types.hpp>
 
-#include <atomic>
 #include <cmath>
 #include <list>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 namespace cuopt::linear_programming::dual_simplex {
@@ -201,15 +201,14 @@ class mip_node_t {
     }
   }
 
-  std::shared_ptr<mip_node_t<i_t, f_t>> create_detach_copy() const
+  mip_node_t<i_t, f_t> detach_copy() const
   {
-    std::shared_ptr<mip_node_t<i_t, f_t>> copy =
-      std::make_shared<mip_node_t<i_t, f_t>>(lower_bound, vstatus);
-    copy->branch_var       = branch_var;
-    copy->branch_dir       = branch_dir;
-    copy->branch_var_lower = branch_var_lower;
-    copy->branch_var_upper = branch_var_upper;
-    copy->fractional_val   = fractional_val;
+    mip_node_t<i_t, f_t> copy(lower_bound, vstatus);
+    copy.branch_var       = branch_var;
+    copy.branch_dir       = branch_dir;
+    copy.branch_var_lower = branch_var_lower;
+    copy.branch_var_upper = branch_var_upper;
+    copy.fractional_val   = fractional_val;
     return copy;
   }
 
@@ -253,13 +252,91 @@ class node_compare_t {
     return a->lower_bound >
            b->lower_bound;  // True if a comes before b, elements that come before are output last
   }
+};
 
-  bool operator()(std::shared_ptr<mip_node_t<i_t, f_t>> a,
-                  std::shared_ptr<mip_node_t<i_t, f_t>> b) const
+template <typename i_t, typename f_t>
+class search_tree_t {
+ public:
+  search_tree_t(f_t root_lower_bound, const std::vector<variable_status_t>& basis, logger_t& log)
+    : root(root_lower_bound, basis), num_nodes(0), log(log)
   {
-    return a->lower_bound >
-           b->lower_bound;  // True if a comes before b, elements that come before are output last
   }
+
+  search_tree_t(mip_node_t<i_t, f_t>&& node, logger_t& log)
+    : root(std::forward<mip_node_t<i_t, f_t>&&>(node)), num_nodes(0), log(log)
+  {
+  }
+
+  f_t get_lower_bound() const { return root.lower_bound; }
+
+  void update_tree(mip_node_t<i_t, f_t>* node_ptr, node_status_t status)
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+    std::vector<mip_node_t<i_t, f_t>*> stack;
+    node_ptr->set_status(status, stack);
+    remove_fathomed_nodes(stack);
+  }
+
+  void branch(mip_node_t<i_t, f_t>* parent_node,
+              i_t branch_var,
+              f_t branch_var_val,
+              const std::vector<variable_status_t>& parent_vstatus,
+              const lp_problem_t<i_t, f_t>& original_lp)
+  {
+    i_t id;
+
+#pragma omp atomic capture
+    {
+      id = num_nodes;
+      num_nodes += 2;
+    }
+
+    // down child
+    auto down_child = std::make_unique<mip_node_t<i_t, f_t>>(
+      original_lp, parent_node, ++id, branch_var, 0, branch_var_val, parent_vstatus);
+
+    graphviz_edge(parent_node, down_child.get(), branch_var, 0, std::floor(branch_var_val));
+
+    // up child
+    auto up_child = std::make_unique<mip_node_t<i_t, f_t>>(
+      original_lp, parent_node, ++id, branch_var, 1, branch_var_val, parent_vstatus);
+
+    graphviz_edge(parent_node, up_child.get(), branch_var, 1, std::ceil(branch_var_val));
+
+    assert(parent_vstatus.size() == original_lp.num_cols);
+    parent_node->add_children(std::move(down_child),
+                              std::move(up_child));  // child pointers moved into the tree
+  }
+
+  void graphviz_node(mip_node_t<i_t, f_t>* node_ptr, std::string label, f_t val)
+  {
+    if (write_graphviz) {
+      log.printf("Node%d [label=\"%s %.16e\"]\n", node_ptr->node_id, label.c_str(), val);
+    }
+  }
+
+  void graphviz_edge(mip_node_t<i_t, f_t>* origin_ptr,
+                     mip_node_t<i_t, f_t>* dest_ptr,
+                     i_t branch_var,
+                     i_t branch_dir,
+                     f_t bound)
+  {
+    if (write_graphviz) {
+      log.printf("Node%d -> Node%d [label=\"x%d %s %e\"]\n",
+                 origin_ptr->node_id,
+                 dest_ptr->node_id,
+                 branch_var,
+                 branch_dir == 0 ? "<=" : ">=",
+                 bound);
+    }
+  }
+
+  mip_node_t<i_t, f_t> root;
+  std::mutex mutex;
+  i_t num_nodes;
+  logger_t log;
+
+  static constexpr int write_graphviz = false;
 };
 
 }  // namespace cuopt::linear_programming::dual_simplex

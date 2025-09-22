@@ -51,31 +51,31 @@ void upper_bound_callback(f_t upper_bound);
 template <typename i_t, typename f_t>
 class dive_queue_t {
  private:
-  std::vector<std::shared_ptr<mip_node_t<i_t, f_t>>> buffer;
+  std::vector<mip_node_t<i_t, f_t>> buffer;
   std::mutex mutex;
   static constexpr i_t max_size_ = 8192;
 
  public:
-  void push(std::shared_ptr<mip_node_t<i_t, f_t>>&& node)
+  dive_queue_t() { buffer.reserve(max_size_); }
+
+  void push(mip_node_t<i_t, f_t>&& node)
   {
-    buffer.push_back(std::forward<std::shared_ptr<mip_node_t<i_t, f_t>>>(node));
+    buffer.push_back(std::forward<mip_node_t<i_t, f_t>&&>(node));
     std::push_heap(buffer.begin(), buffer.end(), node_compare_t<i_t, f_t>());
     if (buffer.size() > max_size()) { buffer.pop_back(); }
   }
 
-  std::shared_ptr<mip_node_t<i_t, f_t>> pop()
+  mip_node_t<i_t, f_t> pop()
   {
-    if (buffer.size() == 0) { return std::shared_ptr<mip_node_t<i_t, f_t>>(); }
-    std::shared_ptr<mip_node_t<i_t, f_t>> node = buffer.front();
     std::pop_heap(buffer.begin(), buffer.end(), node_compare_t<i_t, f_t>());
+    mip_node_t<i_t, f_t> node = std::move(buffer.back());
     buffer.pop_back();
     return node;
   }
 
   i_t size() const { return buffer.size(); }
   constexpr i_t max_size() const { return max_size_; }
-  std::shared_ptr<mip_node_t<i_t, f_t>>& top() { return buffer.front(); }
-  const std::shared_ptr<mip_node_t<i_t, f_t>>& top() const { return buffer.front(); }
+  const mip_node_t<i_t, f_t>& top() const { return buffer.front(); }
   void clear() { buffer.clear(); }
 };
 
@@ -106,6 +106,7 @@ class branch_and_bound_t {
   f_t get_lower_bound();
   mip_status_t get_status();
   i_t get_heap_size();
+  i_t get_active_subtrees();
 
   // The main entry routine. Returns the solver status and populates solution with the incumbent.
   mip_status_t solve(mip_solution_t<i_t, f_t>& solution);
@@ -138,7 +139,6 @@ class branch_and_bound_t {
     i_t nodes_explored      = 0;
     i_t nodes_unexplored    = 0;
     f_t total_lp_iters      = 0;
-    i_t num_nodes           = 0;
   } stats_;
 
   // Mutex for repair
@@ -155,10 +155,6 @@ class branch_and_bound_t {
   pseudo_costs_t<i_t, f_t> pc_;
   std::mutex mutex_pc_;
 
-  // Search tree
-  std::mutex mutex_search_tree_;
-  std::unique_ptr<mip_node_t<i_t, f_t>> search_tree_;
-
   // Heap storing the nodes to be explored.
   std::mutex mutex_heap_;
   mip_node_heap_t<mip_node_t<i_t, f_t>*> heap_;
@@ -166,13 +162,10 @@ class branch_and_bound_t {
   // Global status
   mip_status_t status_;
 
-  i_t active_best_first_tasks_;
+  i_t active_subtrees_;
 
   std::mutex mutex_dive_queue_;
   dive_queue_t<i_t, f_t> dive_queue_;
-
-  // Update the status of the nodes in the search tree.
-  void update_tree(mip_node_t<i_t, f_t>* node_ptr, node_status_t status);
 
   // Update the incumbent solution with the new feasible solution.
   // found during branch and bound.
@@ -185,24 +178,21 @@ class branch_and_bound_t {
   void repair_heuristic_solutions();
 
   // Explore the search tree using the best-first search with plunging strategy.
-  void explore_subtree(mip_node_t<i_t, f_t>* start_node);
-  void best_first_thread();
+  void explore_subtree(search_tree_t<i_t, f_t>& search_tree,
+                       mip_node_t<i_t, f_t>* start_node,
+                       lp_problem_t<i_t, f_t>& leaf_problem,
+                       csc_matrix_t<i_t, f_t>& Arow);
+  void best_first_thread(search_tree_t<i_t, f_t>& search_tree);
 
-  // Perform a deep dive starting with a given node.
-  void dive(std::shared_ptr<mip_node_t<i_t, f_t>> start_node);
   void diving_thread();
 
-  // Branch the current node, creating two children.
-  void branch(mip_node_t<i_t, f_t>* parent_node,
-              i_t branch_var,
-              f_t branch_var_val,
-              const std::vector<variable_status_t>& parent_vstatus);
-
   // Solve the LP relaxation of a leaf node.
-  mip_status_t solve_node_lp(mip_node_t<i_t, f_t>* node_ptr,
+  mip_status_t solve_node_lp(search_tree_t<i_t, f_t>& search_tree,
+                             mip_node_t<i_t, f_t>* node_ptr,
                              lp_problem_t<i_t, f_t>& leaf_problem,
                              csc_matrix_t<i_t, f_t>& Arow,
-                             f_t upper_bound);
+                             f_t upper_bound,
+                             logger_t& log);
 
   // Solve the LP relaxation of a leaf node using the dual simplex method.
   dual::status_t node_dual_simplex(i_t leaf_id,
@@ -213,6 +203,9 @@ class branch_and_bound_t {
                                    csc_matrix_t<i_t, f_t>& Arow,
                                    f_t upper_bound,
                                    logger_t& log);
+
+  std::pair<mip_node_t<i_t, f_t>*, mip_node_t<i_t, f_t>*> child_selection(
+    mip_node_t<i_t, f_t>* node_ptr);
 };
 
 }  // namespace cuopt::linear_programming::dual_simplex
