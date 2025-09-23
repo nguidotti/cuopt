@@ -1096,9 +1096,6 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   search_tree.branch(
     &search_tree.root, branch_var, root_relax_soln_.x[branch_var], root_vstatus_, original_lp_);
 
-  heap_.push(search_tree.root.get_down_child());
-  heap_.push(search_tree.root.get_up_child());
-
   settings_.log.printf("Exploring the B&B tree using %d threads (%d are diving threads)\n",
                        settings_.num_threads,
                        settings_.num_threads - settings_.num_bfs_threads);
@@ -1116,20 +1113,20 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     csc_matrix_t<i_t, f_t> Arow(1, 1, 1);
     leaf_problem.A.transpose(Arow);
 
-    // #pragma omp master
-    //     {
-    //       i_t max_depth = std::ceil(std::log2(settings_.num_threads));
+#pragma omp master
+    {
+      i_t max_depth = std::ceil(std::log2(settings_.num_threads));
 
-    // #pragma omp task
-    //       exploration_ramp_up(
-    //         &search_tree, search_tree.root.get_down_child(), leaf_problem, Arow, max_depth);
+#pragma omp task
+      exploration_ramp_up(
+        &search_tree, search_tree.root.get_down_child(), leaf_problem, Arow, max_depth);
 
-    // #pragma omp task
-    //       exploration_ramp_up(
-    //         &search_tree, search_tree.root.get_up_child(), leaf_problem, Arow, max_depth);
-    //     }
+#pragma omp task
+      exploration_ramp_up(
+        &search_tree, search_tree.root.get_up_child(), leaf_problem, Arow, max_depth);
+    }
 
-    // #pragma omp barrier
+#pragma omp barrier
 
     if (omp_get_thread_num() < settings_.num_bfs_threads) {
       best_first_thread(search_tree, leaf_problem, Arow);
