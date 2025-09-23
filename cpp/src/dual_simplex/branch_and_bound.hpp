@@ -205,12 +205,13 @@ class branch_and_bound_t {
   void diving_thread(lp_problem_t<i_t, f_t>& leaf_problem, csc_matrix_t<i_t, f_t>& Arow);
 
   // Solve the LP relaxation of a leaf node.
-  mip_status_t solve_node_lp(search_tree_t<i_t, f_t>& search_tree,
-                             mip_node_t<i_t, f_t>* node_ptr,
-                             lp_problem_t<i_t, f_t>& leaf_problem,
-                             csc_matrix_t<i_t, f_t>& Arow,
-                             f_t upper_bound,
-                             logger_t& log);
+  node_status_t solve_node_lp(search_tree_t<i_t, f_t>& search_tree,
+                              mip_node_t<i_t, f_t>* node_ptr,
+                              lp_problem_t<i_t, f_t>& leaf_problem,
+                              csc_matrix_t<i_t, f_t>& Arow,
+                              f_t upper_bound,
+                              logger_t& log,
+                              char symbol);
 
   // Solve the LP relaxation of a leaf node using the dual simplex method.
   dual::status_t node_dual_simplex(i_t leaf_id,

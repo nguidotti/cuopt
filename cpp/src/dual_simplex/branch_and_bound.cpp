@@ -554,12 +554,13 @@ dual::status_t branch_and_bound_t<i_t, f_t>::node_dual_simplex(
 }
 
 template <typename i_t, typename f_t>
-mip_status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(search_tree_t<i_t, f_t>& search_tree,
-                                                         mip_node_t<i_t, f_t>* node_ptr,
-                                                         lp_problem_t<i_t, f_t>& leaf_problem,
-                                                         csc_matrix_t<i_t, f_t>& Arow,
-                                                         f_t upper_bound,
-                                                         logger_t& log)
+node_status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(search_tree_t<i_t, f_t>& search_tree,
+                                                          mip_node_t<i_t, f_t>* node_ptr,
+                                                          lp_problem_t<i_t, f_t>& leaf_problem,
+                                                          csc_matrix_t<i_t, f_t>& Arow,
+                                                          f_t upper_bound,
+                                                          logger_t& log,
+                                                          char symbol)
 {
   logger_t pc_log;
   pc_log.log = false;
@@ -589,19 +590,20 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(search_tree_t<i_t, f_t>
                                                log);
 
   if (lp_status == dual::status_t::DUAL_UNBOUNDED) {
+    // Node was infeasible. Do not branch
     node_ptr->lower_bound = inf;
     search_tree.graphviz_node(node_ptr, "infeasible", 0.0);
     search_tree.update_tree(node_ptr, node_status_t::INFEASIBLE);
-
-    // Node was infeasible. Do not branch
+    return node_status_t::INFEASIBLE;
 
   } else if (lp_status == dual::status_t::CUTOFF) {
+    // Node was cut off. Do not branch
     node_ptr->lower_bound = upper_bound;
     f_t leaf_objective    = compute_objective(leaf_problem, leaf_solution.x);
     search_tree.graphviz_node(node_ptr, "cut off", leaf_objective);
     search_tree.update_tree(node_ptr, node_status_t::FATHOMED);
+    return node_status_t::FATHOMED;
 
-    // Node was cut off. Do not branch
   } else if (lp_status == dual::status_t::OPTIMAL) {
     // LP was feasible
     std::vector<i_t> leaf_fractional;
@@ -617,9 +619,11 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(search_tree_t<i_t, f_t>
     node_ptr->lower_bound = leaf_objective;
 
     if (leaf_num_fractional == 0) {
-      add_feasible_solution(leaf_objective, leaf_solution.x, node_ptr->depth, 'B');
+      // Found a integer feasible solution
+      add_feasible_solution(leaf_objective, leaf_solution.x, node_ptr->depth, symbol);
       search_tree.graphviz_node(node_ptr, "integer feasible", leaf_objective);
       search_tree.update_tree(node_ptr, node_status_t::INTEGER_FEASIBLE);
+      return node_status_t::INTEGER_FEASIBLE;
 
     } else if (leaf_objective <= upper_bound + abs_fathom_tol &&
                relative_gap(upper_bound, leaf_objective) > rel_fathom_tol) {
@@ -633,24 +637,26 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(search_tree_t<i_t, f_t>
       search_tree.branch(
         node_ptr, branch_var, leaf_solution.x[branch_var], leaf_vstatus, original_lp_);
       node_ptr->status = node_status_t::HAS_CHILDREN;
+      return node_status_t::HAS_CHILDREN;
 
     } else {
       search_tree.graphviz_node(node_ptr, "fathomed", leaf_objective);
       search_tree.update_tree(node_ptr, node_status_t::FATHOMED);
+      return node_status_t::FATHOMED;
     }
   } else if (lp_status == dual::status_t::TIME_LIMIT) {
     search_tree.graphviz_node(node_ptr, "timeout", 0.0);
-    return mip_status_t::TIME_LIMIT;
+    search_tree.update_tree(node_ptr, node_status_t::TIME_LIMIT);
+    return node_status_t::TIME_LIMIT;
 
   } else {
     search_tree.graphviz_node(node_ptr, "numerical", 0.0);
     log.printf("Encountered LP status %d on node %d. This indicates a numerical issue.\n",
                lp_status,
                node_ptr->node_id);
-    return mip_status_t::NUMERICAL;
+    search_tree.update_tree(node_ptr, node_status_t::NUMERICAL);
+    return node_status_t::NUMERICAL;
   }
-
-  return mip_status_t::RUNNING;
 }
 
 template <typename i_t, typename f_t>
@@ -707,25 +713,17 @@ void branch_and_bound_t<i_t, f_t>::exploration_ramp_up(search_tree_t<i_t, f_t>* 
   if (toc(stats_.start_time) > settings_.time_limit) {
 #pragma omp atomic write
     status_ = mip_status_t::TIME_LIMIT;
-
-#pragma omp single nowait
-    settings_.log.printf("Time limit reached. Stopping the solver...\n");
     return;
   }
+  node_status_t node_status =
+    solve_node_lp(*search_tree, node, leaf_problem, Arow, upper_bound, settings_.log, 'B');
 
-  // We are just checking for numerical issues or timeout during the LP solve, otherwise
-  // lp_status is set to RUNNING.
-  mip_status_t lp_status =
-    solve_node_lp(*search_tree, node, leaf_problem, Arow, upper_bound, settings_.log);
-  if (lp_status == mip_status_t::TIME_LIMIT) {
+  if (node_status == node_status_t::TIME_LIMIT) {
 #pragma omp atomic write
-    status_ = lp_status;
-#pragma omp single nowait
-    settings_.log.printf("Time limit reached. Stopping the solver...\n");
+    status_ = mip_status_t::TIME_LIMIT;
     return;
-  }
 
-  if (node->status == node_status_t::HAS_CHILDREN) {
+  } else if (node_status == node_status_t::HAS_CHILDREN) {
 #pragma omp atomic update
     stats_.nodes_unexplored += 2;
 
@@ -814,35 +812,33 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(search_tree_t<i_t, f_t>& sear
     if (toc(stats_.start_time) > settings_.time_limit) {
 #pragma omp atomic write
       status_ = mip_status_t::TIME_LIMIT;
-#pragma omp single nowait
-      settings_.log.printf("Time limit reached. Stopping the solver...\n");
       break;
     }
 
     // We are just checking for numerical issues or timeout during the LP solve, otherwise
     // lp_status is set to RUNNING.
-    mip_status_t lp_status =
-      solve_node_lp(search_tree, node_ptr, leaf_problem, Arow, upper_bound, settings_.log);
-    if (lp_status == mip_status_t::TIME_LIMIT) {
-#pragma omp atomic write
-      status_ = lp_status;
-#pragma omp single nowait
-      settings_.log.printf("Time limit reached. Stopping the solver...\n");
-      break;
-    }
+    node_status_t node_status =
+      solve_node_lp(search_tree, node_ptr, leaf_problem, Arow, upper_bound, settings_.log, 'B');
 
-    if (node_ptr->status == node_status_t::HAS_CHILDREN) {
+    if (node_status == node_status_t::TIME_LIMIT) {
+#pragma omp atomic write
+      status_ = mip_status_t::TIME_LIMIT;
+      return;
+
+    } else if (node_status == node_status_t::HAS_CHILDREN) {
       if (stack.size() > 0) {
         mip_node_t<i_t, f_t>* node = stack.back();
         stack.pop_back();
 
+        if (get_heap_size() > settings_.num_bfs_threads) {
+          mutex_dive_queue_.lock();
+          dive_queue_.push(node->detach_copy());
+          mutex_dive_queue_.unlock();
+        }
+
         mutex_heap_.lock();
         heap_.push(node);
         mutex_heap_.unlock();
-
-        mutex_dive_queue_.lock();
-        dive_queue_.push(node->detach_copy());
-        mutex_dive_queue_.unlock();
       }
 
 #pragma omp atomic update
@@ -943,11 +939,13 @@ void branch_and_bound_t<i_t, f_t>::diving_thread(lp_problem_t<i_t, f_t>& leaf_pr
           continue;
         }
 
-        mip_status_t lp_status =
-          solve_node_lp(subtree, node_ptr, leaf_problem, Arow, upper_bound, log);
-        if (lp_status == mip_status_t::TIME_LIMIT) { break; }
+        node_status_t node_status =
+          solve_node_lp(subtree, node_ptr, leaf_problem, Arow, upper_bound, log, 'D');
 
-        if (node_ptr->status == node_status_t::HAS_CHILDREN) {
+        if (node_status == node_status_t::TIME_LIMIT) {
+          break;
+
+        } else if (node_status == node_status_t::HAS_CHILDREN) {
           auto [first, second] = child_selection(node_ptr);
 
           if (dive_queue_.size() < 4 * settings_.num_diving_threads) {
@@ -1023,7 +1021,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     return mip_status_t::UNBOUNDED;
   }
   if (root_status == lp_status_t::TIME_LIMIT) {
-    settings_.log.printf("Hit time limit\n");
+    settings_.log.printf("Time limit reached. Stopping the solver...\n");
     return mip_status_t::TIME_LIMIT;
   }
 
@@ -1085,7 +1083,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                              pc_);
 
   if (toc(stats_.start_time) > settings_.time_limit) {
-    settings_.log.printf("Hit time limit\n");
+    settings_.log.printf("Time limit reached. Stopping the solver...\n");
     return mip_status_t::TIME_LIMIT;
   }
 
@@ -1098,8 +1096,11 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   search_tree.branch(
     &search_tree.root, branch_var, root_relax_soln_.x[branch_var], root_vstatus_, original_lp_);
 
-  settings_.log.printf("Exploring the B&B tree using %d threads and %d diving threads\n",
-                       settings_.num_bfs_threads,
+  heap_.push(search_tree.root.get_down_child());
+  heap_.push(search_tree.root.get_up_child());
+
+  settings_.log.printf("Exploring the B&B tree using %d threads (%d are diving threads)\n",
+                       settings_.num_threads,
                        settings_.num_threads - settings_.num_bfs_threads);
   settings_.log.printf(
     "|  Explored  |  Unexplored  | Objective   |    Bound    |  Depth  | Iter/Node |  Gap   | "
@@ -1115,26 +1116,30 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     csc_matrix_t<i_t, f_t> Arow(1, 1, 1);
     leaf_problem.A.transpose(Arow);
 
-#pragma omp master
-    {
-      i_t max_depth = 4 * std::ceil(log2((double)settings_.num_bfs_threads));
+    // #pragma omp master
+    //     {
+    //       i_t max_depth = std::ceil(std::log2(settings_.num_threads));
 
-#pragma omp task
-      exploration_ramp_up(
-        &search_tree, search_tree.root.get_down_child(), leaf_problem, Arow, max_depth);
+    // #pragma omp task
+    //       exploration_ramp_up(
+    //         &search_tree, search_tree.root.get_down_child(), leaf_problem, Arow, max_depth);
 
-#pragma omp task
-      exploration_ramp_up(
-        &search_tree, search_tree.root.get_up_child(), leaf_problem, Arow, max_depth);
-    }
+    // #pragma omp task
+    //       exploration_ramp_up(
+    //         &search_tree, search_tree.root.get_up_child(), leaf_problem, Arow, max_depth);
+    //     }
 
-#pragma omp barrier
+    // #pragma omp barrier
 
     if (omp_get_thread_num() < settings_.num_bfs_threads) {
       best_first_thread(search_tree, leaf_problem, Arow);
     } else {
       diving_thread(leaf_problem, Arow);
     }
+  }
+
+  if (status_ == mip_status_t::TIME_LIMIT) {
+    settings_.log.printf("Time limit reached. Stopping the solver...\n");
   }
 
   f_t lower_bound = heap_.size() > 0 ? heap_.top()->lower_bound : search_tree.get_lower_bound();

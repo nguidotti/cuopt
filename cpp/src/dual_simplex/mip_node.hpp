@@ -30,11 +30,12 @@ namespace cuopt::linear_programming::dual_simplex {
 
 enum class node_status_t : int {
   ACTIVE           = 0,  // Node still in the tree
-  IN_PROGRESS      = 1,  // Node is currently being solved
-  INTEGER_FEASIBLE = 2,  // Node has an integer feasible solution
-  INFEASIBLE       = 3,  // Node is infeasible
-  FATHOMED         = 4,  // Node objective is greater than the upper bound
-  HAS_CHILDREN     = 5,  // Node has children to explore
+  INTEGER_FEASIBLE = 1,  // Node has an integer feasible solution
+  INFEASIBLE       = 2,  // Node is infeasible
+  FATHOMED         = 3,  // Node objective is greater than the upper bound
+  HAS_CHILDREN     = 4,  // Node has children to explore
+  NUMERICAL        = 5,  // Encountered numerical issue when solving the LP relaxation
+  TIME_LIMIT       = 6   // Time out during the LP relaxation
 };
 
 bool inactive_status(node_status_t status);
