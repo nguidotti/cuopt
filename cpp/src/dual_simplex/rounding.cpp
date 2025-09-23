@@ -16,7 +16,9 @@
  */
 
 #include <cmath>
+#include <cstdio>
 #include <dual_simplex/rounding.hpp>
+#include "dual_simplex/solution.hpp"
 
 namespace cuopt::linear_programming::dual_simplex {
 
@@ -25,6 +27,8 @@ bool simple_rounding(lp_solution_t<i_t, f_t>& lp_solution,
                      const lp_problem_t<i_t, f_t>& lp_problem,
                      const std::vector<i_t>& fractional)
 {
+  if (fractional.size() == 0) { return false; }
+
   bool rounding_success = true;
   for (i_t var_idx : fractional) {
     i_t up_lock   = 0;
@@ -33,17 +37,18 @@ bool simple_rounding(lp_solution_t<i_t, f_t>& lp_solution,
     i_t end       = lp_problem.A.col_start[var_idx + 1];
 
     for (i_t k = start; k < end; ++k) {
-      f_t Aij = lp_problem.A.x[k];
+      f_t nz_val = lp_problem.A.x[k];
+      i_t nz_row = lp_problem.A.i[k];
 
-      if (std::isfinite(lp_problem.upper[k]) && std::isfinite(lp_problem.lower[k])) {
+      if (std::isfinite(lp_problem.upper[nz_row]) && std::isfinite(lp_problem.lower[nz_row])) {
         down_lock += 1;
         up_lock += 1;
         continue;
       }
 
-      f_t sign = std::isfinite(lp_problem.upper[k]) ? 1 : -1;
+      f_t sign = std::isfinite(lp_problem.upper[nz_row]) ? 1 : -1;
 
-      if (Aij * sign > 0) {
+      if (nz_val * sign > 0) {
         up_lock += 1;
       } else {
         down_lock += 1;
@@ -71,5 +76,13 @@ bool simple_rounding(lp_solution_t<i_t, f_t>& lp_solution,
 
   return rounding_success;
 }
+
+#ifdef DUAL_SIMPLEX_INSTANTIATE_DOUBLE
+
+template bool simple_rounding(lp_solution_t<int, double>&,
+                              const lp_problem_t<int, double>&,
+                              const std::vector<int>& fractional);
+
+#endif
 
 }  // namespace cuopt::linear_programming::dual_simplex

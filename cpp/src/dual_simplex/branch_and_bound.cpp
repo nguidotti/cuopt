@@ -23,6 +23,7 @@
 #include <dual_simplex/presolve.hpp>
 #include <dual_simplex/pseudo_costs.hpp>
 #include <dual_simplex/random.hpp>
+#include <dual_simplex/rounding.hpp>
 #include <dual_simplex/solve.hpp>
 #include <dual_simplex/tic_toc.hpp>
 #include <dual_simplex/user_problem.hpp>
@@ -607,10 +608,16 @@ node_status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(search_tree_t<i_t, f_t
   } else if (lp_status == dual::status_t::OPTIMAL) {
     // LP was feasible
     std::vector<i_t> leaf_fractional;
-    i_t leaf_num_fractional =
-      fractional_variables(settings_, leaf_solution.x, var_types_, leaf_fractional);
+    fractional_variables(settings_, leaf_solution.x, var_types_, leaf_fractional);
+    bool success       = simple_rounding(leaf_solution, leaf_problem, leaf_fractional);
     f_t leaf_objective = compute_objective(leaf_problem, leaf_solution.x);
     search_tree.graphviz_node(node_ptr, "lower bound", leaf_objective);
+
+    if (success) {
+      leaf_fractional.clear();
+      fractional_variables(settings_, leaf_solution.x, var_types_, leaf_fractional);
+      settings_.log.printf("Rounding heuristic succeded in node %d.\n", node_ptr->node_id);
+    }
 
     mutex_pc_.lock();
     pc_.update_pseudo_costs(node_ptr, leaf_objective);
@@ -618,7 +625,7 @@ node_status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(search_tree_t<i_t, f_t
 
     node_ptr->lower_bound = leaf_objective;
 
-    if (leaf_num_fractional == 0) {
+    if (leaf_fractional.size() == 0) {
       // Found a integer feasible solution
       add_feasible_solution(leaf_objective, leaf_solution.x, node_ptr->depth, symbol);
       search_tree.graphviz_node(node_ptr, "integer feasible", leaf_objective);
@@ -1100,7 +1107,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                        settings_.num_threads,
                        settings_.num_threads - settings_.num_bfs_threads);
   settings_.log.printf(
-    "|  Explored  |  Unexplored  | Objective   |    Bound    |  Depth  | Iter/Node |  Gap   | "
+    "|  Explored  |  Unexplored  |  Objective   |    Bound    |  Depth  | Iter/Node |  Gap   | "
     "   Time \n");
 
 #pragma omp atomic write
