@@ -23,7 +23,6 @@
 #include <dual_simplex/presolve.hpp>
 #include <dual_simplex/pseudo_costs.hpp>
 #include <dual_simplex/random.hpp>
-#include <dual_simplex/rounding.hpp>
 #include <dual_simplex/solve.hpp>
 #include <dual_simplex/tic_toc.hpp>
 #include <dual_simplex/user_problem.hpp>
@@ -36,6 +35,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include "dual_simplex/rounding.hpp"
 
 namespace cuopt::linear_programming::dual_simplex {
 
@@ -53,17 +53,16 @@ bool is_fractional(f_t x, variable_type_t var_type, f_t integer_tol)
 }
 
 template <typename i_t, typename f_t>
-i_t fractional_variables(const simplex_solver_settings_t<i_t, f_t>& settings,
-                         const std::vector<f_t>& x,
-                         const std::vector<variable_type_t>& var_types,
-                         std::vector<i_t>& fractional)
+void fractional_variables(const std::vector<f_t>& x,
+                          const std::vector<variable_type_t>& var_types,
+                          const f_t int_tol,
+                          std::vector<i_t>& fractional)
 {
   const i_t n = x.size();
   assert(x.size() == var_types.size());
   for (i_t j = 0; j < n; ++j) {
-    if (is_fractional(x[j], var_types[j], settings.integer_tol)) { fractional.push_back(j); }
+    if (is_fractional(x[j], var_types[j], int_tol)) { fractional.push_back(j); }
   }
-  return fractional.size();
 }
 
 template <typename i_t, typename f_t>
@@ -116,7 +115,8 @@ bool check_guess(const lp_problem_t<i_t, f_t>& original_lp,
   }
   if (verbose) { settings.log.printf("Bounds infeasibility %e\n", bound_error); }
   std::vector<i_t> fractional;
-  num_fractional = fractional_variables(settings, guess, var_types, fractional);
+  fractional_variables(guess, var_types, settings.integer_tol, fractional);
+  num_fractional = fractional.size();
   if (verbose) { settings.log.printf("Fractional in solution %d\n", num_fractional); }
   if (bound_error < settings.primal_tol && primal_error < 2 * settings.primal_tol &&
       num_fractional == 0) {
@@ -608,16 +608,18 @@ node_status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(search_tree_t<i_t, f_t
   } else if (lp_status == dual::status_t::OPTIMAL) {
     // LP was feasible
     std::vector<i_t> leaf_fractional;
-    fractional_variables(settings_, leaf_solution.x, var_types_, leaf_fractional);
-    bool success       = simple_rounding(leaf_solution, leaf_problem, leaf_fractional);
+    fractional_variables(leaf_solution.x, var_types_, settings_.integer_tol, leaf_fractional);
+
+    if (leaf_fractional.size() > 0) {
+      bool success = simple_rounding(leaf_problem, leaf_solution, leaf_fractional);
+
+      if (success) {
+        settings_.log.printf("Rounding heuristic succeded in node %d.\n", node_ptr->node_id);
+      }
+    }
+
     f_t leaf_objective = compute_objective(leaf_problem, leaf_solution.x);
     search_tree.graphviz_node(node_ptr, "lower bound", leaf_objective);
-
-    if (success) {
-      leaf_fractional.clear();
-      fractional_variables(settings_, leaf_solution.x, var_types_, leaf_fractional);
-      settings_.log.printf("Rounding heuristic succeded in node %d.\n", node_ptr->node_id);
-    }
 
     mutex_pc_.lock();
     pc_.update_pseudo_costs(node_ptr, leaf_objective);
@@ -1051,10 +1053,9 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   }
 
   std::vector<i_t> fractional;
-  const i_t num_fractional =
-    fractional_variables(settings_, root_relax_soln_.x, var_types_, fractional);
+  fractional_variables(root_relax_soln_.x, var_types_, settings_.integer_tol, fractional);
 
-  if (num_fractional == 0) {
+  if (fractional.size() == 0) {
     mutex_upper_.lock();
     incumbent_.set_incumbent_solution(root_objective_, root_relax_soln_.x);
     upper_bound_ = root_objective_;

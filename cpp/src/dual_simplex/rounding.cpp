@@ -18,18 +18,20 @@
 #include <cmath>
 #include <cstdio>
 #include <dual_simplex/rounding.hpp>
-#include "dual_simplex/solution.hpp"
-
+#include <vector>
 namespace cuopt::linear_programming::dual_simplex {
 
 template <typename i_t, typename f_t>
-bool simple_rounding(lp_solution_t<i_t, f_t>& lp_solution,
-                     const lp_problem_t<i_t, f_t>& lp_problem,
-                     const std::vector<i_t>& fractional)
+bool simple_rounding(const lp_problem_t<i_t, f_t>& lp_problem,
+                     lp_solution_t<i_t, f_t>& lp_solution,
+                     std::vector<i_t>& fractional)
 {
-  if (fractional.size() == 0) { return false; }
+  if (fractional.size() == 0) { return true; }
 
   bool rounding_success = true;
+  std::vector<i_t> new_fractional;
+  new_fractional.reserve(fractional.size());
+
   for (i_t var_idx : fractional) {
     i_t up_lock   = 0;
     i_t down_lock = 0;
@@ -71,17 +73,56 @@ bool simple_rounding(lp_solution_t<i_t, f_t>& lp_solution,
       lp_solution.x[var_idx] = std::floor(curr_val);
     } else {
       rounding_success = false;
+      new_fractional.push_back(var_idx);
     }
   }
 
+  fractional = new_fractional;
   return rounding_success;
 }
 
+// rounds to the nearest integer within bounds
+template <typename f_t>
+f_t round_nearest(f_t val, f_t lb, f_t ub, f_t int_tol, pcg_t& rng)
+{
+  if (val > ub) {
+    return floor(ub + int_tol);
+  } else if (val < lb) {
+    return ceil(lb - int_tol);
+  } else {
+    f_t w = rng.next_float();
+    f_t t = 2 * w * (1 - w);
+    if (w > 0.5) { t = 1 - t; }
+    return floor(val + t);
+  }
+}
+
+// template <typename i_t, typename f_t>
+// bool nearest_integer_rounding(const lp_problem_t<i_t, f_t>& lp_problem,
+//                               const f_t int_tol,
+//                               const i_t seed,
+//                               const i_t stream,
+//                               lp_solution_t<i_t, f_t>& lp_solution,
+//                               std::vector<i_t>& fractional)
+// {
+//   if (fractional.size() == 0) { return true; }
+
+//   pcg_t rng(pcg_t::default_seed + seed, pcg_t::default_stream + stream);
+
+//   for (auto var_idx : fractional) {
+//     f_t curr_val           = lp_solution.x[var_idx];
+//     f_t lb                 = lp_problem.lower[var_idx];
+//     f_t ub                 = lp_problem.upper[var_idx];
+//     lp_solution.x[var_idx] = round_nearest(curr_val, lb, ub, int_tol, rng);
+//   }
+
+// }
+
 #ifdef DUAL_SIMPLEX_INSTANTIATE_DOUBLE
 
-template bool simple_rounding(lp_solution_t<int, double>&,
-                              const lp_problem_t<int, double>&,
-                              const std::vector<int>& fractional);
+template bool simple_rounding(const lp_problem_t<int, double>& lp_problem,
+                              lp_solution_t<int, double>& lp_solution,
+                              std::vector<int>& fractional);
 
 #endif
 
