@@ -87,24 +87,27 @@ class mip_node_t {
                            std::vector<f_t>& upper,
                            std::vector<bool>& bounds_changed) const
   {
-    std::fill(bounds_changed.begin(), bounds_changed.end(), false);
-    // Apply the bounds at the current node
-    assert(lower.size() > branch_var);
-    assert(upper.size() > branch_var);
-    lower[branch_var]                = branch_var_lower;
-    upper[branch_var]                = branch_var_upper;
-    bounds_changed[branch_var]       = true;
+    update_variable_bound(lower, upper, bounds_changed);
+
     mip_node_t<i_t, f_t>* parent_ptr = parent;
     while (parent_ptr != nullptr) {
       if (parent_ptr->node_id == 0) { break; }
-      assert(parent_ptr->branch_var >= 0);
-      assert(lower.size() > parent_ptr->branch_var);
-      assert(upper.size() > parent_ptr->branch_var);
-      lower[parent_ptr->branch_var]          = parent_ptr->branch_var_lower;
-      upper[parent_ptr->branch_var]          = parent_ptr->branch_var_upper;
-      bounds_changed[parent_ptr->branch_var] = true;
-      parent_ptr                             = parent_ptr->parent;
+      parent_ptr->update_variable_bound(lower, upper, bounds_changed);
+      parent_ptr = parent_ptr->parent;
     }
+  }
+
+  void update_variable_bound(std::vector<f_t>& lower,
+                             std::vector<f_t>& upper,
+                             std::vector<bool>& bounds_changed) const
+  {
+    // Apply the bounds at the current node
+    assert(branch_var >= 0);
+    assert(lower.size() > branch_var);
+    assert(upper.size() > branch_var);
+    lower[branch_var]          = branch_var_lower;
+    upper[branch_var]          = branch_var_upper;
+    bounds_changed[branch_var] = true;
   }
 
   mip_node_t* get_down_child() const { return children[0].get(); }
