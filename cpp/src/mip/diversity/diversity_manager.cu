@@ -312,9 +312,9 @@ void diversity_manager_t<i_t, f_t>::run_fj_alone(solution_t<i_t, f_t>& solution)
 template <typename i_t, typename f_t>
 void diversity_manager_t<i_t, f_t>::run_fp_alone(solution_t<i_t, f_t>& solution)
 {
-  CUOPT_LOG_INFO("Running FP alone!");
+  CUOPT_LOG_DEBUG("Running FP alone!");
   ls.run_fp(solution, timer, &population);
-  CUOPT_LOG_INFO("FP alone finished!");
+  CUOPT_LOG_DEBUG("FP alone finished!");
 }
 
 template <typename i_t, typename f_t>
@@ -543,7 +543,7 @@ void diversity_manager_t<i_t, f_t>::recombine_and_ls_with_all(
 {
   raft::common::nvtx::range fun_scope("recombine_and_ls_with_all");
   if (solutions.size() > 0) {
-    CUOPT_LOG_INFO("Running recombiners on B&B solutions with size %lu", solutions.size());
+    CUOPT_LOG_DEBUG("Running recombiners on B&B solutions with size %lu", solutions.size());
     // add all solutions because time limit might have been consumed and we might have exited before
     for (auto& sol : solutions) {
       cuopt_func_call(sol.test_feasibility(true));
@@ -813,7 +813,7 @@ void diversity_manager_t<i_t, f_t>::set_simplex_solution(const std::vector<f_t>&
   cuopt_assert(integer_equal(new_sol.get_user_objective(), objective, 1e-3), "Objective mismatch");
   std::lock_guard<std::mutex> lock(relaxed_solution_mutex);
   simplex_solution_exists = true;
-  global_concurrent_halt.store(1, std::memory_order_release);
+  global_concurrent_halt  = 1;
   // it is safe to use lp_optimal_solution while executing the copy operation
   // the operations are ordered as long as they are on the same stream
   raft::copy(

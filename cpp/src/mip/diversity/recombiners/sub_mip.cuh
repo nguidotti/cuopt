@@ -102,7 +102,7 @@ class sub_mip_recombiner_t : public recombiner_t<i_t, f_t> {
     if (run_sub_mip) {
       // run sub-mip
       namespace dual_simplex = cuopt::linear_programming::dual_simplex;
-      dual_simplex::user_problem_t<i_t, f_t> branch_and_bound_problem;
+      dual_simplex::user_problem_t<i_t, f_t> branch_and_bound_problem(offspring.handle_ptr);
       dual_simplex::simplex_solver_settings_t<i_t, f_t> branch_and_bound_settings;
       fixed_problem.get_host_user_problem(branch_and_bound_problem);
       branch_and_bound_solution.resize(branch_and_bound_problem.num_cols);
@@ -111,8 +111,11 @@ class sub_mip_recombiner_t : public recombiner_t<i_t, f_t> {
       branch_and_bound_settings.print_presolve_stats = false;
       branch_and_bound_settings.absolute_mip_gap_tol = context.settings.tolerances.absolute_mip_gap;
       branch_and_bound_settings.relative_mip_gap_tol = context.settings.tolerances.relative_mip_gap;
-      branch_and_bound_settings.integer_tol = context.settings.tolerances.integrality_tolerance;
-      branch_and_bound_settings.solution_callback = [this](std::vector<f_t>& solution,
+      branch_and_bound_settings.integer_tol     = context.settings.tolerances.integrality_tolerance;
+      branch_and_bound_settings.num_threads     = 2;
+      branch_and_bound_settings.num_bfs_threads = 1;
+      branch_and_bound_settings.num_diving_threads = 1;
+      branch_and_bound_settings.solution_callback  = [this](std::vector<f_t>& solution,
                                                            f_t objective) {
         this->solution_callback(solution, objective);
       };
