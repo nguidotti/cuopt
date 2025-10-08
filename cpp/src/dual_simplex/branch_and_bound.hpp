@@ -57,8 +57,10 @@ enum class mip_exploration_status_t {
 // [1] T. Achterberg, “Constraint Integer Programming,” PhD, Technischen Universität Berlin,
 // Berlin, 2007. doi: 10.14279/depositonce-1634.
 enum class thread_type_t {
-  EXPLORATION = 0,  // Best-First + Plunging. Pseudocost branching + Martin's criteria.
-  DIVING      = 1,
+  EXPLORATION        = 0,  // Best-First + Plunging. Pseudocost branching + Martin's criteria.
+  LINE_SEARCH_DIVING = 1,  // Line search diving (9.2.4)
+  PSEUDOCOST_DIVING  = 2,  // Pseudocost diving (9.2.5)
+  GUIDED_DIVING = 3  // Guided diving (9.2.3). If no incumbent is found yet, use pseudocost diving.
 };
 
 template <typename i_t, typename f_t>
@@ -196,22 +198,24 @@ class branch_and_bound_t {
 
   // Each diving thread pops the first node from the dive queue and then performs
   // a deep dive into the subtree determined by the node.
-  void diving_thread();
+  void diving_thread(thread_type_t diving_type);
 
   // Solve the LP relaxation of a leaf node and update the tree.
-  node_status_t solve_node(mip_node_t<i_t, f_t>* node_ptr,
-                           search_tree_t<i_t, f_t>& search_tree,
-                           lp_problem_t<i_t, f_t>& leaf_problem,
-                           node_presolver_t<i_t, f_t>& presolver,
-                           thread_type_t thread_type,
-                           bool recompute,
-                           const std::vector<f_t>& root_lower,
-                           const std::vector<f_t>& root_upper,
-                           logger_t& log);
+  std::pair<node_status_t, round_dir_t> solve_node(mip_node_t<i_t, f_t>* node_ptr,
+                                                   search_tree_t<i_t, f_t>& search_tree,
+                                                   lp_problem_t<i_t, f_t>& leaf_problem,
+                                                   node_presolver_t<i_t, f_t>& presolver,
+                                                   thread_type_t thread_type,
+                                                   bool recompute,
+                                                   const std::vector<f_t>& root_lower,
+                                                   const std::vector<f_t>& root_upper,
+                                                   logger_t& log);
 
-  // Sort the children based on the Martin's criteria.
-  std::pair<mip_node_t<i_t, f_t>*, mip_node_t<i_t, f_t>*> child_selection(
-    mip_node_t<i_t, f_t>* node_ptr);
+  // Selects the variable to branch on.
+  selected_variable_t<i_t> variable_selection(const std::vector<i_t>& fractional,
+                                              const std::vector<f_t>& solution,
+                                              thread_type_t type,
+                                              logger_t& log);
 };
 
 }  // namespace cuopt::linear_programming::dual_simplex
