@@ -38,6 +38,8 @@ enum class node_status_t : int {
   TIME_LIMIT       = 6   // Time out during the LP relaxation
 };
 
+enum class round_dir_t { NONE = -1, DOWN = 0, UP = 1 };
+
 bool inactive_status(node_status_t status);
 
 template <typename i_t, typename f_t>
@@ -50,7 +52,7 @@ class mip_node_t {
       parent(nullptr),
       node_id(0),
       branch_var(-1),
-      branch_dir(-1),
+      branch_dir(round_dir_t::NONE),
       vstatus(basis)
   {
     children[0] = nullptr;
@@ -61,7 +63,7 @@ class mip_node_t {
              mip_node_t* parent_node,
              i_t node_num,
              i_t branch_variable,
-             i_t branch_direction,
+             round_dir_t branch_direction,
              f_t branch_var_value,
              const std::vector<variable_status_t>& basis)
     : status(node_status_t::ACTIVE),
@@ -75,12 +77,12 @@ class mip_node_t {
       vstatus(basis)
 
   {
-    branch_var_lower =
-      branch_direction == 0 ? problem.lower[branch_var] : std::ceil(branch_var_value);
-    branch_var_upper =
-      branch_direction == 0 ? std::floor(branch_var_value) : problem.upper[branch_var];
-    children[0] = nullptr;
-    children[1] = nullptr;
+    branch_var_lower = branch_direction == round_dir_t::DOWN ? problem.lower[branch_var]
+                                                             : std::ceil(branch_var_value);
+    branch_var_upper = branch_direction == round_dir_t::DOWN ? std::floor(branch_var_value)
+                                                             : problem.upper[branch_var];
+    children[0]      = nullptr;
+    children[1]      = nullptr;
   }
 
   void get_variable_bounds(std::vector<f_t>& lower,
@@ -231,7 +233,7 @@ class mip_node_t {
   i_t depth;
   i_t node_id;
   i_t branch_var;
-  i_t branch_dir;
+  round_dir_t branch_dir;
   f_t branch_var_lower;
   f_t branch_var_upper;
   f_t fractional_val;
@@ -296,17 +298,26 @@ class search_tree_t {
   {
     i_t id = num_nodes.fetch_add(2);
 
-    // down child
-    auto down_child = std::make_unique<mip_node_t<i_t, f_t>>(
-      original_lp, parent_node, ++id, branch_var, 0, fractional_val, parent_vstatus);
+    auto down_child = std::make_unique<mip_node_t<i_t, f_t>>(original_lp,
+                                                             parent_node,
+                                                             ++id,
+                                                             branch_var,
+                                                             round_dir_t::DOWN,
+                                                             fractional_val,
+                                                             parent_vstatus);
 
-    graphviz_edge(log, parent_node, down_child.get(), branch_var, 0, std::floor(fractional_val));
+    graphviz_edge(log,
+                  parent_node,
+                  down_child.get(),
+                  branch_var,
+                  round_dir_t::DOWN,
+                  std::floor(fractional_val));
 
-    // up child
     auto up_child = std::make_unique<mip_node_t<i_t, f_t>>(
-      original_lp, parent_node, ++id, branch_var, 1, fractional_val, parent_vstatus);
+      original_lp, parent_node, ++id, branch_var, round_dir_t::UP, fractional_val, parent_vstatus);
 
-    graphviz_edge(log, parent_node, up_child.get(), branch_var, 1, std::ceil(fractional_val));
+    graphviz_edge(
+      log, parent_node, up_child.get(), branch_var, round_dir_t::UP, std::ceil(fractional_val));
 
     assert(parent_vstatus.size() == original_lp.num_cols);
     parent_node->add_children(std::move(down_child),
@@ -327,7 +338,7 @@ class search_tree_t {
                      const mip_node_t<i_t, f_t>* origin_ptr,
                      const mip_node_t<i_t, f_t>* dest_ptr,
                      const i_t branch_var,
-                     const i_t branch_dir,
+                     round_dir_t branch_dir,
                      const f_t bound)
   {
     if (write_graphviz) {
@@ -335,7 +346,7 @@ class search_tree_t {
                  origin_ptr->node_id,
                  dest_ptr->node_id,
                  branch_var,
-                 branch_dir == 0 ? "<=" : ">=",
+                 branch_dir == round_dir_t::DOWN ? "<=" : ">=",
                  bound);
     }
   }
