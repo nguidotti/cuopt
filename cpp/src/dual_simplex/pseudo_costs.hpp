@@ -24,8 +24,24 @@
 #include <utilities/omp_helpers.hpp>
 
 #include <omp.h>
+#include <vector>
 
 namespace cuopt::linear_programming::dual_simplex {
+
+// Variable selection method (See [1]).
+// [1] T. Achterberg, “Constraint Integer Programming,” PhD, Technischen Universität Berlin,
+// Berlin, 2007. doi: 10.14279/depositonce-1634.
+enum class selection_method_t {
+  PSEUDOCOST_BRANCHING = 0,  // Standard pseudocost branching + Martin's child selection criteria
+  LINE_SEARCH_DIVING   = 1,  // Line search diving (see section 9.2.4)
+  PSEUDOCOST_DIVING    = 2   // Pseudocost diving (see section 9.2.5 )
+};
+
+template <typename i_t>
+struct selected_variable_t {
+  i_t variable;
+  round_dir_t direction;
+};
 
 template <typename i_t, typename f_t>
 class pseudo_costs_t {
@@ -53,9 +69,47 @@ class pseudo_costs_t {
                    f_t& pseudo_cost_down_avg,
                    f_t& pseudo_cost_up_avg) const;
 
-  i_t variable_selection(const std::vector<i_t>& fractional,
-                         const std::vector<f_t>& solution,
-                         logger_t& log);
+  // Martin's criteria for the preferred rounding direction (see [1])
+  // [1] A. Martin, “Integer Programs with Block Structure,”
+  // Technische Universit¨at Berlin, Berlin, 1999. Accessed: Aug. 08, 2025.
+  // [Online]. Available: https://opus4.kobv.de/opus4-zib/frontdoor/index/index/docId/391
+  round_dir_t martin_criteria(f_t val, f_t ref_val) const;
+
+  // Selects the variable to branch on.
+  selected_variable_t<i_t> variable_selection(const std::vector<i_t>& fractional,
+                                              const std::vector<f_t>& solution,
+                                              const std::vector<f_t>& root_solution,
+                                              const std::vector<f_t>& incumbent,
+                                              selection_method_t method,
+                                              logger_t& log)
+  {
+    switch (method) {
+      case selection_method_t::PSEUDOCOST_BRANCHING:
+        return pseudocost_branching(fractional, solution, root_solution, log);
+      case selection_method_t::LINE_SEARCH_DIVING:
+        return line_search_diving(fractional, solution, root_solution, log);
+      case selection_method_t::PSEUDOCOST_DIVING:
+        return pseudocost_diving(fractional, solution, root_solution, log);
+      default:
+        log.debug("Unknown variable selection method: %d\n", method);
+        return {-1, round_dir_t::NONE};
+    }
+  }
+
+  selected_variable_t<i_t> pseudocost_branching(const std::vector<i_t>& fractional,
+                                                const std::vector<f_t>& solution,
+                                                const std::vector<f_t>& root_solution,
+                                                logger_t& log);
+
+  selected_variable_t<i_t> line_search_diving(const std::vector<i_t>& fractional,
+                                              const std::vector<f_t>& solution,
+                                              const std::vector<f_t>& root_solution,
+                                              logger_t& log);
+
+  selected_variable_t<i_t> pseudocost_diving(const std::vector<i_t>& fractional,
+                                             const std::vector<f_t>& solution,
+                                             const std::vector<f_t>& root_solution,
+                                             logger_t& log);
 
   void update_pseudo_costs_from_strong_branching(const std::vector<i_t>& fractional,
                                                  const std::vector<f_t>& root_soln);
@@ -81,5 +135,15 @@ void strong_branching(const lp_problem_t<i_t, f_t>& original_lp,
                       const std::vector<variable_status_t>& root_vstatus,
                       const std::vector<f_t>& edge_norms,
                       pseudo_costs_t<i_t, f_t>& pc);
+
+inline const char* selection_method_to_string(selection_method_t method)
+{
+  switch (method) {
+    case selection_method_t::PSEUDOCOST_BRANCHING: return "pseudocost branching";
+    case selection_method_t::LINE_SEARCH_DIVING: return "line search diving";
+    case selection_method_t::PSEUDOCOST_DIVING: return "pseudocost diving";
+    default: return "unknown selection method";
+  }
+}
 
 }  // namespace cuopt::linear_programming::dual_simplex

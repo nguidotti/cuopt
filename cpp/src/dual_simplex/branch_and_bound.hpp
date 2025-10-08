@@ -258,7 +258,9 @@ class branch_and_bound_t {
 
   // Each diving thread pops the first node from the dive queue and then performs
   // a deep dive into the subtree determined by the node.
-  void diving_thread(lp_problem_t<i_t, f_t>& leaf_problem, const csc_matrix_t<i_t, f_t>& Arow);
+  void diving_thread(lp_problem_t<i_t, f_t>& leaf_problem,
+                     const csc_matrix_t<i_t, f_t>& Arow,
+                     selection_method_t var_select);
 
   // Solve the LP relaxation of a leaf node and update the tree.
   node_status_t solve_node(search_tree_t<i_t, f_t>& search_tree,
@@ -268,6 +270,7 @@ class branch_and_bound_t {
                            std::vector<i_t>& basic_list,
                            std::vector<i_t>& nonbasic_list,
                            node_presolve_t<i_t, f_t>& presolve,
+                           selection_method_t var_select,
                            char thread_type,
                            logger_t& log);
 
@@ -278,10 +281,6 @@ class branch_and_bound_t {
                                    std::vector<i_t>& basic,
                                    std::vector<i_t>& nonbasic,
                                    char thread_type);
-
-  // Sort the children based on the Martin's criteria.
-  std::pair<mip_node_t<i_t, f_t>*, mip_node_t<i_t, f_t>*> child_selection(
-    mip_node_t<i_t, f_t>* node_ptr);
 };
 
 }  // namespace cuopt::linear_programming::dual_simplex
