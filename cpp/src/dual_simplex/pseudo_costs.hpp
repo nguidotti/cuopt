@@ -139,10 +139,10 @@ void strong_branching(const lp_problem_t<i_t, f_t>& original_lp,
 inline const char* selection_method_to_string(selection_method_t method)
 {
   switch (method) {
-    case selection_method_t::PSEUDOCOST_BRANCHING: return "pseudocost branching";
-    case selection_method_t::LINE_SEARCH_DIVING: return "line search diving";
-    case selection_method_t::PSEUDOCOST_DIVING: return "pseudocost diving";
-    default: return "unknown selection method";
+    case selection_method_t::PSEUDOCOST_BRANCHING: return "Pseudocost branching";
+    case selection_method_t::LINE_SEARCH_DIVING: return "Line search diving";
+    case selection_method_t::PSEUDOCOST_DIVING: return "Pseudocost diving";
+    default: return "Unknown method";
   }
 }
 

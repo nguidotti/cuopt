@@ -200,15 +200,6 @@ std::string user_mip_gap(f_t obj_value, f_t lower_bound)
   }
 }
 
-template <typename i_t>
-selection_method_t get_diving_strategy(i_t id)
-{
-  switch (id % 2) {
-    case 1: return selection_method_t::LINE_SEARCH_DIVING;
-    default: return selection_method_t::PSEUDOCOST_DIVING;
-  }
-}
-
 }  // namespace
 
 template <typename i_t, typename f_t>
@@ -637,8 +628,9 @@ std::pair<node_status_t, round_dir_t> branch_and_bound_t<i_t, f_t>::solve_node(
     if (leaf_num_fractional == 0) {
       // Found a integer feasible solution
       if (thread_type == 'D') {
-        settings_.log.printf("Integer feasible solution found with %s\n",
-                             selection_method_to_string(var_select));
+        settings_.log.debug("%s found a feasible solution with objective = %.10e.\n",
+                            selection_method_to_string(var_select),
+                            compute_user_objective(original_lp_, leaf_objective));
       }
 
       add_feasible_solution(leaf_objective, leaf_solution.x, node_ptr->depth, thread_type);
@@ -1346,6 +1338,21 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   status_                     = mip_exploration_status_t::RUNNING;
   lower_bound_ceiling_        = inf;
 
+  const char* method = std::getenv("CUOPT_MIP_DIVING_STRATEGY");
+  if (method == nullptr) method = "DEFAULT";
+
+  i_t num_line_search_diving = 0;
+  i_t num_pseudocost_diving  = 0;
+
+  if (std::strcmp(method, "LINE_SEARCH") == 0) {
+    num_line_search_diving = settings_.num_diving_threads;
+  } else if (std::strcmp(method, "PSEUDOCOST") == 0) {
+    num_pseudocost_diving = settings_.num_diving_threads;
+  } else {
+    num_line_search_diving = settings_.num_diving_threads / 2;
+    num_pseudocost_diving  = settings_.num_diving_threads - num_line_search_diving;
+  }
+
 #pragma omp parallel num_threads(settings_.num_threads)
   {
     // Make a copy of the original LP. We will modify its bounds at each leaf
@@ -1375,9 +1382,14 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
           best_first_thread(i, search_tree, leaf_problem, Arow);
         }
 
-        for (i_t i = 0; i < settings_.num_diving_threads; i++) {
+        for (i_t i = 0; i < num_line_search_diving; i++) {
 #pragma omp task
-          diving_thread(leaf_problem, Arow);
+          diving_thread(leaf_problem, Arow, selection_method_t::LINE_SEARCH_DIVING);
+        }
+
+        for (i_t i = 0; i < num_pseudocost_diving; i++) {
+#pragma omp task
+          diving_thread(leaf_problem, Arow, selection_method_t::PSEUDOCOST_DIVING);
         }
       }
     }
