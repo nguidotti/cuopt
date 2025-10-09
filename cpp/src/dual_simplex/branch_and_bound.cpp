@@ -576,10 +576,7 @@ node_status_t branch_and_bound_t<i_t, f_t>::solve_node(search_tree_t<i_t, f_t>& 
   // two vectors at each node and potentially cause memory issues
   node_ptr->get_variable_bounds(leaf_problem.lower, leaf_problem.upper, bounds_changed);
 
-  i_t node_iter                    = 0;
-  f_t lp_start_time                = tic();
-  std::vector<f_t> leaf_edge_norms = edge_norms_;  // = node.steepest_edge_norms;
-
+  std::vector<f_t> leaf_edge_norms      = edge_norms_;  // = node.steepest_edge_norms;
   simplex_solver_settings_t lp_settings = settings_;
   lp_settings.set_log(false);
   lp_settings.cut_off    = upper_bound + settings_.dual_tol;
@@ -594,6 +591,9 @@ node_status_t branch_and_bound_t<i_t, f_t>::solve_node(search_tree_t<i_t, f_t>& 
   dual::status_t lp_status = dual::status_t::DUAL_UNBOUNDED;
 
   if (feasible) {
+    i_t node_iter     = 0;
+    f_t lp_start_time = tic();
+
     lp_status = dual_phase2(2,
                             0,
                             lp_start_time,
@@ -610,10 +610,10 @@ node_status_t branch_and_bound_t<i_t, f_t>::solve_node(search_tree_t<i_t, f_t>& 
         leaf_problem, lp_start_time, lp_settings, leaf_solution, leaf_vstatus, leaf_edge_norms);
       lp_status = convert_lp_status_to_dual_status(second_status);
     }
-  }
 
-  stats_.total_lp_solve_time += toc(lp_start_time);
-  stats_.total_lp_iters += node_iter;
+    stats_.total_lp_solve_time += toc(lp_start_time);
+    stats_.total_lp_iters += node_iter;
+  }
 
   if (lp_status == dual::status_t::DUAL_UNBOUNDED) {
     // Node was infeasible. Do not branch
@@ -866,7 +866,7 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t id,
         // would be better if we discard the node instead.
         if (get_heap_size() > settings_.num_bfs_threads) {
           mutex_dive_queue_.lock();
-          dive_queue_.push(node->detach_copy());
+          dive_queue_.emplace(node->detach_copy(), leaf_problem.lower, leaf_problem.upper);
           mutex_dive_queue_.unlock();
         }
 
@@ -943,23 +943,24 @@ void branch_and_bound_t<i_t, f_t>::best_first_thread(i_t id,
 
 template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::diving_thread(lp_problem_t<i_t, f_t>& leaf_problem,
-                                                 const csc_matrix_t<i_t, f_t>& Arow)
+                                                 const csc_matrix_t<i_t, f_t>& Arow,
+                                                 i_t backtracking)
 {
   logger_t log;
   log.log = false;
 
   while (status_ == mip_exploration_status_t::RUNNING &&
          (active_subtrees_ > 0 || get_heap_size() > 0)) {
-    std::optional<mip_node_t<i_t, f_t>> start_node;
+    std::optional<diving_root_t<i_t, f_t>> start_node;
 
     mutex_dive_queue_.lock();
     if (dive_queue_.size() > 0) { start_node = dive_queue_.pop(); }
     mutex_dive_queue_.unlock();
 
     if (start_node.has_value()) {
-      if (get_upper_bound() < start_node->lower_bound) { continue; }
+      if (get_upper_bound() < start_node->node.lower_bound) { continue; }
 
-      search_tree_t<i_t, f_t> subtree(std::move(start_node.value()));
+      search_tree_t<i_t, f_t> subtree(std::move(start_node->node));
       std::deque<mip_node_t<i_t, f_t>*> stack;
       stack.push_front(&subtree.root);
 
@@ -985,16 +986,19 @@ void branch_and_bound_t<i_t, f_t>::diving_thread(lp_problem_t<i_t, f_t>& leaf_pr
           auto [first, second] = child_selection(node_ptr);
           stack.push_front(second);
           stack.push_front(first);
+        }
 
+        if (stack.size() > 1) {
           // If the diving thread is consuming the nodes faster than the
           // best first search, then we split the current subtree at the
           // lowest possible point and move to the queue, so it can
           // be picked by another thread.
-          if (dive_queue_.size() < min_diving_queue_size_) {
+          if (dive_queue_.size() < min_diving_queue_size_ ||
+              (stack.front()->depth - stack.back()->depth) > backtracking) {
             mutex_dive_queue_.lock();
             mip_node_t<i_t, f_t>* new_node = stack.back();
             stack.pop_back();
-            dive_queue_.push(new_node->detach_copy());
+            dive_queue_.emplace(new_node->detach_copy(), leaf_problem.lower, leaf_problem.upper);
             mutex_dive_queue_.unlock();
           }
         }
@@ -1192,7 +1196,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 
         for (i_t i = 0; i < settings_.num_diving_threads; i++) {
 #pragma omp task
-          diving_thread(leaf_problem, Arow);
+          diving_thread(leaf_problem, Arow, 10);
         }
       }
     }
