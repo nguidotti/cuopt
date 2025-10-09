@@ -868,11 +868,13 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t id,
       return;
     }
 
+    // Reset the bound_changed markers
+    std::fill(bounds_changed.begin(), bounds_changed.end(), false);
+
     // Recompute the bounds
     if (recompute) {
       leaf_problem.lower = original_lp_.lower;
       leaf_problem.upper = original_lp_.upper;
-      std::fill(bounds_changed.begin(), bounds_changed.end(), false);
       node_ptr->get_variable_bounds(leaf_problem.lower, leaf_problem.upper, bounds_changed);
 
     } else {
@@ -1023,11 +1025,13 @@ void branch_and_bound_t<i_t, f_t>::diving_thread(lp_problem_t<i_t, f_t>& leaf_pr
 
         if (toc(stats_.start_time) > settings_.time_limit) { return; }
 
+        // Reset the bound_changed markers
+        std::fill(bounds_changed.begin(), bounds_changed.end(), false);
+
         // Recompute the bounds
         if (recompute) {
           leaf_problem.lower = start_node->lp_lower;
           leaf_problem.upper = start_node->lp_upper;
-          std::fill(bounds_changed.begin(), bounds_changed.end(), false);
           node_ptr->get_variable_bounds(leaf_problem.lower, leaf_problem.upper, bounds_changed);
         } else {
           node_ptr->update_variable_bound(leaf_problem.lower, leaf_problem.upper, bounds_changed);
