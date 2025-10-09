@@ -946,8 +946,7 @@ void branch_and_bound_t<i_t, f_t>::best_first_thread(i_t id,
 
 template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::diving_thread(lp_problem_t<i_t, f_t>& leaf_problem,
-                                                 const csc_matrix_t<i_t, f_t>& Arow,
-                                                 i_t backtracking)
+                                                 const csc_matrix_t<i_t, f_t>& Arow)
 {
   logger_t log;
   log.log = false;
@@ -996,8 +995,7 @@ void branch_and_bound_t<i_t, f_t>::diving_thread(lp_problem_t<i_t, f_t>& leaf_pr
           // best first search, then we split the current subtree at the
           // lowest possible point and move to the queue, so it can
           // be picked by another thread.
-          if (dive_queue_.size() < min_diving_queue_size_ ||
-              (stack.front()->depth - stack.back()->depth) > backtracking) {
+          if (dive_queue_.size() < min_diving_queue_size_) {
             mutex_dive_queue_.lock();
             mip_node_t<i_t, f_t>* new_node = stack.back();
             stack.pop_back();
@@ -1199,7 +1197,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 
         for (i_t i = 0; i < settings_.num_diving_threads; i++) {
 #pragma omp task
-          diving_thread(leaf_problem, Arow, 10);
+          diving_thread(leaf_problem, Arow);
         }
       }
     }
