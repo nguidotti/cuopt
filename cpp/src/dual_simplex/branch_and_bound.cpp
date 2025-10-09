@@ -695,6 +695,10 @@ void branch_and_bound_t<i_t, f_t>::exploration_ramp_up(search_tree_t<i_t, f_t>* 
                                                        i_t initial_heap_size)
 {
   if (status_ != mip_exploration_status_t::RUNNING) { return; }
+
+  // Note that we do not know which thread will execute the
+  // `exploration_ramp_up` task, so we allow to any thread
+  // to repair the heuristic solution.
   repair_heuristic_solutions();
 
   f_t lower_bound      = node->lower_bound;
@@ -711,8 +715,7 @@ void branch_and_bound_t<i_t, f_t>::exploration_ramp_up(search_tree_t<i_t, f_t>* 
     return;
   }
 
-  f_t now = toc(stats_.start_time);
-
+  f_t now                 = toc(stats_.start_time);
   f_t time_since_last_log = stats_.last_log == 0 ? 1.0 : toc(stats_.last_log);
 
   if (((stats_.nodes_since_last_log >= 10 || abs_gap < 10 * settings_.absolute_mip_gap_tol) &&
@@ -784,7 +787,7 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t id,
   stack.push_front(start_node);
 
   while (stack.size() > 0 && status_ == mip_exploration_status_t::RUNNING) {
-    if (omp_get_thread_num() == 0) { repair_heuristic_solutions(); }
+    if (id == 0) { repair_heuristic_solutions(); }
 
     mip_node_t<i_t, f_t>* node_ptr = stack.front();
     stack.pop_front();
