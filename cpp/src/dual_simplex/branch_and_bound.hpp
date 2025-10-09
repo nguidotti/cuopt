@@ -216,7 +216,7 @@ class branch_and_bound_t {
   // Set the final solution.
   mip_status_t set_final_solution(mip_solution_t<i_t, f_t>& solution, f_t lower_bound);
 
-  // Update the incumbent solution with the new feasible solution.
+  // Update the incumbent solution with the new feasible solution
   // found during branch and bound.
   void add_feasible_solution(f_t leaf_objective,
                              const std::vector<f_t>& leaf_solution,
@@ -254,15 +254,22 @@ class branch_and_bound_t {
                      const csc_matrix_t<i_t, f_t>& Arow,
                      i_t backtracking);
 
-  // Solve the LP relaxation of a leaf node and update the tree.
-  node_status_t solve_node(search_tree_t<i_t, f_t>& search_tree,
-                           mip_node_t<i_t, f_t>* node_ptr,
-                           lp_problem_t<i_t, f_t>& leaf_problem,
-                           const csc_matrix_t<i_t, f_t>& Arow,
-                           const std::vector<bool>& bounds_changed,
-                           char thread_type,
-                           f_t upper_bound,
-                           logger_t& log);
+  // Solve the LP relaxation of a leaf node.
+  dual::status_t solve_node_lp(mip_node_t<i_t, f_t>* node_ptr,
+                               lp_problem_t<i_t, f_t>& leaf_problem,
+                               lp_solution_t<i_t, f_t>& leaf_solution,
+                               const csc_matrix_t<i_t, f_t>& Arow,
+                               const std::vector<bool>& bounds_changed,
+                               logger_t& log);
+
+  // Update the tree after solving the LP relaxation.
+  node_status_t update_tree(search_tree_t<i_t, f_t>& search_tree,
+                            mip_node_t<i_t, f_t>* node_ptr,
+                            const lp_problem_t<i_t, f_t>& leaf_problem,
+                            const lp_solution_t<i_t, f_t>& leaf_solution,
+                            dual::status_t lp_status,
+                            char thread_type,
+                            logger_t& log);
 
   // Sort the children based on the Martin's criteria.
   std::pair<mip_node_t<i_t, f_t>*, mip_node_t<i_t, f_t>*> child_selection(
