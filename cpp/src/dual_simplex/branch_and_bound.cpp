@@ -566,10 +566,6 @@ node_status_t branch_and_bound_t<i_t, f_t>::solve_node(search_tree_t<i_t, f_t>& 
   lp_solution_t<i_t, f_t> leaf_solution(leaf_problem.num_rows, leaf_problem.num_cols);
   assert(leaf_vstatus.size() == leaf_problem.num_cols);
 
-  // Set the correct bounds for the leaf problem
-  leaf_problem.lower = original_lp_.lower;
-  leaf_problem.upper = original_lp_.upper;
-
   std::vector<bool> bounds_changed(leaf_problem.num_cols, false);
   // Technically, we can get the already strengthened bounds from the node/parent instead of
   // getting it from the original problem and re-strengthening. But this requires storing
@@ -747,6 +743,11 @@ void branch_and_bound_t<i_t, f_t>::exploration_ramp_up(search_tree_t<i_t, f_t>* 
     status_ = mip_exploration_status_t::TIME_LIMIT;
     return;
   }
+
+  // Set the correct bounds for the leaf problem
+  leaf_problem.lower = original_lp_.lower;
+  leaf_problem.upper = original_lp_.upper;
+
   node_status_t node_status =
     solve_node(*search_tree, node, leaf_problem, Arow, upper_bound, settings_.log, 'B');
 
@@ -844,6 +845,10 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t id,
       status_ = mip_exploration_status_t::TIME_LIMIT;
       return;
     }
+
+    // Set the correct bounds for the leaf problem
+    leaf_problem.lower = original_lp_.lower;
+    leaf_problem.upper = original_lp_.upper;
 
     node_status_t node_status =
       solve_node(search_tree, node_ptr, leaf_problem, Arow, upper_bound, settings_.log, 'B');
@@ -977,6 +982,10 @@ void branch_and_bound_t<i_t, f_t>::diving_thread(lp_problem_t<i_t, f_t>& leaf_pr
         }
 
         if (toc(stats_.start_time) > settings_.time_limit) { return; }
+
+        // Set the correct bounds for the leaf problem
+        leaf_problem.lower = start_node->lp_lower;
+        leaf_problem.upper = start_node->lp_upper;
 
         node_status_t node_status =
           solve_node(subtree, node_ptr, leaf_problem, Arow, upper_bound, log, 'D');
