@@ -2100,7 +2100,7 @@ int basis_update_mpf_t<i_t, f_t>::factorize_basis(
                                       slacks_needed) == -1) {
       return deficient.size();
     }
-    settings.log.printf("Basis repaired\n");
+    settings.log.debug("Basis repaired\n");
   }
 
   assert(col_permutation_.size() == A.m);

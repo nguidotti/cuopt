@@ -57,6 +57,15 @@ static std::string status_to_string(status_t status)
 }  // namespace dual
 
 template <typename i_t, typename f_t>
+dual::status_t factorize_basis(const lp_problem_t<i_t, f_t>& lp,
+                               const simplex_solver_settings_t<i_t, f_t>& settings,
+                               std::vector<variable_status_t>& vstatus,
+                               basis_update_mpf_t<i_t, f_t>& ft,
+                               std::vector<i_t>& basic_list,
+                               std::vector<i_t>& nonbasic_list,
+                               f_t start_time);
+
+template <typename i_t, typename f_t>
 dual::status_t dual_phase2(i_t phase,
                            i_t slack_basis,
                            f_t start_time,
@@ -80,4 +89,5 @@ dual::status_t dual_phase2_with_basis_update(i_t phase,
                                              lp_solution_t<i_t, f_t>& sol,
                                              i_t& iter,
                                              std::vector<f_t>& delta_y_steepest_edge);
+
 }  // namespace cuopt::linear_programming::dual_simplex

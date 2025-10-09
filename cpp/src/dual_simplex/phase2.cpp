@@ -778,7 +778,7 @@ i_t steepest_edge_pricing_with_infeasibilities(const lp_problem_t<i_t, f_t>& lp,
     const i_t j              = infeasibility_indices[k];
     const f_t squared_infeas = squared_infeasibilities[j];
     const f_t val            = squared_infeas / dy_steepest_edge[j];
-    if (val > max_val || val == max_val && j > leaving_index) {
+    if (val > max_val || (val == max_val && j > leaving_index)) {
       max_val                = val;
       leaving_index          = j;
       const f_t lower_infeas = lp.lower[j] - x[j];
@@ -2169,6 +2169,33 @@ class phase2_timers_t {
 };
 
 }  // namespace phase2
+template <typename i_t, typename f_t>
+dual::status_t factorize_basis(const lp_problem_t<i_t, f_t>& lp,
+                               const simplex_solver_settings_t<i_t, f_t>& settings,
+                               std::vector<variable_status_t>& vstatus,
+                               basis_update_mpf_t<i_t, f_t>& ft,
+                               std::vector<i_t>& basic_list,
+                               std::vector<i_t>& nonbasic_list,
+                               f_t start_time)
+{
+  const i_t m = lp.num_rows;
+  const i_t n = lp.num_cols;
+  assert(m <= n);
+  assert(vstatus.size() == n);
+
+  std::vector<i_t> superbasic_list;
+  get_basis_from_vstatus(m, vstatus, basic_list, nonbasic_list, superbasic_list);
+  assert(superbasic_list.size() == 0);
+  assert(nonbasic_list.size() == n - m);
+
+  if (ft.factorize_basis(lp.A, settings, basic_list, nonbasic_list, vstatus) > 0) {
+    return dual::status_t::NUMERICAL;
+  }
+
+  if (toc(start_time) > settings.time_limit) { return dual::status_t::TIME_LIMIT; }
+
+  return dual::status_t::UNSET;
+}
 
 template <typename i_t, typename f_t>
 dual::status_t dual_phase2(i_t phase,
@@ -2183,14 +2210,6 @@ dual::status_t dual_phase2(i_t phase,
 {
   const i_t m = lp.num_rows;
   const i_t n = lp.num_cols;
-  assert(m <= n);
-  assert(vstatus.size() == n);
-  assert(lp.A.m == m);
-  assert(lp.A.n == n);
-  assert(lp.objective.size() == n);
-  assert(lp.lower.size() == n);
-  assert(lp.upper.size() == n);
-  assert(lp.rhs.size() == m);
   std::vector<i_t> basic_list(m);
   std::vector<i_t> nonbasic_list;
   std::vector<i_t> superbasic_list;
@@ -2258,6 +2277,8 @@ dual::status_t dual_phase2_with_basis_update(i_t phase,
   settings.log.printf("Dual Simplex Phase %d\n", phase);
   std::vector<variable_status_t> vstatus_old = vstatus;
   std::vector<f_t> z_old                     = z;
+
+  phase2::bound_info(lp, settings);
 
   std::vector<f_t> c_basic(m);
   for (i_t k = 0; k < m; ++k) {
@@ -3008,6 +3029,28 @@ template dual::status_t dual_phase2<int, double>(
   int& iter,
   std::vector<double>& steepest_edge_norms);
 
+template dual::status_t dual_phase2_with_basis_update<int, double>(
+  int phase,
+  int slack_basis,
+  double start_time,
+  const lp_problem_t<int, double>& lp,
+  const simplex_solver_settings_t<int, double>& settings,
+  std::vector<variable_status_t>& vstatus,
+  basis_update_mpf_t<int, double>& ft,
+  std::vector<int>& basic_list,
+  std::vector<int>& nonbasic_list,
+  lp_solution_t<int, double>& sol,
+  int& iter,
+  std::vector<double>& steepest_edge_norms);
+
+template dual::status_t factorize_basis<int, double>(
+  const lp_problem_t<int, double>& lp,
+  const simplex_solver_settings_t<int, double>& settings,
+  std::vector<variable_status_t>& vstatus,
+  basis_update_mpf_t<int, double>& ft,
+  std::vector<int>& basic_list,
+  std::vector<int>& nonbasic_list,
+  double start_time);
 #endif
 
 }  // namespace cuopt::linear_programming::dual_simplex
