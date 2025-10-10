@@ -250,9 +250,7 @@ class branch_and_bound_t {
 
   // Each diving thread pops the first node from the dive queue and then performs
   // a deep dive into the subtree determined by the node.
-  void diving_thread(lp_problem_t<i_t, f_t>& leaf_problem,
-                     const csc_matrix_t<i_t, f_t>& Arow,
-                     i_t backtracking);
+  void diving_thread(lp_problem_t<i_t, f_t>& leaf_problem, const csc_matrix_t<i_t, f_t>& Arow);
 
   // Solve the LP relaxation of a leaf node.
   dual::status_t solve_node_lp(mip_node_t<i_t, f_t>* node_ptr,
