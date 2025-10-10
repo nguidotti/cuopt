@@ -21,10 +21,10 @@ import msgpack
 from cuopt.linear_programming import solver_settings
 from cuopt.linear_programming.solver.solver_parameters import (
     CUOPT_INFEASIBILITY_DETECTION,
-    CUOPT_PDLP_SOLVER_MODE,
     CUOPT_METHOD,
+    CUOPT_PDLP_SOLVER_MODE,
 )
-from cuopt.linear_programming.solver_settings import PDLPSolverMode
+from cuopt.linear_programming.solver_settings import Method, PDLPSolverMode
 
 from cuopt_server.tests.utils.utils import cuoptproc  # noqa
 from cuopt_server.tests.utils.utils import (
@@ -46,7 +46,7 @@ def test_warmstart(cuoptproc):  # noqa
     settings.set_optimality_tolerance(1e-4)
     settings.set_parameter(CUOPT_INFEASIBILITY_DETECTION, False)
     settings.set_parameter(CUOPT_PDLP_SOLVER_MODE, PDLPSolverMode.Stable2)
-    settings.set_parameter(CUOPT_METHOD, SolverMethod.PDLP)
+    settings.set_parameter(CUOPT_METHOD, Method.PDLP)
     data["solver_config"] = settings.toDict()
 
     headers = {"CLIENT-VERSION": "custom"}
