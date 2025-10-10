@@ -22,6 +22,7 @@ from cuopt.linear_programming import solver_settings
 from cuopt.linear_programming.solver.solver_parameters import (
     CUOPT_INFEASIBILITY_DETECTION,
     CUOPT_PDLP_SOLVER_MODE,
+    CUOPT_METHOD,
 )
 from cuopt.linear_programming.solver_settings import PDLPSolverMode
 
@@ -45,6 +46,7 @@ def test_warmstart(cuoptproc):  # noqa
     settings.set_optimality_tolerance(1e-4)
     settings.set_parameter(CUOPT_INFEASIBILITY_DETECTION, False)
     settings.set_parameter(CUOPT_PDLP_SOLVER_MODE, PDLPSolverMode.Stable2)
+    settings.set_parameter(CUOPT_METHOD, SolverMethod.PDLP)
     data["solver_config"] = settings.toDict()
 
     headers = {"CLIENT-VERSION": "custom"}
