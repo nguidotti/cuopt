@@ -628,9 +628,9 @@ std::pair<node_status_t, round_dir_t> branch_and_bound_t<i_t, f_t>::solve_node(
     if (leaf_num_fractional == 0) {
       // Found a integer feasible solution
       if (thread_type == 'D') {
-        settings_.log.debug("%s found a feasible solution with objective = %.10e.\n",
-                            selection_method_to_string(var_select),
-                            compute_user_objective(original_lp_, leaf_objective));
+        settings_.log.printf("%s found a feasible solution with obj=%.10e.\n",
+                             selection_method_to_string(var_select),
+                             compute_user_objective(original_lp_, leaf_objective));
       }
 
       add_feasible_solution(leaf_objective, leaf_solution.x, node_ptr->depth, thread_type);
@@ -1343,14 +1343,19 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 
   i_t num_line_search_diving = 0;
   i_t num_pseudocost_diving  = 0;
+  i_t num_guided_diving      = 0;
 
   if (std::strcmp(method, "LINE_SEARCH") == 0) {
     num_line_search_diving = settings_.num_diving_threads;
   } else if (std::strcmp(method, "PSEUDOCOST") == 0) {
     num_pseudocost_diving = settings_.num_diving_threads;
+  } else if (std::strcmp(method, "GUIDED") == 0) {
+    num_guided_diving = settings_.num_diving_threads;
   } else {
-    num_line_search_diving = settings_.num_diving_threads / 2;
-    num_pseudocost_diving  = settings_.num_diving_threads - num_line_search_diving;
+    num_line_search_diving = settings_.num_diving_threads / 3;
+    num_guided_diving      = settings_.num_diving_threads / 3;
+    num_pseudocost_diving =
+      settings_.num_diving_threads - num_line_search_diving - num_guided_diving;
   }
 
 #pragma omp parallel num_threads(settings_.num_threads)
@@ -1390,6 +1395,11 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
         for (i_t i = 0; i < num_pseudocost_diving; i++) {
 #pragma omp task
           diving_thread(leaf_problem, Arow, selection_method_t::PSEUDOCOST_DIVING);
+        }
+
+        for (i_t i = 0; i < num_guided_diving; i++) {
+#pragma omp task
+          diving_thread(leaf_problem, Arow, selection_method_t::GUIDED_DIVING);
         }
       }
     }

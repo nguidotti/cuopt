@@ -33,8 +33,9 @@ namespace cuopt::linear_programming::dual_simplex {
 // Berlin, 2007. doi: 10.14279/depositonce-1634.
 enum class selection_method_t {
   PSEUDOCOST_BRANCHING = 0,  // Standard pseudocost branching + Martin's child selection criteria
-  LINE_SEARCH_DIVING   = 1,  // Line search diving (see section 9.2.4)
-  PSEUDOCOST_DIVING    = 2   // Pseudocost diving (see section 9.2.5 )
+  LINE_SEARCH_DIVING   = 1,  // Line search diving (9.2.4)
+  PSEUDOCOST_DIVING    = 2,  // Pseudocost diving (9.2.5)
+  GUIDED_DIVING = 3  // Guided diving (9.2.3). If no incumbent is found yet, use pseudocost diving.
 };
 
 template <typename i_t>
@@ -86,10 +87,20 @@ class pseudo_costs_t {
     switch (method) {
       case selection_method_t::PSEUDOCOST_BRANCHING:
         return pseudocost_branching(fractional, solution, root_solution, log);
+
       case selection_method_t::LINE_SEARCH_DIVING:
         return line_search_diving(fractional, solution, root_solution, log);
+
       case selection_method_t::PSEUDOCOST_DIVING:
         return pseudocost_diving(fractional, solution, root_solution, log);
+
+      case selection_method_t::GUIDED_DIVING:
+        if (incumbent.size() != root_solution.size()) {
+          return pseudocost_diving(fractional, solution, root_solution, log);
+        } else {
+          return guided_diving(fractional, solution, incumbent, log);
+        }
+
       default:
         log.debug("Unknown variable selection method: %d\n", method);
         return {-1, round_dir_t::NONE};
@@ -110,6 +121,11 @@ class pseudo_costs_t {
                                              const std::vector<f_t>& solution,
                                              const std::vector<f_t>& root_solution,
                                              logger_t& log);
+
+  selected_variable_t<i_t> guided_diving(const std::vector<i_t>& fractional,
+                                         const std::vector<f_t>& solution,
+                                         const std::vector<f_t>& incumbent,
+                                         logger_t& log);
 
   void update_pseudo_costs_from_strong_branching(const std::vector<i_t>& fractional,
                                                  const std::vector<f_t>& root_soln);
@@ -142,6 +158,7 @@ inline const char* selection_method_to_string(selection_method_t method)
     case selection_method_t::PSEUDOCOST_BRANCHING: return "Pseudocost branching";
     case selection_method_t::LINE_SEARCH_DIVING: return "Line search diving";
     case selection_method_t::PSEUDOCOST_DIVING: return "Pseudocost diving";
+    case selection_method_t::GUIDED_DIVING: return "Guided diving";
     default: return "Unknown method";
   }
 }

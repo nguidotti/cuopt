@@ -288,20 +288,20 @@ selected_variable_t<i_t> pseudo_costs_t<i_t, f_t>::pseudocost_branching(
 
   i_t num_initialized_down;
   i_t num_initialized_up;
-  f_t pseudo_cost_down_avg;
-  f_t pseudo_cost_up_avg;
-  initialized(num_initialized_down, num_initialized_up, pseudo_cost_down_avg, pseudo_cost_up_avg);
+  f_t pc_down_avg;
+  f_t pc_up_avg;
+  initialized(num_initialized_down, num_initialized_up, pc_down_avg, pc_up_avg);
 
   for (i_t k = 0; k < num_fractional; k++) {
-    const i_t j      = fractional[k];
-    const f_t f_down = solution[j] - std::floor(solution[j]);
-    const f_t f_up   = std::ceil(solution[j]) - solution[j];
+    i_t j      = fractional[k];
+    f_t f_down = solution[j] - std::floor(solution[j]);
+    f_t f_up   = std::ceil(solution[j]) - solution[j];
 
     f_t pc_down = pseudo_cost_num_down[j] != 0 ? pseudo_cost_sum_down[j] / pseudo_cost_num_down[j]
-                                               : pseudo_cost_down_avg;
+                                               : pc_down_avg;
 
-    f_t pc_up = pseudo_cost_num_up[j] != 0 ? pseudo_cost_sum_up[j] / pseudo_cost_num_up[j]
-                                           : pseudo_cost_up_avg;
+    f_t pc_up =
+      pseudo_cost_num_up[j] != 0 ? pseudo_cost_sum_up[j] / pseudo_cost_num_up[j] : pc_up_avg;
 
     f_t score = std::max(f_down * pc_down, eps) * std::max(f_up * pc_up, eps);
 
@@ -335,7 +335,7 @@ selected_variable_t<i_t> pseudo_costs_t<i_t, f_t>::line_search_diving(
   round_dir_t round_dir    = round_dir_t::DOWN;
 
   for (i_t i = 0; i < num_fractional; ++i) {
-    const i_t j     = fractional[i];
+    i_t j           = fractional[i];
     f_t score       = inf;
     round_dir_t dir = round_dir_t::NONE;
 
@@ -380,6 +380,7 @@ selected_variable_t<i_t> pseudo_costs_t<i_t, f_t>::pseudocost_diving(
   i_t branch_var           = fractional[0];
   f_t max_score            = -1;
   round_dir_t round_dir    = round_dir_t::DOWN;
+  constexpr f_t eps        = 1e-6;
 
   i_t num_initialized_down;
   i_t num_initialized_up;
@@ -409,22 +410,18 @@ selected_variable_t<i_t> pseudo_costs_t<i_t, f_t>::pseudocost_diving(
     } else if (solution[j] > root_solution[j] + 0.4) {
       score = score_up;
       dir   = round_dir_t::UP;
+    } else if (f_down < 0.3) {
+      score = score_down;
+      dir   = round_dir_t::DOWN;
+    } else if (f_down > 0.7) {
+      score = score_up;
+      dir   = round_dir_t::UP;
+    } else if (pc_down < pc_up + eps) {
+      score = score_down;
+      dir   = round_dir_t::DOWN;
     } else {
-      if (f_down < 0.3) {
-        score = score_down;
-        dir   = round_dir_t::DOWN;
-      } else if (f_down > 0.7) {
-        score = score_up;
-        dir   = round_dir_t::UP;
-      } else {
-        if (pc_down < pc_up) {
-          score = score_down;
-          dir   = round_dir_t::DOWN;
-        } else {
-          score = score_up;
-          dir   = round_dir_t::UP;
-        }
-      }
+      score = score_up;
+      dir   = round_dir_t::UP;
     }
 
     if (score > max_score) {
@@ -434,6 +431,61 @@ selected_variable_t<i_t> pseudo_costs_t<i_t, f_t>::pseudocost_diving(
     }
   }
   log.debug("Pseudocost diving: selected %d with val = %e, round dir = %d and score = %e\n",
+            branch_var,
+            solution[branch_var],
+            round_dir,
+            max_score);
+
+  mutex.unlock();
+
+  return {branch_var, round_dir};
+}
+
+template <typename i_t, typename f_t>
+selected_variable_t<i_t> pseudo_costs_t<i_t, f_t>::guided_diving(const std::vector<i_t>& fractional,
+                                                                 const std::vector<f_t>& solution,
+                                                                 const std::vector<f_t>& incumbent,
+                                                                 logger_t& log)
+{
+  mutex.lock();
+  const i_t num_fractional = fractional.size();
+  i_t branch_var           = fractional[0];
+  f_t max_score            = -1;
+  round_dir_t round_dir    = round_dir_t::DOWN;
+  constexpr f_t eps        = 1e-6;
+
+  i_t num_initialized_down;
+  i_t num_initialized_up;
+  f_t pseudo_cost_down_avg;
+  f_t pseudo_cost_up_avg;
+  initialized(num_initialized_down, num_initialized_up, pseudo_cost_down_avg, pseudo_cost_up_avg);
+
+  for (i_t k = 0; k < num_fractional; k++) {
+    i_t j           = fractional[k];
+    f_t f_down      = solution[j] - std::floor(solution[j]);
+    f_t f_up        = std::ceil(solution[j]) - solution[j];
+    f_t down_dist   = std::abs(incumbent[j] - std::floor(solution[j]));
+    f_t up_dist     = std::abs(std::ceil(solution[j]) - incumbent[j]);
+    round_dir_t dir = down_dist < up_dist + eps ? round_dir_t::DOWN : round_dir_t::UP;
+
+    f_t pc_down = pseudo_cost_num_down[j] != 0 ? pseudo_cost_sum_down[j] / pseudo_cost_num_down[j]
+                                               : pseudo_cost_down_avg;
+
+    f_t pc_up = pseudo_cost_num_up[j] != 0 ? pseudo_cost_sum_up[j] / pseudo_cost_num_up[j]
+                                           : pseudo_cost_up_avg;
+
+    f_t score1 = dir == round_dir_t::DOWN ? 5 * pc_down * f_down : 5 * pc_up * f_up;
+    f_t score2 = dir == round_dir_t::DOWN ? pc_up * f_up : pc_down * f_down;
+    f_t score  = (score1 + score2) / 6;
+
+    if (score > max_score) {
+      max_score  = score;
+      branch_var = fractional[k];
+      round_dir  = dir;
+    }
+  }
+
+  log.debug("Guided diving: selected %d with val = %e, round dir = %d and score = %e\n",
             branch_var,
             solution[branch_var],
             round_dir,
