@@ -560,7 +560,6 @@ dual::status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(mip_node_t<i_t, f_t>*
                                                            const std::vector<bool>& bounds_changed,
                                                            logger_t& log)
 {
-  std::vector<f_t> leaf_edge_norms             = edge_norms_;  // = node.steepest_edge_norms;
   std::vector<variable_status_t>& leaf_vstatus = node_ptr->vstatus;
   assert(leaf_vstatus.size() == leaf_problem.num_cols);
 
@@ -578,8 +577,9 @@ dual::status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(mip_node_t<i_t, f_t>*
   dual::status_t lp_status = dual::status_t::DUAL_UNBOUNDED;
 
   if (feasible) {
-    i_t node_iter     = 0;
-    f_t lp_start_time = tic();
+    i_t node_iter                    = 0;
+    f_t lp_start_time                = tic();
+    std::vector<f_t> leaf_edge_norms = edge_norms_;  // = node.steepest_edge_norms;
 
     lp_status = dual_phase2(2,
                             0,
@@ -796,7 +796,7 @@ void branch_and_bound_t<i_t, f_t>::exploration_ramp_up(search_tree_t<i_t, f_t>* 
 }
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t id,
+void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t task_id,
                                                    search_tree_t<i_t, f_t>& search_tree,
                                                    mip_node_t<i_t, f_t>* start_node,
                                                    lp_problem_t<i_t, f_t>& leaf_problem,
@@ -812,7 +812,7 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t id,
   stack.push_front(start_node);
 
   while (stack.size() > 0 && status_ == mip_exploration_status_t::RUNNING) {
-    if (id == 0) { repair_heuristic_solutions(); }
+    if (task_id == 0) { repair_heuristic_solutions(); }
 
     mip_node_t<i_t, f_t>* node_ptr = stack.front();
     stack.pop_front();
@@ -828,10 +828,10 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t id,
     // - The current node and its siblings uses the lower bound of the parent before solving the LP
     // relaxation
     // - The lower bound of the parent is lower or equal to its children
-    assert(id < local_lower_bounds_.size());
-    local_lower_bounds_[id] = lower_bound;
-    i_t nodes_explored      = (++stats_.nodes_explored);
-    i_t nodes_unexplored    = (--stats_.nodes_unexplored);
+    assert(task_id < local_lower_bounds_.size());
+    local_lower_bounds_[task_id] = lower_bound;
+    i_t nodes_explored           = (++stats_.nodes_explored);
+    i_t nodes_unexplored         = (--stats_.nodes_unexplored);
     stats_.nodes_since_last_log++;
 
     if (lower_bound > upper_bound || rel_gap < settings_.relative_mip_gap_tol) {
@@ -843,7 +843,7 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t id,
 
     f_t now = toc(stats_.start_time);
 
-    if (id == 0) {
+    if (task_id == 0) {
       f_t time_since_last_log = stats_.last_log == 0 ? 1.0 : toc(stats_.last_log);
 
       if (((stats_.nodes_since_last_log >= 1000 || abs_gap < 10 * settings_.absolute_mip_gap_tol) &&
