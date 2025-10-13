@@ -256,10 +256,10 @@ class branch_and_bound_t {
   node_status_t solve_node(search_tree_t<i_t, f_t>& search_tree,
                            mip_node_t<i_t, f_t>* node_ptr,
                            lp_problem_t<i_t, f_t>& leaf_problem,
+                           const std::vector<bool>& bounds_changed,
                            const csc_matrix_t<i_t, f_t>& Arow,
-                           f_t upper_bound,
-                           logger_t& log,
-                           char thread_type);
+                           char thread_type,
+                           logger_t& log);
 
   // Sort the children based on the Martin's criteria.
   std::pair<mip_node_t<i_t, f_t>*, mip_node_t<i_t, f_t>*> child_selection(
