@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include <dual_simplex/initial_basis.hpp>
+#include <dual_simplex/simplex_solver_settings.hpp>
 #include <dual_simplex/sparse_matrix.hpp>
 #include <dual_simplex/sparse_vector.hpp>
 #include <dual_simplex/types.hpp>
@@ -176,6 +178,33 @@ class basis_update_t {
 template <typename i_t, typename f_t>
 class basis_update_mpf_t {
  public:
+  basis_update_mpf_t(i_t n, const i_t refactor_frequency)
+    : L0_(n, n, 1),
+      U0_(n, n, 1),
+      row_permutation_(n),
+      inverse_row_permutation_(n),
+      S_(n, 0, 0),
+      col_permutation_(n),
+      inverse_col_permutation_(n),
+      xi_workspace_(2 * n, 0),
+      x_workspace_(n, 0.0),
+      U0_transpose_(1, 1, 1),
+      L0_transpose_(1, 1, 1),
+      refactor_frequency_(refactor_frequency),
+      total_sparse_L_transpose_(0),
+      total_dense_L_transpose_(0),
+      total_sparse_L_(0),
+      total_dense_L_(0),
+      total_sparse_U_transpose_(0),
+      total_dense_U_transpose_(0),
+      total_sparse_U_(0),
+      total_dense_U_(0),
+      hypersparse_threshold_(0.05)
+  {
+    clear();
+    reset_stats();
+  }
+
   basis_update_mpf_t(const csc_matrix_t<i_t, f_t>& Linit,
                      const csc_matrix_t<i_t, f_t>& Uinit,
                      const std::vector<i_t>& p,
@@ -205,7 +234,7 @@ class basis_update_mpf_t {
     inverse_permutation(row_permutation_, inverse_row_permutation_);
     clear();
     compute_transposes();
-    reset_stas();
+    reset_stats();
   }
 
   void print_stats() const
@@ -226,7 +255,7 @@ class basis_update_mpf_t {
     // clang-format on
   }
 
-  void reset_stas()
+  void reset_stats()
   {
     num_calls_L_           = 0;
     num_calls_U_           = 0;
@@ -249,7 +278,16 @@ class basis_update_mpf_t {
     inverse_permutation(row_permutation_, inverse_row_permutation_);
     clear();
     compute_transposes();
-    reset_stas();
+    reset_stats();
+    return 0;
+  }
+
+  i_t reset()
+  {
+    inverse_permutation(row_permutation_, inverse_row_permutation_);
+    clear();
+    compute_transposes();
+    reset_stats();
     return 0;
   }
 
@@ -331,6 +369,13 @@ class basis_update_mpf_t {
   }
 
   void multiply_lu(csc_matrix_t<i_t, f_t>& out) const;
+
+  // Compute L*U = A(p, basic_list)
+  int factorize_basis(const csc_matrix_t<i_t, f_t>& A,
+                      const simplex_solver_settings_t<i_t, f_t>& settings,
+                      std::vector<i_t>& basic_list,
+                      std::vector<i_t>& nonbasic_list,
+                      std::vector<variable_status_t>& vstatus);
 
  private:
   void clear()

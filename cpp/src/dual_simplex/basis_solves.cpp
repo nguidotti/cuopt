@@ -46,6 +46,13 @@ void get_basis_from_vstatus(i_t m,
   i_t n             = vstatus.size();
   i_t num_basic     = 0;
   i_t num_non_basic = 0;
+
+  assert(n >= m);
+  nonbasic_list.clear();
+  superbasic_list.clear();
+  nonbasic_list.reserve(n - m);
+  basis_list.resize(m);
+
   for (i_t j = 0; j < n; ++j) {
     if (vstatus[j] == variable_status_t::BASIC) {
       basis_list[num_basic++] = j;
@@ -61,7 +68,6 @@ void get_basis_from_vstatus(i_t m,
       superbasic_list.push_back(j);
     }
   }
-  i_t num_super_basic = superbasic_list.size();
   assert(num_basic == m);
 }
 
