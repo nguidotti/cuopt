@@ -90,21 +90,27 @@ class mip_node_t {
     update_variable_bound(lower, upper, bounds_changed);
 
     mip_node_t<i_t, f_t>* parent_ptr = parent;
-    while (parent_ptr != nullptr) {
-      if (parent_ptr->node_id == 0) { break; }
+    while (parent_ptr != nullptr && parent_ptr->node_id != 0) {
       parent_ptr->update_variable_bound(lower, upper, bounds_changed);
       parent_ptr = parent_ptr->parent;
     }
   }
 
+  // Here we assume that we are traversing from the deepest node to the
+  // root of the tree
   void update_variable_bound(std::vector<f_t>& lower,
                              std::vector<f_t>& upper,
                              std::vector<bool>& bounds_changed) const
   {
-    // Apply the bounds at the current node
     assert(branch_var >= 0);
     assert(lower.size() > branch_var);
     assert(upper.size() > branch_var);
+
+    // If the bounds have already been updated on another node,
+    // skip this node as it contains a less tight bounds.
+    if (bounds_changed[branch_var]) { return; }
+
+    // Apply the bounds at the current node
     lower[branch_var]          = branch_var_lower;
     upper[branch_var]          = branch_var_upper;
     bounds_changed[branch_var] = true;
@@ -206,9 +212,8 @@ class mip_node_t {
   }
 
   // This method creates a copy of the current node
-  // with its parent set to `nullptr`, `node_id = 0`
-  // and `depth = 0` such that it is the root
-  // of a separated tree.
+  // with its parent set to `nullptr` and `depth = 0`.
+  // This detaches the node from the tree.
   mip_node_t<i_t, f_t> detach_copy() const
   {
     mip_node_t<i_t, f_t> copy(lower_bound, vstatus);
