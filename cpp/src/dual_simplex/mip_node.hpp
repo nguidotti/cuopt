@@ -270,7 +270,7 @@ class search_tree_t {
 
   search_tree_t(mip_node_t<i_t, f_t>&& node) : root(std::move(node)), num_nodes(0) {}
 
-  void update_tree(mip_node_t<i_t, f_t>* node_ptr, node_status_t status)
+  void update(mip_node_t<i_t, f_t>* node_ptr, node_status_t status)
   {
     mutex.lock();
     std::vector<mip_node_t<i_t, f_t>*> stack;
