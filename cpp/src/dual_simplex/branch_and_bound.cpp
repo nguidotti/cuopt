@@ -588,6 +588,11 @@ std::pair<node_status_t, round_dir_t> branch_and_bound_t<i_t, f_t>::solve_node(
   const f_t abs_fathom_tol = settings_.absolute_mip_gap_tol / 10;
   const f_t upper_bound    = get_upper_bound();
 
+  // If there is no incumbent, use pseudocost diving instead of guided diving
+  if (upper_bound == inf && thread_type == thread_type_t::GUIDED_DIVING) {
+    thread_type = thread_type_t::PSEUDOCOST_DIVING;
+  }
+
   lp_solution_t<i_t, f_t> leaf_solution(leaf_problem.num_rows, leaf_problem.num_cols);
   std::vector<variable_status_t>& leaf_vstatus = node_ptr->vstatus;
   assert(leaf_vstatus.size() == leaf_problem.num_cols);
