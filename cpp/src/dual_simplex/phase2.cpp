@@ -2209,23 +2209,13 @@ dual::status_t dual_phase2(i_t phase,
                            std::vector<f_t>& delta_y_steepest_edge)
 {
   const i_t m = lp.num_rows;
-  const i_t n = lp.num_cols;
   std::vector<i_t> basic_list(m);
   std::vector<i_t> nonbasic_list;
-  std::vector<i_t> superbasic_list;
-
-  phase2::bound_info(lp, settings);
-  get_basis_from_vstatus(m, vstatus, basic_list, nonbasic_list, superbasic_list);
-  assert(superbasic_list.size() == 0);
-  assert(nonbasic_list.size() == n - m);
-
   basis_update_mpf_t<i_t, f_t> ft(m, settings.refactor_frequency);
 
-  if (ft.factorize_basis(lp.A, settings, basic_list, nonbasic_list, vstatus) > 0) {
-    return dual::status_t::NUMERICAL;
-  }
+  auto status = factorize_basis(lp, settings, vstatus, ft, basic_list, nonbasic_list, start_time);
+  if (status != dual::status_t::UNSET) { return status; }
 
-  if (toc(start_time) > settings.time_limit) { return dual::status_t::TIME_LIMIT; }
   return dual_phase2_with_basis_update(phase,
                                        slack_basis,
                                        start_time,
