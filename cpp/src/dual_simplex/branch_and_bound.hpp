@@ -52,6 +52,17 @@ enum class mip_exploration_status_t {
   COMPLETED  = 5,  // The solver finished exploring the tree
 };
 
+// Indicate the search and variable selection algorithms used by the thread (See [1]).
+//
+// [1] T. Achterberg, “Constraint Integer Programming,” PhD, Technischen Universität Berlin,
+// Berlin, 2007. doi: 10.14279/depositonce-1634.
+enum class thread_type_t {
+  EXPLORATION        = 0,  // Best-First + Plunging. Pseudocost branching + Martin's criteria.
+  LINE_SEARCH_DIVING = 1,  // Line search diving (9.2.4)
+  PSEUDOCOST_DIVING  = 2,  // Pseudocost diving (9.2.5)
+  GUIDED_DIVING = 3  // Guided diving (9.2.3). If no incumbent is found yet, use pseudocost diving.
+};
+
 template <typename i_t, typename f_t>
 void upper_bound_callback(f_t upper_bound);
 
@@ -221,7 +232,7 @@ class branch_and_bound_t {
   void add_feasible_solution(f_t leaf_objective,
                              const std::vector<f_t>& leaf_solution,
                              i_t leaf_depth,
-                             char thread_type);
+                             thread_type_t thread_type);
 
   // Repairs low-quality solutions from the heuristics, if it is applicable.
   void repair_heuristic_solutions();
@@ -260,19 +271,18 @@ class branch_and_bound_t {
   // a deep dive into the subtree determined by the node.
   void diving_thread(lp_problem_t<i_t, f_t>& leaf_problem,
                      const csc_matrix_t<i_t, f_t>& Arow,
-                     selection_method_t var_select);
+                     thread_type_t diving_type);
 
   // Solve the LP relaxation of a leaf node and update the tree.
-  node_status_t solve_node(search_tree_t<i_t, f_t>& search_tree,
-                           mip_node_t<i_t, f_t>* node_ptr,
-                           lp_problem_t<i_t, f_t>& leaf_problem,
-                           basis_update_mpf_t<i_t, f_t>& ft,
-                           std::vector<i_t>& basic_list,
-                           std::vector<i_t>& nonbasic_list,
-                           node_presolve_t<i_t, f_t>& presolve,
-                           selection_method_t var_select,
-                           char thread_type,
-                           logger_t& log);
+  std::pair<node_status_t, round_dir_t> solve_node(search_tree_t<i_t, f_t>& search_tree,
+                                                   mip_node_t<i_t, f_t>* node_ptr,
+                                                   lp_problem_t<i_t, f_t>& leaf_problem,
+                                                   basis_update_mpf_t<i_t, f_t>& ft,
+                                                   std::vector<i_t>& basic_list,
+                                                   std::vector<i_t>& nonbasic_list,
+                                                   node_presolve_t<i_t, f_t>& presolve,
+                                                   thread_type_t thread_type,
+                                                   logger_t& log);
 
   dual::status_t refactorize_basis(search_tree_t<i_t, f_t>& search_tree,
                                    mip_node_t<i_t, f_t>* node,
@@ -280,7 +290,13 @@ class branch_and_bound_t {
                                    basis_update_mpf_t<i_t, f_t>& ft,
                                    std::vector<i_t>& basic,
                                    std::vector<i_t>& nonbasic,
-                                   char thread_type);
+                                   thread_type_t thread_type);
+
+  // Selects the variable to branch on.
+  selected_variable_t<i_t> variable_selection(const std::vector<i_t>& fractional,
+                                              const std::vector<f_t>& solution,
+                                              thread_type_t type,
+                                              logger_t& log);
 };
 
 }  // namespace cuopt::linear_programming::dual_simplex

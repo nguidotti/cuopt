@@ -28,16 +28,6 @@
 
 namespace cuopt::linear_programming::dual_simplex {
 
-// Variable selection method (See [1]).
-// [1] T. Achterberg, “Constraint Integer Programming,” PhD, Technischen Universität Berlin,
-// Berlin, 2007. doi: 10.14279/depositonce-1634.
-enum class selection_method_t {
-  PSEUDOCOST_BRANCHING = 0,  // Standard pseudocost branching + Martin's child selection criteria
-  LINE_SEARCH_DIVING   = 1,  // Line search diving (9.2.4)
-  PSEUDOCOST_DIVING    = 2,  // Pseudocost diving (9.2.5)
-  GUIDED_DIVING = 3  // Guided diving (9.2.3). If no incumbent is found yet, use pseudocost diving.
-};
-
 template <typename i_t>
 struct selected_variable_t {
   i_t variable;
@@ -70,63 +60,6 @@ class pseudo_costs_t {
                    f_t& pseudo_cost_down_avg,
                    f_t& pseudo_cost_up_avg) const;
 
-  // Martin's criteria for the preferred rounding direction (see [1])
-  // [1] A. Martin, “Integer Programs with Block Structure,”
-  // Technische Universit¨at Berlin, Berlin, 1999. Accessed: Aug. 08, 2025.
-  // [Online]. Available: https://opus4.kobv.de/opus4-zib/frontdoor/index/index/docId/391
-  round_dir_t martin_criteria(f_t val, f_t ref_val) const;
-
-  // Selects the variable to branch on.
-  selected_variable_t<i_t> variable_selection(const std::vector<i_t>& fractional,
-                                              const std::vector<f_t>& solution,
-                                              const std::vector<f_t>& root_solution,
-                                              const std::vector<f_t>& incumbent,
-                                              selection_method_t method,
-                                              logger_t& log)
-  {
-    switch (method) {
-      case selection_method_t::PSEUDOCOST_BRANCHING:
-        return pseudocost_branching(fractional, solution, root_solution, log);
-
-      case selection_method_t::LINE_SEARCH_DIVING:
-        return line_search_diving(fractional, solution, root_solution, log);
-
-      case selection_method_t::PSEUDOCOST_DIVING:
-        return pseudocost_diving(fractional, solution, root_solution, log);
-
-      case selection_method_t::GUIDED_DIVING:
-        if (incumbent.size() != root_solution.size()) {
-          return pseudocost_diving(fractional, solution, root_solution, log);
-        } else {
-          return guided_diving(fractional, solution, incumbent, log);
-        }
-
-      default:
-        log.debug("Unknown variable selection method: %d\n", method);
-        return {-1, round_dir_t::NONE};
-    }
-  }
-
-  selected_variable_t<i_t> pseudocost_branching(const std::vector<i_t>& fractional,
-                                                const std::vector<f_t>& solution,
-                                                const std::vector<f_t>& root_solution,
-                                                logger_t& log);
-
-  selected_variable_t<i_t> line_search_diving(const std::vector<i_t>& fractional,
-                                              const std::vector<f_t>& solution,
-                                              const std::vector<f_t>& root_solution,
-                                              logger_t& log);
-
-  selected_variable_t<i_t> pseudocost_diving(const std::vector<i_t>& fractional,
-                                             const std::vector<f_t>& solution,
-                                             const std::vector<f_t>& root_solution,
-                                             logger_t& log);
-
-  selected_variable_t<i_t> guided_diving(const std::vector<i_t>& fractional,
-                                         const std::vector<f_t>& solution,
-                                         const std::vector<f_t>& incumbent,
-                                         logger_t& log);
-
   void update_pseudo_costs_from_strong_branching(const std::vector<i_t>& fractional,
                                                  const std::vector<f_t>& root_soln);
   std::vector<f_t> pseudo_cost_sum_up;
@@ -152,15 +85,37 @@ void strong_branching(const lp_problem_t<i_t, f_t>& original_lp,
                       const std::vector<f_t>& edge_norms,
                       pseudo_costs_t<i_t, f_t>& pc);
 
-inline const char* selection_method_to_string(selection_method_t method)
-{
-  switch (method) {
-    case selection_method_t::PSEUDOCOST_BRANCHING: return "Pseudocost branching";
-    case selection_method_t::LINE_SEARCH_DIVING: return "Line search diving";
-    case selection_method_t::PSEUDOCOST_DIVING: return "Pseudocost diving";
-    case selection_method_t::GUIDED_DIVING: return "Guided diving";
-    default: return "Unknown method";
-  }
-}
+// Martin's criteria for the preferred rounding direction (see [1])
+// [1] A. Martin, “Integer Programs with Block Structure,”
+// Technische Universit¨at Berlin, Berlin, 1999. Accessed: Aug. 08, 2025.
+// [Online]. Available: https://opus4.kobv.de/opus4-zib/frontdoor/index/index/docId/391
+template <typename f_t>
+round_dir_t martin_criteria(f_t val, f_t root_val);
+
+template <typename i_t, typename f_t>
+i_t pseudocost_branching(pseudo_costs_t<i_t, f_t>& pc,
+                         const std::vector<i_t>& fractional,
+                         const std::vector<f_t>& solution,
+                         logger_t& log);
+
+template <typename i_t, typename f_t>
+selected_variable_t<i_t> line_search_diving(const std::vector<i_t>& fractional,
+                                            const std::vector<f_t>& solution,
+                                            const std::vector<f_t>& root_solution,
+                                            logger_t& log);
+
+template <typename i_t, typename f_t>
+selected_variable_t<i_t> pseudocost_diving(pseudo_costs_t<i_t, f_t>& pc,
+                                           const std::vector<i_t>& fractional,
+                                           const std::vector<f_t>& solution,
+                                           const std::vector<f_t>& root_solution,
+                                           logger_t& log);
+
+template <typename i_t, typename f_t>
+selected_variable_t<i_t> guided_diving(pseudo_costs_t<i_t, f_t>& pc,
+                                       const std::vector<i_t>& fractional,
+                                       const std::vector<f_t>& solution,
+                                       const std::vector<f_t>& incumbent,
+                                       logger_t& log);
 
 }  // namespace cuopt::linear_programming::dual_simplex

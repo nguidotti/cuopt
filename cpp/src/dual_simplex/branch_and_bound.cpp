@@ -200,6 +200,17 @@ std::string user_mip_gap(f_t obj_value, f_t lower_bound)
   }
 }
 
+inline const char* thread_type_symbol(thread_type_t method)
+{
+  switch (method) {
+    case thread_type_t::EXPLORATION: return "B ";
+    case thread_type_t::LINE_SEARCH_DIVING: return "LD";
+    case thread_type_t::PSEUDOCOST_DIVING: return "PD";
+    case thread_type_t::GUIDED_DIVING: return "GD";
+    default: return "U";
+  }
+}
+
 }  // namespace
 
 template <typename i_t, typename f_t>
@@ -301,7 +312,7 @@ void branch_and_bound_t<i_t, f_t>::set_new_solution(const std::vector<f_t>& solu
       std::string gap = user_mip_gap<f_t>(user_obj, user_lower);
 
       settings_.log.printf(
-        "H                           %+13.6e    %+10.6e                        %s %9.2f\n",
+        "H                            %+13.6e    %+10.6e                        %s %9.2f\n",
         user_obj,
         user_lower,
         gap.c_str(),
@@ -496,7 +507,7 @@ template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::add_feasible_solution(f_t leaf_objective,
                                                          const std::vector<f_t>& leaf_solution,
                                                          i_t leaf_depth,
-                                                         char thread_type)
+                                                         thread_type_t thread_type)
 {
   bool send_solution   = false;
   i_t nodes_explored   = stats_.nodes_explored;
@@ -509,8 +520,8 @@ void branch_and_bound_t<i_t, f_t>::add_feasible_solution(f_t leaf_objective,
     f_t lower_bound = get_lower_bound();
     f_t obj         = compute_user_objective(original_lp_, upper_bound_);
     f_t lower       = compute_user_objective(original_lp_, lower_bound);
-    settings_.log.printf("%c%10d   %10lu    %+13.6e    %+10.6e   %6d   %7.1e     %s %9.2f\n",
-                         thread_type,
+    settings_.log.printf("%s%10d   %10lu    %+13.6e    %+10.6e   %6d   %7.1e     %s %9.2f\n",
+                         thread_type_symbol(thread_type),
                          nodes_explored,
                          nodes_unexplored,
                          obj,
@@ -532,6 +543,37 @@ void branch_and_bound_t<i_t, f_t>::add_feasible_solution(f_t leaf_objective,
 }
 
 template <typename i_t, typename f_t>
+selected_variable_t<i_t> branch_and_bound_t<i_t, f_t>::variable_selection(
+  const std::vector<i_t>& fractional,
+  const std::vector<f_t>& solution,
+  thread_type_t type,
+  logger_t& log)
+{
+  i_t branch_var        = -1;
+  round_dir_t round_dir = round_dir_t::NONE;
+
+  switch (type) {
+    case thread_type_t::EXPLORATION:
+      branch_var = pseudocost_branching(pc_, fractional, solution, log);
+      round_dir  = martin_criteria(solution[branch_var], root_relax_soln_.x[branch_var]);
+      return {branch_var, round_dir};
+
+    case thread_type_t::LINE_SEARCH_DIVING:
+      return line_search_diving(fractional, solution, root_relax_soln_.x, log);
+
+    case thread_type_t::PSEUDOCOST_DIVING:
+      return pseudocost_diving(pc_, fractional, solution, root_relax_soln_.x, log);
+
+    case thread_type_t::GUIDED_DIVING:
+      return guided_diving(pc_, fractional, solution, incumbent_.x, log);
+
+    default:
+      log.debug("Unknown variable selection method: %d\n", type);
+      return {-1, round_dir_t::NONE};
+  }
+}
+
+template <typename i_t, typename f_t>
 std::pair<node_status_t, round_dir_t> branch_and_bound_t<i_t, f_t>::solve_node(
   search_tree_t<i_t, f_t>& search_tree,
   mip_node_t<i_t, f_t>* node_ptr,
@@ -540,8 +582,7 @@ std::pair<node_status_t, round_dir_t> branch_and_bound_t<i_t, f_t>::solve_node(
   std::vector<i_t>& basic_list,
   std::vector<i_t>& nonbasic_list,
   node_presolve_t<i_t, f_t>& presolve,
-  selection_method_t var_select,
-  char thread_type,
+  thread_type_t thread_type,
   logger_t& log)
 {
   const f_t abs_fathom_tol = settings_.absolute_mip_gap_tol / 10;
@@ -627,10 +668,10 @@ std::pair<node_status_t, round_dir_t> branch_and_bound_t<i_t, f_t>::solve_node(
 
     if (leaf_num_fractional == 0) {
       // Found a integer feasible solution
-      if (thread_type == 'D') {
-        settings_.log.printf("%s found a feasible solution with obj=%.10e.\n",
-                             selection_method_to_string(var_select),
-                             compute_user_objective(original_lp_, leaf_objective));
+      if (thread_type != thread_type_t::EXPLORATION) {
+        settings_.log.debug("%s found a feasible solution with obj=%.10e.\n",
+                            thread_type_symbol(thread_type),
+                            compute_user_objective(original_lp_, leaf_objective));
       }
 
       add_feasible_solution(leaf_objective, leaf_solution.x, node_ptr->depth, thread_type);
@@ -643,8 +684,8 @@ std::pair<node_status_t, round_dir_t> branch_and_bound_t<i_t, f_t>::solve_node(
       pc_log.log      = false;
 
       // Choose fractional variable to branch on
-      auto [branch_var, round_dir] = pc_.variable_selection(
-        leaf_fractional, leaf_solution.x, root_relax_soln_.x, incumbent_.x, var_select, pc_log);
+      auto [branch_var, round_dir] =
+        variable_selection(leaf_fractional, leaf_solution.x, thread_type, pc_log);
 
       assert(leaf_vstatus.size() == leaf_problem.num_cols);
       search_tree.branch(
@@ -663,7 +704,7 @@ std::pair<node_status_t, round_dir_t> branch_and_bound_t<i_t, f_t>::solve_node(
     return {node_status_t::TIME_LIMIT, round_dir_t::NONE};
 
   } else {
-    if (thread_type == 'B') {
+    if (thread_type == thread_type_t::EXPLORATION) {
       lower_bound_ceiling_.fetch_min(node_ptr->lower_bound);
       log.printf(
         "LP returned status %d on node %d. This indicates a numerical issue. The best bound is set "
@@ -710,7 +751,7 @@ dual::status_t branch_and_bound_t<i_t, f_t>::refactorize_basis(search_tree_t<i_t
                                                                basis_update_mpf_t<i_t, f_t>& ft,
                                                                std::vector<i_t>& basic,
                                                                std::vector<i_t>& nonbasic,
-                                                               char thread_type)
+                                                               thread_type_t thread_type)
 {
   std::vector<variable_status_t>& vstatus = node->vstatus;
   auto status = factorize_basis(leaf_problem, settings_, vstatus, ft, basic, nonbasic, tic());
@@ -724,7 +765,7 @@ dual::status_t branch_and_bound_t<i_t, f_t>::refactorize_basis(search_tree_t<i_t
   } else if (status == dual::status_t::NUMERICAL) {
     lower_bound_ceiling_.fetch_min(node->lower_bound);
 
-    if (thread_type == 'B') {
+    if (thread_type == thread_type_t::EXPLORATION) {
       settings_.log.printf(
         "LP returned status %d on node %d. This indicates a numerical issue. The best bound is set "
         "to "
@@ -786,7 +827,7 @@ void branch_and_bound_t<i_t, f_t>::exploration_ramp_up(search_tree_t<i_t, f_t>* 
       f_t user_lower       = compute_user_objective(original_lp_, root_objective_);
       std::string gap_user = user_mip_gap<f_t>(obj, user_lower);
 
-      settings_.log.printf(" %10d   %10lu    %+13.6e    %+10.6e   %6d   %7.1e     %s %9.2f\n",
+      settings_.log.printf("  %10d   %10lu    %+13.6e    %+10.6e   %6d   %7.1e     %s %9.2f\n",
                            nodes_explored,
                            nodes_unexplored,
                            obj,
@@ -820,8 +861,13 @@ void branch_and_bound_t<i_t, f_t>::exploration_ramp_up(search_tree_t<i_t, f_t>* 
                       original_lp_.upper,
                       true);
 
-  auto status = refactorize_basis(
-    *search_tree, node, leaf_problem, basis_update, basic_list, nonbasic_list, 'B');
+  auto status = refactorize_basis(*search_tree,
+                                  node,
+                                  leaf_problem,
+                                  basis_update,
+                                  basic_list,
+                                  nonbasic_list,
+                                  thread_type_t::EXPLORATION);
   if (status != dual::status_t::UNSET) { return; }
 
   auto [node_status, round_dir] = solve_node(*search_tree,
@@ -831,8 +877,7 @@ void branch_and_bound_t<i_t, f_t>::exploration_ramp_up(search_tree_t<i_t, f_t>* 
                                              basic_list,
                                              nonbasic_list,
                                              presolve,
-                                             selection_method_t::PSEUDOCOST_BRANCHING,
-                                             'B',
+                                             thread_type_t::EXPLORATION,
                                              settings_.log);
 
   if (node_status == node_status_t::TIME_LIMIT) {
@@ -921,7 +966,7 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t task_id,
         f_t obj              = compute_user_objective(original_lp_, upper_bound);
         f_t user_lower       = compute_user_objective(original_lp_, get_lower_bound());
         std::string gap_user = user_mip_gap<f_t>(obj, user_lower);
-        settings_.log.printf(" %10d   %10lu    %+13.6e    %+10.6e   %6d   %7.1e     %s %9.2f\n",
+        settings_.log.printf("  %10d   %10lu    %+13.6e    %+10.6e   %6d   %7.1e     %s %9.2f\n",
                              nodes_explored,
                              nodes_unexplored,
                              obj,
@@ -950,8 +995,13 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t task_id,
                         recompute);
 
     if (recompute) {
-      auto status = refactorize_basis(
-        search_tree, node_ptr, leaf_problem, basis_update, basic_list, nonbasic_list, 'B');
+      auto status = refactorize_basis(search_tree,
+                                      node_ptr,
+                                      leaf_problem,
+                                      basis_update,
+                                      basic_list,
+                                      nonbasic_list,
+                                      thread_type_t::EXPLORATION);
       if (status != dual::status_t::UNSET) { continue; }
     }
 
@@ -962,8 +1012,7 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t task_id,
                                                basic_list,
                                                nonbasic_list,
                                                presolve,
-                                               selection_method_t::PSEUDOCOST_BRANCHING,
-                                               'B',
+                                               thread_type_t::EXPLORATION,
                                                settings_.log);
 
     recompute = node_status != node_status_t::HAS_CHILDREN;
@@ -1072,7 +1121,7 @@ void branch_and_bound_t<i_t, f_t>::best_first_thread(i_t id,
 template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::diving_thread(lp_problem_t<i_t, f_t>& leaf_problem,
                                                  const csc_matrix_t<i_t, f_t>& Arow,
-                                                 selection_method_t var_select)
+                                                 thread_type_t diving_type)
 {
   logger_t log;
   log.log = false;
@@ -1127,19 +1176,19 @@ void branch_and_bound_t<i_t, f_t>::diving_thread(lp_problem_t<i_t, f_t>& leaf_pr
 
         if (recompute) {
           auto status = refactorize_basis(
-            subtree, node_ptr, leaf_problem, basis_update, basic_list, nonbasic_list, 'D');
+            subtree, node_ptr, leaf_problem, basis_update, basic_list, nonbasic_list, diving_type);
           if (status != dual::status_t::UNSET) { continue; }
         }
 
-        node_status_t node_status = solve_node(subtree,
-                                               node_ptr,
-                                               leaf_problem,
-                                               basis_update,
-                                               basic_list,
-                                               nonbasic_list,
-                                               presolve,
-                                               'D',
-                                               log);
+        auto [node_status, round_dir] = solve_node(subtree,
+                                                   node_ptr,
+                                                   leaf_problem,
+                                                   basis_update,
+                                                   basic_list,
+                                                   nonbasic_list,
+                                                   presolve,
+                                                   diving_type,
+                                                   log);
 
         recompute = node_status != node_status_t::HAS_CHILDREN;
 
@@ -1300,12 +1349,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   }
 
   // Choose variable to branch on
-  auto [branch_var, round_dir] = pc_.variable_selection(fractional,
-                                                        root_relax_soln_.x,
-                                                        root_relax_soln_.x,
-                                                        incumbent_.x,
-                                                        selection_method_t::PSEUDOCOST_BRANCHING,
-                                                        log);
+  i_t branch_var = pseudocost_branching(pc_, fractional, root_relax_soln_.x, log);
 
   search_tree_t<i_t, f_t> search_tree(root_objective_, root_vstatus_);
   search_tree.graphviz_node(settings_.log, &search_tree.root, "lower bound", root_objective_);
@@ -1316,11 +1360,9 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                      original_lp_,
                      log);
 
-  settings_.log.printf(
-    "Exploring the B&B tree using %d best-first threads and %d diving threads (%d threads)\n",
-    settings_.num_bfs_threads,
-    settings_.num_diving_threads,
-    settings_.num_threads);
+  settings_.log.printf("Exploring the B&B tree using %d best-first threads and %d diving threads\n",
+                       settings_.num_bfs_threads,
+                       settings_.num_diving_threads);
 
   settings_.log.printf(
     " | Explored | Unexplored |    Objective    |     Bound     | Depth | Iter/Node |   Gap    "
@@ -1389,17 +1431,17 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 
         for (i_t i = 0; i < num_line_search_diving; i++) {
 #pragma omp task
-          diving_thread(leaf_problem, Arow, selection_method_t::LINE_SEARCH_DIVING);
+          diving_thread(leaf_problem, Arow, thread_type_t::LINE_SEARCH_DIVING);
         }
 
         for (i_t i = 0; i < num_pseudocost_diving; i++) {
 #pragma omp task
-          diving_thread(leaf_problem, Arow, selection_method_t::PSEUDOCOST_DIVING);
+          diving_thread(leaf_problem, Arow, thread_type_t::PSEUDOCOST_DIVING);
         }
 
         for (i_t i = 0; i < num_guided_diving; i++) {
 #pragma omp task
-          diving_thread(leaf_problem, Arow, selection_method_t::GUIDED_DIVING);
+          diving_thread(leaf_problem, Arow, thread_type_t::GUIDED_DIVING);
         }
       }
     }
