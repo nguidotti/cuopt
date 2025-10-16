@@ -84,6 +84,7 @@ wheel.install-dir = "libcuopt"
 wheel.py-api = "py3"
 wheel.exclude = [
   "libcuopt/lib64/cmake/papilo/_deps/**",
+  "libcuopt/lib/cmake/papilo/_deps/**",
 ]
 
 [tool.scikit-build.metadata.version]
