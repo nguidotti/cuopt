@@ -35,12 +35,9 @@ message(STATUS "CMAKE_MODULE_PATH = ${CMAKE_MODULE_PATH}")
 
 project(
   CUOPT
-  VERSION "${CUOPT_VERSION}"
+  VERSION "${RAPIDS_VERSION}"
   LANGUAGES CXX CUDA C
 )
-
-set(DEPENDENT_LIB_MAJOR_VERSION "${RAPIDS_VERSION_MAJOR}")
-set(DEPENDENT_LIB_MINOR_VERSION "${RAPIDS_VERSION_MINOR}")
 
 rapids_cmake_write_version_file(include/cuopt/version_config.hpp)
 # ##################################################################################################
