@@ -572,8 +572,6 @@ node_status_t branch_and_bound_t<i_t, f_t>::solve_node(search_tree_t<i_t, f_t>& 
   lp_settings.inside_mip = 2;
   lp_settings.time_limit = settings_.time_limit - toc(stats_.start_time);
 
-  // in B&B we only have equality constraints, leave it empty for default
-  std::vector<char> row_sense;
   bool feasible = presolve.bound_strengthening(leaf_problem.lower, leaf_problem.upper, lp_settings);
 
   dual::status_t lp_status = dual::status_t::DUAL_UNBOUNDED;
