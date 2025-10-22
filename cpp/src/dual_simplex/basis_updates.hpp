@@ -291,6 +291,23 @@ class basis_update_mpf_t {
     return 0;
   }
 
+  void resize(i_t n)
+  {
+    L0_.resize(n, n, 1);
+    U0_.resize(n, n, 1);
+    row_permutation_.resize(n);
+    inverse_row_permutation_.resize(n);
+    S_.resize(n, 0, 0);
+    col_permutation_.resize(n);
+    inverse_col_permutation_.resize(n);
+    xi_workspace_.resize(2 * n, 0);
+    x_workspace_.resize(n, 0.0);
+    U0_transpose_.resize(1, 1, 1);
+    L0_transpose_.resize(1, 1, 1);
+    clear();
+    reset_stats();
+  }
+
   f_t estimate_solution_density(f_t rhs_nz, f_t sum, i_t& num_calls, bool& use_hypersparse) const
   {
     num_calls++;
