@@ -414,7 +414,7 @@ void branch_and_bound_t<i_t, f_t>::repair_heuristic_solutions()
           std::string user_gap = user_mip_gap<f_t>(obj, lower);
 
           settings_.log.printf(
-            "H                        %+13.6e  %+10.6e                      %s %9.2f\n",
+            "H                           %+13.6e    %+10.6e                        %s %9.2f\n",
             obj,
             lower,
             user_gap.c_str(),
@@ -558,8 +558,7 @@ node_status_t branch_and_bound_t<i_t, f_t>::solve_node(search_tree_t<i_t, f_t>& 
                                                        basis_update_mpf_t<i_t, f_t>& ft,
                                                        std::vector<i_t>& basic_list,
                                                        std::vector<i_t>& nonbasic_list,
-                                                       const std::vector<bool>& bounds_changed,
-                                                       const csc_matrix_t<i_t, f_t>& Arow,
+                                                       node_presolve_t<i_t, f_t>& presolve,
                                                        char thread_type,
                                                        logger_t& log)
 {
@@ -576,10 +575,7 @@ node_status_t branch_and_bound_t<i_t, f_t>::solve_node(search_tree_t<i_t, f_t>& 
   lp_settings.inside_mip = 2;
   lp_settings.time_limit = settings_.time_limit - toc(stats_.start_time);
 
-  // in B&B we only have equality constraints, leave it empty for default
-  std::vector<char> row_sense;
-  bool feasible =
-    bound_strengthening(row_sense, lp_settings, leaf_problem, Arow, var_types_, bounds_changed);
+  bool feasible = presolve.bound_strengthening(leaf_problem.lower, leaf_problem.upper, lp_settings);
 
   dual::status_t lp_status = dual::status_t::DUAL_UNBOUNDED;
 
@@ -695,6 +691,29 @@ node_status_t branch_and_bound_t<i_t, f_t>::solve_node(search_tree_t<i_t, f_t>& 
 }
 
 template <typename i_t, typename f_t>
+void branch_and_bound_t<i_t, f_t>::set_variable_bounds(mip_node_t<i_t, f_t>* node,
+                                                       std::vector<f_t>& lower,
+                                                       std::vector<f_t>& upper,
+                                                       std::vector<bool>& bounds_changed,
+                                                       const std::vector<f_t>& root_lower,
+                                                       const std::vector<f_t>& root_upper,
+                                                       bool recompute)
+{
+  // Reset the bound_changed markers
+  std::fill(bounds_changed.begin(), bounds_changed.end(), false);
+
+  // Recompute the bounds
+  if (recompute) {
+    lower = root_lower;
+    upper = root_upper;
+    node->get_variable_bounds(lower, upper, bounds_changed);
+
+  } else {
+    node->update_variable_bound(lower, upper, bounds_changed);
+  }
+}
+
+template <typename i_t, typename f_t>
 dual::status_t branch_and_bound_t<i_t, f_t>::refactorize_basis(search_tree_t<i_t, f_t>& search_tree,
                                                                mip_node_t<i_t, f_t>* node,
                                                                lp_problem_t<i_t, f_t>& leaf_problem,
@@ -794,18 +813,22 @@ void branch_and_bound_t<i_t, f_t>::exploration_ramp_up(search_tree_t<i_t, f_t>* 
     return;
   }
 
-  const i_t n = leaf_problem.num_cols;
   const i_t m = leaf_problem.num_rows;
+  std::vector<char> row_sense;
+  node_presolve_t<i_t, f_t> presolve(leaf_problem, row_sense, Arow, var_types_);
 
   basis_update_mpf_t<i_t, f_t> basis_update(m, settings_.refactor_frequency);
   std::vector<i_t> basic_list(m);
   std::vector<i_t> nonbasic_list;
 
   // Set the correct bounds for the leaf problem
-  std::vector<bool> bounds_changed(n, false);
-  leaf_problem.lower = original_lp_.lower;
-  leaf_problem.upper = original_lp_.upper;
-  node->get_variable_bounds(leaf_problem.lower, leaf_problem.upper, bounds_changed);
+  set_variable_bounds(node,
+                      leaf_problem.lower,
+                      leaf_problem.upper,
+                      presolve.bounds_changed,
+                      original_lp_.lower,
+                      original_lp_.upper,
+                      true);
 
   auto status = refactorize_basis(
     *search_tree, node, leaf_problem, basis_update, basic_list, nonbasic_list, 'B');
@@ -817,8 +840,7 @@ void branch_and_bound_t<i_t, f_t>::exploration_ramp_up(search_tree_t<i_t, f_t>* 
                                          basis_update,
                                          basic_list,
                                          nonbasic_list,
-                                         bounds_changed,
-                                         Arow,
+                                         presolve,
                                          'B',
                                          settings_.log);
 
@@ -856,16 +878,14 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t task_id,
                                                    const csc_matrix_t<i_t, f_t>& Arow)
 {
   const i_t m    = leaf_problem.num_rows;
-  const i_t n    = leaf_problem.num_cols;
   bool recompute = true;
+
+  std::vector<char> row_sense;
+  node_presolve_t<i_t, f_t> presolve(leaf_problem, row_sense, Arow, var_types_);
 
   basis_update_mpf_t<i_t, f_t> basis_update(m, settings_.refactor_frequency);
   std::vector<i_t> basic_list(m);
   std::vector<i_t> nonbasic_list;
-
-  std::vector<bool> bounds_changed(n);
-  lp_solution_t<i_t, f_t> leaf_solution(m, n);
-
   std::deque<mip_node_t<i_t, f_t>*> stack;
   stack.push_front(start_node);
 
@@ -929,18 +949,14 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t task_id,
       return;
     }
 
-    // Reset the bound_changed markers
-    std::fill(bounds_changed.begin(), bounds_changed.end(), false);
-
-    // Recompute the bounds
-    if (recompute) {
-      leaf_problem.lower = original_lp_.lower;
-      leaf_problem.upper = original_lp_.upper;
-      node_ptr->get_variable_bounds(leaf_problem.lower, leaf_problem.upper, bounds_changed);
-
-    } else {
-      node_ptr->update_variable_bound(leaf_problem.lower, leaf_problem.upper, bounds_changed);
-    }
+    // Set the correct bounds for the leaf problem
+    set_variable_bounds(node_ptr,
+                        leaf_problem.lower,
+                        leaf_problem.upper,
+                        presolve.bounds_changed,
+                        original_lp_.lower,
+                        original_lp_.upper,
+                        recompute);
 
     if (recompute) {
       auto status = refactorize_basis(
@@ -954,8 +970,7 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t task_id,
                                            basis_update,
                                            basic_list,
                                            nonbasic_list,
-                                           bounds_changed,
-                                           Arow,
+                                           presolve,
                                            'B',
                                            settings_.log);
 
@@ -1064,8 +1079,10 @@ void branch_and_bound_t<i_t, f_t>::diving_thread(lp_problem_t<i_t, f_t>& leaf_pr
   logger_t log;
   log.log = false;
 
-  const i_t n = leaf_problem.num_cols;
   const i_t m = leaf_problem.num_rows;
+
+  std::vector<char> row_sense;
+  node_presolve_t<i_t, f_t> presolve(leaf_problem, row_sense, Arow, var_types_);
 
   while (status_ == mip_exploration_status_t::RUNNING &&
          (active_subtrees_ > 0 || get_heap_size() > 0)) {
@@ -1084,7 +1101,6 @@ void branch_and_bound_t<i_t, f_t>::diving_thread(lp_problem_t<i_t, f_t>& leaf_pr
       std::vector<i_t> basic_list(m);
       std::vector<i_t> nonbasic_list;
 
-      std::vector<bool> bounds_changed(n);
       search_tree_t<i_t, f_t> subtree(std::move(start_node->node));
       std::deque<mip_node_t<i_t, f_t>*> stack;
       stack.push_front(&subtree.root);
@@ -1102,23 +1118,14 @@ void branch_and_bound_t<i_t, f_t>::diving_thread(lp_problem_t<i_t, f_t>& leaf_pr
 
         if (toc(stats_.start_time) > settings_.time_limit) { return; }
 
-        // Reset the bound_changed markers
-        std::fill(bounds_changed.begin(), bounds_changed.end(), false);
-
-        // Recompute the bounds
-        if (recompute) {
-          leaf_problem.lower = start_node->lp_lower;
-          leaf_problem.upper = start_node->lp_upper;
-          node_ptr->get_variable_bounds(leaf_problem.lower, leaf_problem.upper, bounds_changed);
-        } else {
-          node_ptr->update_variable_bound(leaf_problem.lower, leaf_problem.upper, bounds_changed);
-        }
-
-        if (recompute) {
-          auto status = refactorize_basis(
-            subtree, node_ptr, leaf_problem, basis_update, basic_list, nonbasic_list, 'B');
-          if (status != dual::status_t::UNSET) { continue; }
-        }
+        // Set the correct bounds for the leaf problem
+        set_variable_bounds(node_ptr,
+                            leaf_problem.lower,
+                            leaf_problem.upper,
+                            presolve.bounds_changed,
+                            start_node->lower,
+                            start_node->upper,
+                            recompute);
 
         node_status_t node_status = solve_node(subtree,
                                                node_ptr,
@@ -1126,8 +1133,7 @@ void branch_and_bound_t<i_t, f_t>::diving_thread(lp_problem_t<i_t, f_t>& leaf_pr
                                                basis_update,
                                                basic_list,
                                                nonbasic_list,
-                                               bounds_changed,
-                                               Arow,
+                                               presolve,
                                                'D',
                                                log);
 

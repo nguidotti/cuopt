@@ -19,8 +19,8 @@
 
 #include <dual_simplex/initial_basis.hpp>
 #include <dual_simplex/mip_node.hpp>
+#include <dual_simplex/node_presolve.hpp>
 #include <dual_simplex/phase2.hpp>
-#include <dual_simplex/presolve.hpp>
 #include <dual_simplex/pseudo_costs.hpp>
 #include <dual_simplex/simplex_solver_settings.hpp>
 #include <dual_simplex/solution.hpp>
@@ -58,13 +58,13 @@ void upper_bound_callback(f_t upper_bound);
 template <typename i_t, typename f_t>
 struct diving_root_t {
   mip_node_t<i_t, f_t> node;
-  std::vector<f_t> lp_lower;
-  std::vector<f_t> lp_upper;
+  std::vector<f_t> lower;
+  std::vector<f_t> upper;
 
   diving_root_t(mip_node_t<i_t, f_t>&& node,
                 const std::vector<f_t>& lower,
                 const std::vector<f_t>& upper)
-    : node(std::move(node)), lp_upper(upper), lp_lower(lower)
+    : node(std::move(node)), upper(upper), lower(lower)
   {
   }
 
@@ -226,6 +226,14 @@ class branch_and_bound_t {
   // Repairs low-quality solutions from the heuristics, if it is applicable.
   void repair_heuristic_solutions();
 
+  void set_variable_bounds(mip_node_t<i_t, f_t>* node,
+                           std::vector<f_t>& lower,
+                           std::vector<f_t>& upper,
+                           std::vector<bool>& bounds_changed,
+                           const std::vector<f_t>& root_lower,
+                           const std::vector<f_t>& root_upper,
+                           bool recompute);
+
   // Ramp-up phase of the solver, where we greedily expand the tree until
   // there is enough unexplored nodes. This is done recursively using OpenMP tasks.
   void exploration_ramp_up(search_tree_t<i_t, f_t>* search_tree,
@@ -259,8 +267,7 @@ class branch_and_bound_t {
                            basis_update_mpf_t<i_t, f_t>& ft,
                            std::vector<i_t>& basic_list,
                            std::vector<i_t>& nonbasic_list,
-                           const std::vector<bool>& bounds_changed,
-                           const csc_matrix_t<i_t, f_t>& Arow,
+                           node_presolve_t<i_t, f_t>& presolve,
                            char thread_type,
                            logger_t& log);
 
