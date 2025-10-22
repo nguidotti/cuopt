@@ -247,18 +247,18 @@ class branch_and_bound_t {
                        search_tree_t<i_t, f_t>& search_tree,
                        mip_node_t<i_t, f_t>* start_node,
                        lp_problem_t<i_t, f_t>& leaf_problem,
-                       const csc_matrix_t<i_t, f_t>& Arow);
+                       node_presolve_t<i_t, f_t>& presolve);
 
   // Each "main" thread pops a node from the global heap and then performs a plunge
   // (i.e., a shallow dive) into the subtree determined by the node.
   void best_first_thread(i_t id,
                          search_tree_t<i_t, f_t>& search_tree,
                          lp_problem_t<i_t, f_t>& leaf_problem,
-                         const csc_matrix_t<i_t, f_t>& Arow);
+                         node_presolve_t<i_t, f_t>& presolve);
 
   // Each diving thread pops the first node from the dive queue and then performs
   // a deep dive into the subtree determined by the node.
-  void diving_thread(lp_problem_t<i_t, f_t>& leaf_problem, const csc_matrix_t<i_t, f_t>& Arow);
+  void diving_thread(lp_problem_t<i_t, f_t>& leaf_problem, node_presolve_t<i_t, f_t>& presolve);
 
   // Solve the LP relaxation of a leaf node and update the tree.
   node_status_t solve_node(search_tree_t<i_t, f_t>& search_tree,

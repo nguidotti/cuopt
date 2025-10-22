@@ -806,13 +806,9 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t task_id,
                                                    search_tree_t<i_t, f_t>& search_tree,
                                                    mip_node_t<i_t, f_t>* start_node,
                                                    lp_problem_t<i_t, f_t>& leaf_problem,
-                                                   const csc_matrix_t<i_t, f_t>& Arow)
+                                                   node_presolve_t<i_t, f_t>& presolve)
 {
   bool recompute = true;
-
-  std::vector<char> row_sense;
-  node_presolve_t<i_t, f_t> presolve(leaf_problem, row_sense, Arow, var_types_);
-
   std::deque<mip_node_t<i_t, f_t>*> stack;
   stack.push_front(start_node);
 
@@ -932,7 +928,7 @@ template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::best_first_thread(i_t id,
                                                      search_tree_t<i_t, f_t>& search_tree,
                                                      lp_problem_t<i_t, f_t>& leaf_problem,
-                                                     const csc_matrix_t<i_t, f_t>& Arow)
+                                                     node_presolve_t<i_t, f_t>& presolve)
 {
   f_t lower_bound = -inf;
   f_t upper_bound = inf;
@@ -964,7 +960,7 @@ void branch_and_bound_t<i_t, f_t>::best_first_thread(i_t id,
       }
 
       // Best-first search with plunging
-      explore_subtree(id, search_tree, node_ptr, leaf_problem, Arow);
+      explore_subtree(id, search_tree, node_ptr, leaf_problem, presolve);
       active_subtrees_--;
     }
 
@@ -987,13 +983,10 @@ void branch_and_bound_t<i_t, f_t>::best_first_thread(i_t id,
 
 template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::diving_thread(lp_problem_t<i_t, f_t>& leaf_problem,
-                                                 const csc_matrix_t<i_t, f_t>& Arow)
+                                                 node_presolve_t<i_t, f_t>& presolve)
 {
   logger_t log;
   log.log = false;
-
-  std::vector<char> row_sense;
-  node_presolve_t<i_t, f_t> presolve(leaf_problem, row_sense, Arow, var_types_);
 
   while (status_ == mip_exploration_status_t::RUNNING &&
          (active_subtrees_ > 0 || get_heap_size() > 0)) {
@@ -1225,6 +1218,8 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   {
     // Make a copy of the original LP. We will modify its bounds at each leaf
     lp_problem_t leaf_problem = original_lp_;
+    std::vector<char> row_sense;
+    node_presolve_t<i_t, f_t> presolve(leaf_problem, row_sense, Arow, var_types_);
 
 #pragma omp master
     {
@@ -1247,12 +1242,12 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
           (active_subtrees_ > 0 || get_heap_size() > 0)) {
         for (i_t i = 0; i < settings_.num_bfs_threads; i++) {
 #pragma omp task
-          best_first_thread(i, search_tree, leaf_problem, Arow);
+          best_first_thread(i, search_tree, leaf_problem, presolve);
         }
 
         for (i_t i = 0; i < settings_.num_diving_threads; i++) {
 #pragma omp task
-          diving_thread(leaf_problem, Arow);
+          diving_thread(leaf_problem, presolve);
         }
       }
     }
