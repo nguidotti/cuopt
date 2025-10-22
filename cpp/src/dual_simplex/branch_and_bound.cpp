@@ -1148,6 +1148,7 @@ void branch_and_bound_t<i_t, f_t>::diving_thread(lp_problem_t<i_t, f_t>& leaf_pr
       if (get_upper_bound() < start_node->node.lower_bound) { continue; }
 
       bool recompute = true;
+      i_t max_depth  = 0;
 
       basis_update_mpf_t<i_t, f_t> basis_update(m, settings_.refactor_frequency);
       std::vector<i_t> basic_list(m);
@@ -1162,6 +1163,8 @@ void branch_and_bound_t<i_t, f_t>::diving_thread(lp_problem_t<i_t, f_t>& leaf_pr
         stack.pop_front();
         f_t upper_bound = get_upper_bound();
         f_t rel_gap     = user_relative_gap(original_lp_, upper_bound, node_ptr->lower_bound);
+        i_t leaf_depth  = node_ptr->depth;
+        max_depth       = std::max(max_depth, leaf_depth);
 
         if (node_ptr->lower_bound > upper_bound || rel_gap < settings_.relative_mip_gap_tol) {
           recompute = true;
@@ -1211,11 +1214,14 @@ void branch_and_bound_t<i_t, f_t>::diving_thread(lp_problem_t<i_t, f_t>& leaf_pr
         }
 
         if (stack.size() > 1) {
+          i_t depth_diff    = stack.front()->depth - stack.back()->depth;
+          i_t max_backtrack = leaf_depth < max_depth ? std::max<i_t>(5, 0.1 * max_depth) : INT_MAX;
+
           // If the diving thread is consuming the nodes faster than the
           // best first search, then we split the current subtree at the
           // lowest possible point and move to the queue, so it can
           // be picked by another thread.
-          if (dive_queue_.size() < min_diving_queue_size_) {
+          if (dive_queue_.size() < min_diving_queue_size_ || depth_diff > max_backtrack) {
             mutex_dive_queue_.lock();
             mip_node_t<i_t, f_t>* new_node = stack.back();
             stack.pop_back();
@@ -1388,21 +1394,19 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   const char* method = std::getenv("CUOPT_MIP_DIVING_STRATEGY");
   if (method == nullptr) method = "DEFAULT";
 
-  i_t num_line_search_diving = 0;
-  i_t num_pseudocost_diving  = 0;
-  i_t num_guided_diving      = 0;
+  std::unordered_map<thread_type_t, i_t> diving_tasks;
 
   if (std::strcmp(method, "LINE_SEARCH") == 0) {
-    num_line_search_diving = settings_.num_diving_threads;
+    diving_tasks[thread_type_t::LINE_SEARCH_DIVING] = settings_.num_diving_threads;
   } else if (std::strcmp(method, "PSEUDOCOST") == 0) {
-    num_pseudocost_diving = settings_.num_diving_threads;
+    diving_tasks[thread_type_t::PSEUDOCOST_DIVING] = settings_.num_diving_threads;
   } else if (std::strcmp(method, "GUIDED") == 0) {
-    num_guided_diving = settings_.num_diving_threads;
+    diving_tasks[thread_type_t::GUIDED_DIVING] = settings_.num_diving_threads;
   } else {
-    num_line_search_diving = settings_.num_diving_threads / 3;
-    num_guided_diving      = settings_.num_diving_threads / 3;
-    num_pseudocost_diving =
-      settings_.num_diving_threads - num_line_search_diving - num_guided_diving;
+    i_t nt                                          = settings_.num_diving_threads;
+    diving_tasks[thread_type_t::LINE_SEARCH_DIVING] = nt / 4;
+    diving_tasks[thread_type_t::GUIDED_DIVING]      = nt / 4;
+    diving_tasks[thread_type_t::PSEUDOCOST_DIVING]  = nt - nt / 2;
   }
 
 #pragma omp parallel num_threads(settings_.num_threads)
@@ -1434,19 +1438,12 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
           best_first_thread(i, search_tree, leaf_problem, Arow);
         }
 
-        for (i_t i = 0; i < num_line_search_diving; i++) {
+        for (auto [strategy, num_tasks] : diving_tasks) {
+          for (i_t i = 0; i < num_tasks; i++) {
+            thread_type_t diving_strategy = strategy;
 #pragma omp task
-          diving_thread(leaf_problem, Arow, thread_type_t::LINE_SEARCH_DIVING);
-        }
-
-        for (i_t i = 0; i < num_pseudocost_diving; i++) {
-#pragma omp task
-          diving_thread(leaf_problem, Arow, thread_type_t::PSEUDOCOST_DIVING);
-        }
-
-        for (i_t i = 0; i < num_guided_diving; i++) {
-#pragma omp task
-          diving_thread(leaf_problem, Arow, thread_type_t::GUIDED_DIVING);
+            diving_thread(leaf_problem, Arow, diving_strategy);
+          }
         }
       }
     }
