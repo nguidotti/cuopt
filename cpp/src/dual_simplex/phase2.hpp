@@ -79,6 +79,7 @@ dual::status_t dual_phase2(i_t phase,
 template <typename i_t, typename f_t>
 dual::status_t dual_phase2_with_basis_update(i_t phase,
                                              i_t slack_basis,
+                                             bool initialize_basis,
                                              f_t start_time,
                                              const lp_problem_t<i_t, f_t>& lp,
                                              const simplex_solver_settings_t<i_t, f_t>& settings,

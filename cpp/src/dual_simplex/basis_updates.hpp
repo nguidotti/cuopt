@@ -388,11 +388,11 @@ class basis_update_mpf_t {
   void multiply_lu(csc_matrix_t<i_t, f_t>& out) const;
 
   // Compute L*U = A(p, basic_list)
-  int factorize_basis(const csc_matrix_t<i_t, f_t>& A,
-                      const simplex_solver_settings_t<i_t, f_t>& settings,
-                      std::vector<i_t>& basic_list,
-                      std::vector<i_t>& nonbasic_list,
-                      std::vector<variable_status_t>& vstatus);
+  int refactor_basis(const csc_matrix_t<i_t, f_t>& A,
+                     const simplex_solver_settings_t<i_t, f_t>& settings,
+                     std::vector<i_t>& basic_list,
+                     std::vector<i_t>& nonbasic_list,
+                     std::vector<variable_status_t>& vstatus);
 
  private:
   void clear()
