@@ -167,21 +167,21 @@ lp_status_t solve_linear_program_with_basis_update(
   column_scaling(presolved_lp, settings, lp, column_scales);
   assert(presolved_lp.num_cols == lp.num_cols);
   lp_problem_t<i_t, f_t> phase1_problem(original_lp.handle_ptr, 1, 1, 1);
-
+  std::vector<variable_status_t> phase1_vstatus;
   f_t phase1_obj = -inf;
   create_phase1_problem(lp, phase1_problem);
   assert(phase1_problem.num_cols == presolved_lp.num_cols);
 
   // Set the vstatus for the phase1 problem based on a slack basis
-  vstatus.resize(phase1_problem.num_cols);
-  std::fill(vstatus.begin(), vstatus.end(), variable_status_t::NONBASIC_LOWER);
+  phase1_vstatus.resize(phase1_problem.num_cols);
+  std::fill(phase1_vstatus.begin(), phase1_vstatus.end(), variable_status_t::NONBASIC_LOWER);
   i_t num_basic = 0;
   for (i_t j = phase1_problem.num_cols - 1; j >= 0; --j) {
     const i_t col_start = phase1_problem.A.col_start[j];
     const i_t col_end   = phase1_problem.A.col_start[j + 1];
     const i_t nz        = col_end - col_start;
     if (nz == 1 && std::abs(phase1_problem.A.x[col_start]) == 1.0) {
-      vstatus[j] = variable_status_t::BASIC;
+      phase1_vstatus[j] = variable_status_t::BASIC;
       num_basic++;
     }
     if (num_basic == phase1_problem.num_rows) { break; }
@@ -189,28 +189,9 @@ lp_status_t solve_linear_program_with_basis_update(
   assert(num_basic == phase1_problem.num_rows);
   i_t iter = 0;
   lp_solution_t<i_t, f_t> phase1_solution(phase1_problem.num_rows, phase1_problem.num_cols);
-
-  dual::status_t LU_status =
-    factorize_basis(lp, settings, vstatus, ft, basic_list, nonbasic_list, start_time);
-  if (LU_status == dual::status_t::NUMERICAL) {
-    settings.log.printf("Failed in factorizing the basis\n");
-    return lp_status_t::NUMERICAL_ISSUES;
-  }
-  if (LU_status == dual::status_t::TIME_LIMIT) { return lp_status_t::TIME_LIMIT; }
-
-  edge_norms.clear();
-  dual::status_t phase1_status = dual_phase2_with_basis_update(1,
-                                                               1,
-                                                               start_time,
-                                                               phase1_problem,
-                                                               settings,
-                                                               vstatus,
-                                                               ft,
-                                                               basic_list,
-                                                               nonbasic_list,
-                                                               phase1_solution,
-                                                               iter,
-                                                               edge_norms);
+  std::vector<f_t> junk;
+  dual::status_t phase1_status = dual_phase2(
+    1, 1, start_time, phase1_problem, settings, phase1_vstatus, phase1_solution, iter, junk);
   if (phase1_status == dual::status_t::NUMERICAL ||
       phase1_status == dual::status_t::DUAL_UNBOUNDED) {
     settings.log.printf("Failed in Phase 1\n");
@@ -225,13 +206,14 @@ lp_status_t solve_linear_program_with_basis_update(
     lp_solution_t<i_t, f_t> solution(lp.num_rows, lp.num_cols);
     assert(lp.num_cols == phase1_problem.num_cols);
     assert(solution.x.size() == lp.num_cols);
-
+    vstatus = phase1_vstatus;
     edge_norms.clear();
     bool initialize_basis_update = true;
     dual::status_t status = dual_phase2_with_basis_update(
       2, iter == 0 ? 1 : 0, initialize_basis_update, start_time, lp, settings, vstatus, ft, basic_list, nonbasic_list, solution, iter, edge_norms);
     if (status == dual::status_t::NUMERICAL) {
       // Became dual infeasible. Try phase 1 again
+      phase1_vstatus = vstatus;
       settings.log.printf("Running Phase 1 again\n");
       junk.clear();
       initialize_basis_update = false;
