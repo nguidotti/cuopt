@@ -2059,6 +2059,7 @@ int basis_update_mpf_t<i_t, f_t>::factorize_basis(
   std::vector<i_t> deficient;
   std::vector<i_t> slacks_needed;
 
+  if (L0_.m != A.m) { resize(A.m); }
   if (dual_simplex::factorize_basis(A,
                                     settings,
                                     basic_list,
