@@ -2188,35 +2188,35 @@ dual::status_t dual_phase2(i_t phase,
   std::vector<i_t> superbasic_list;
   basis_update_mpf_t<i_t, f_t> ft(m, settings.refactor_frequency);
   const bool initialize_basis = true;
-  return dual_phase2_with_basis_update(phase,
-                                       slack_basis,
-                                       initialize_basis,
-                                       start_time,
-                                       lp,
-                                       settings,
-                                       vstatus,
-                                       ft,
-                                       basic_list,
-                                       nonbasic_list,
-                                       sol,
-                                       iter,
-                                       delta_y_steepest_edge);
+  return dual_phase2_with_advanced_basis(phase,
+                                         slack_basis,
+                                         initialize_basis,
+                                         start_time,
+                                         lp,
+                                         settings,
+                                         vstatus,
+                                         ft,
+                                         basic_list,
+                                         nonbasic_list,
+                                         sol,
+                                         iter,
+                                         delta_y_steepest_edge);
 }
 
 template <typename i_t, typename f_t>
-dual::status_t dual_phase2_with_basis_update(i_t phase,
-                                             i_t slack_basis,
-                                             bool initialize_basis,
-                                             f_t start_time,
-                                             const lp_problem_t<i_t, f_t>& lp,
-                                             const simplex_solver_settings_t<i_t, f_t>& settings,
-                                             std::vector<variable_status_t>& vstatus,
-                                             basis_update_mpf_t<i_t, f_t>& ft,
-                                             std::vector<i_t>& basic_list,
-                                             std::vector<i_t>& nonbasic_list,
-                                             lp_solution_t<i_t, f_t>& sol,
-                                             i_t& iter,
-                                             std::vector<f_t>& delta_y_steepest_edge)
+dual::status_t dual_phase2_with_advanced_basis(i_t phase,
+                                               i_t slack_basis,
+                                               bool initialize_basis,
+                                               f_t start_time,
+                                               const lp_problem_t<i_t, f_t>& lp,
+                                               const simplex_solver_settings_t<i_t, f_t>& settings,
+                                               std::vector<variable_status_t>& vstatus,
+                                               basis_update_mpf_t<i_t, f_t>& ft,
+                                               std::vector<i_t>& basic_list,
+                                               std::vector<i_t>& nonbasic_list,
+                                               lp_solution_t<i_t, f_t>& sol,
+                                               i_t& iter,
+                                               std::vector<f_t>& delta_y_steepest_edge)
 {
   const i_t m = lp.num_rows;
   const i_t n = lp.num_cols;
@@ -3006,7 +3006,7 @@ template dual::status_t dual_phase2<int, double>(
   int& iter,
   std::vector<double>& steepest_edge_norms);
 
-template dual::status_t dual_phase2_with_basis_update<int, double>(
+template dual::status_t dual_phase2_with_advanced_basis<int, double>(
   int phase,
   int slack_basis,
   bool initialize_basis,

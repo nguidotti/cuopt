@@ -284,7 +284,6 @@ class basis_update_mpf_t {
 
   i_t reset()
   {
-    inverse_permutation(row_permutation_, inverse_row_permutation_);
     clear();
     compute_transposes();
     reset_stats();

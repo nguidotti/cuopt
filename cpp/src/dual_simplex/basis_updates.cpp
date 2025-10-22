@@ -2074,6 +2074,7 @@ int basis_update_mpf_t<i_t, f_t>::refactor_basis(
     basis_repair(A, settings, deficient, slacks_needed, basic_list, nonbasic_list, vstatus);
 
 #ifdef CHECK_BASIS_REPAIR
+    const i_t m = A.m;
     csc_matrix_t<i_t, f_t> B(m, m, 0);
     form_b(A, basic_list, B);
     for (i_t k = 0; k < deficient.size(); ++k) {
@@ -2100,7 +2101,7 @@ int basis_update_mpf_t<i_t, f_t>::refactor_basis(
                         deficient,
                         slacks_needed) == -1) {
 #ifdef CHECK_L_FACTOR
-      if (L.check_matrix() == -1) { settings.log.printf("Bad L after basis repair\n"); }
+      if (L0_.check_matrix() == -1) { settings.log.printf("Bad L after basis repair\n"); }
 #endif
       return deficient.size();
     }
