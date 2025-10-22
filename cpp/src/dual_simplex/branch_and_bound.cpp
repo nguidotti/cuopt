@@ -1127,6 +1127,12 @@ void branch_and_bound_t<i_t, f_t>::diving_thread(lp_problem_t<i_t, f_t>& leaf_pr
                             start_node->upper,
                             recompute);
 
+        if (recompute) {
+          auto status = refactorize_basis(
+            subtree, node_ptr, leaf_problem, basis_update, basic_list, nonbasic_list, 'D');
+          if (status != dual::status_t::UNSET) { continue; }
+        }
+
         node_status_t node_status = solve_node(subtree,
                                                node_ptr,
                                                leaf_problem,
