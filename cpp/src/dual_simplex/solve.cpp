@@ -209,8 +209,19 @@ lp_status_t solve_linear_program_with_advanced_basis(
     vstatus = phase1_vstatus;
     edge_norms.clear();
     bool initialize_basis_update = true;
-    dual::status_t status = dual_phase2_with_advanced_basis(
-      2, iter == 0 ? 1 : 0, initialize_basis_update, start_time, lp, settings, vstatus, ft, basic_list, nonbasic_list, solution, iter, edge_norms);
+    dual::status_t status        = dual_phase2_with_advanced_basis(2,
+                                                            iter == 0 ? 1 : 0,
+                                                            initialize_basis_update,
+                                                            start_time,
+                                                            lp,
+                                                            settings,
+                                                            vstatus,
+                                                            ft,
+                                                            basic_list,
+                                                            nonbasic_list,
+                                                            solution,
+                                                            iter,
+                                                            edge_norms);
     if (status == dual::status_t::NUMERICAL) {
       // Became dual infeasible. Try phase 1 again
       phase1_vstatus = vstatus;
@@ -218,21 +229,33 @@ lp_status_t solve_linear_program_with_advanced_basis(
       junk.clear();
       initialize_basis_update = false;
       dual_phase2_with_advanced_basis(1,
-                  0,
-                  initialize_basis_update,
-                  start_time,
-                  phase1_problem,
-                  settings,
-                  phase1_vstatus,
-                  ft,
-                  basic_list,
-                  nonbasic_list,
-                  phase1_solution,
-                  iter,
-                  edge_norms);
+                                      0,
+                                      initialize_basis_update,
+                                      start_time,
+                                      phase1_problem,
+                                      settings,
+                                      phase1_vstatus,
+                                      ft,
+                                      basic_list,
+                                      nonbasic_list,
+                                      phase1_solution,
+                                      iter,
+                                      edge_norms);
       vstatus = phase1_vstatus;
       edge_norms.clear();
-      status = dual_phase2_with_advanced_basis(2, 0, initialize_basis_update, start_time, lp, settings, vstatus, ft, basic_list, nonbasic_list, solution, iter, edge_norms);
+      status = dual_phase2_with_advanced_basis(2,
+                                               0,
+                                               initialize_basis_update,
+                                               start_time,
+                                               lp,
+                                               settings,
+                                               vstatus,
+                                               ft,
+                                               basic_list,
+                                               nonbasic_list,
+                                               solution,
+                                               iter,
+                                               edge_norms);
     }
     constexpr bool primal_cleanup = false;
     if (status == dual::status_t::OPTIMAL && primal_cleanup) {
