@@ -414,7 +414,7 @@ void branch_and_bound_t<i_t, f_t>::repair_heuristic_solutions()
           std::string user_gap = user_mip_gap<f_t>(obj, lower);
 
           settings_.log.printf(
-            "H                          %+13.6e  %+10.6e                      %s %9.2f\n",
+            "H                           %+13.6e    %+10.6e                        %s %9.2f\n",
             obj,
             lower,
             user_gap.c_str(),
