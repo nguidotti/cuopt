@@ -215,7 +215,7 @@ class branch_and_bound_t {
 
   // Stores the node presolver per thread.
   struct thread_data_t {
-    node_presolve_t<i_t, f_t>* presolve;
+    node_presolver_t<i_t, f_t>* presolver;
     lp_problem_t<i_t, f_t>* leaf_problem;
   };
   std::vector<thread_data_t> thread_data_;
@@ -264,7 +264,7 @@ class branch_and_bound_t {
   node_status_t solve_node(search_tree_t<i_t, f_t>& search_tree,
                            mip_node_t<i_t, f_t>* node_ptr,
                            lp_problem_t<i_t, f_t>& leaf_problem,
-                           node_presolve_t<i_t, f_t>& presolve,
+                           node_presolver_t<i_t, f_t>& presolve,
                            char thread_type,
                            logger_t& log);
 

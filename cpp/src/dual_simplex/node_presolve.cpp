@@ -61,11 +61,11 @@ void print_bounds_stats(const std::vector<f_t>& lower,
 }
 
 template <typename i_t, typename f_t>
-node_presolve_t<i_t, f_t>::node_presolve_t(const lp_problem_t<i_t, f_t>& problem,
-                                           const std::vector<char>& row_sense,
-                                           const csc_matrix_t<i_t, f_t>& Arow,
-                                           const std::vector<variable_type_t>& var_types,
-                                           const simplex_solver_settings_t<i_t, f_t>& settings)
+node_presolver_t<i_t, f_t>::node_presolver_t(const lp_problem_t<i_t, f_t>& problem,
+                                             const std::vector<char>& row_sense,
+                                             const csc_matrix_t<i_t, f_t>& Arow,
+                                             const std::vector<variable_type_t>& var_types,
+                                             const simplex_solver_settings_t<i_t, f_t>& settings)
   : bounds_changed(problem.num_cols, false),
     A(problem.A),
     Arow(Arow),
@@ -98,8 +98,8 @@ node_presolve_t<i_t, f_t>::node_presolve_t(const lp_problem_t<i_t, f_t>& problem
 }
 
 template <typename i_t, typename f_t>
-bool node_presolve_t<i_t, f_t>::bound_strengthening(std::vector<f_t>& lower_bounds,
-                                                    std::vector<f_t>& upper_bounds)
+bool node_presolver_t<i_t, f_t>::bound_strengthening(std::vector<f_t>& lower_bounds,
+                                                     std::vector<f_t>& upper_bounds)
 {
   const i_t m = A.m;
   const i_t n = A.n;
@@ -287,7 +287,7 @@ bool node_presolve_t<i_t, f_t>::bound_strengthening(std::vector<f_t>& lower_boun
 }
 
 #ifdef DUAL_SIMPLEX_INSTANTIATE_DOUBLE
-template class node_presolve_t<int, double>;
+template class node_presolver_t<int, double>;
 #endif
 
 }  // namespace cuopt::linear_programming::dual_simplex

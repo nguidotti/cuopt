@@ -22,14 +22,14 @@
 namespace cuopt::linear_programming::dual_simplex {
 
 template <typename i_t, typename f_t>
-class node_presolve_t {
+class node_presolver_t {
  public:
   // For pure LP bounds strengthening, var_types should be defaulted (i.e. left empty)
-  node_presolve_t(const lp_problem_t<i_t, f_t>& problem,
-                  const std::vector<char>& row_sense,
-                  const csc_matrix_t<i_t, f_t>& Arow,
-                  const std::vector<variable_type_t>& var_types,
-                  const simplex_solver_settings_t<i_t, f_t>& settings);
+  node_presolver_t(const lp_problem_t<i_t, f_t>& problem,
+                   const std::vector<char>& row_sense,
+                   const csc_matrix_t<i_t, f_t>& Arow,
+                   const std::vector<variable_type_t>& var_types,
+                   const simplex_solver_settings_t<i_t, f_t>& settings);
 
   bool bound_strengthening(std::vector<f_t>& lower_bounds, std::vector<f_t>& upper_bounds);
 
