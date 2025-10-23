@@ -1214,12 +1214,12 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   min_diving_queue_size_      = 4 * settings_.num_diving_threads;
   status_                     = mip_exploration_status_t::RUNNING;
   lower_bound_ceiling_        = inf;
-  thread_data_.resize(settings_.num_threads);
+  thread_data_.resize(settings_.num_threads, {nullptr, nullptr});
 
 #pragma omp parallel num_threads(settings_.num_threads)
   {
     // Make a copy of the original LP. We will modify its bounds at each leaf
-    lp_problem_t leaf_problem = original_lp_;
+    lp_problem_t<i_t, f_t> leaf_problem = original_lp_;
     std::vector<char> row_sense;
     node_presolver_t<i_t, f_t> presolver(leaf_problem, row_sense, Arow, var_types_, settings_);
 
