@@ -22,11 +22,17 @@
 namespace cuopt::linear_programming::detail {
 
 template <typename i_t, typename f_t>
+struct presolve_information_t {
+  std::vector<i_t> implied_integer_indices;
+  // clique info, etc...
+};
+
+template <typename i_t, typename f_t>
 class third_party_presolve_t {
  public:
   third_party_presolve_t() = default;
 
-  std::pair<optimization_problem_t<i_t, f_t>, bool> apply(
+  std::tuple<optimization_problem_t<i_t, f_t>, bool, presolve_information_t<i_t, f_t>> apply(
     optimization_problem_t<i_t, f_t> const& op_problem,
     problem_category_t category,
     bool dual_postsolve,

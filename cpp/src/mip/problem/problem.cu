@@ -89,6 +89,7 @@ void problem_t<i_t, f_t>::op_problem_cstr_body(const optimization_problem_t<i_t,
   // If maximization problem, convert the problem
   if (maximize) convert_to_maximization_problem(*this);
   if (is_mip) {
+    var_flags.resize(n_variables, handle_ptr->get_stream());
     integer_indices.resize(n_variables, handle_ptr->get_stream());
     is_binary_variable.resize(n_variables, handle_ptr->get_stream());
     compute_n_integer_vars();
@@ -135,6 +136,7 @@ problem_t<i_t, f_t>::problem_t(
     binary_indices(0, problem_.get_handle_ptr()->get_stream()),
     nonbinary_indices(0, problem_.get_handle_ptr()->get_stream()),
     is_binary_variable(0, problem_.get_handle_ptr()->get_stream()),
+    var_flags(0, problem_.get_handle_ptr()->get_stream()),
     related_variables(0, problem_.get_handle_ptr()->get_stream()),
     related_variables_offsets(n_variables, problem_.get_handle_ptr()->get_stream()),
     var_names(problem_.get_variable_names()),
@@ -179,6 +181,7 @@ problem_t<i_t, f_t>::problem_t(const problem_t<i_t, f_t>& problem_)
     constraint_upper_bounds(problem_.constraint_upper_bounds, handle_ptr->get_stream()),
     combined_bounds(problem_.combined_bounds, handle_ptr->get_stream()),
     variable_types(problem_.variable_types, handle_ptr->get_stream()),
+    var_flags(problem_.var_flags, handle_ptr->get_stream()),
     integer_indices(problem_.integer_indices, handle_ptr->get_stream()),
     binary_indices(problem_.binary_indices, handle_ptr->get_stream()),
     nonbinary_indices(problem_.nonbinary_indices, handle_ptr->get_stream()),
@@ -190,6 +193,7 @@ problem_t<i_t, f_t>::problem_t(const problem_t<i_t, f_t>& problem_)
     objective_name(problem_.objective_name),
     is_scaled_(problem_.is_scaled_),
     preprocess_called(problem_.preprocess_called),
+    objective_is_integral(problem_.objective_is_integral),
     lp_state(problem_.lp_state),
     fixing_helpers(problem_.fixing_helpers, handle_ptr),
     vars_with_objective_coeffs(problem_.vars_with_objective_coeffs),
@@ -270,6 +274,9 @@ problem_t<i_t, f_t>::problem_t(const problem_t<i_t, f_t>& problem_, bool no_deep
       (!no_deep_copy)
         ? rmm::device_uvector<var_t>(problem_.variable_types, handle_ptr->get_stream())
         : rmm::device_uvector<var_t>(problem_.variable_types.size(), handle_ptr->get_stream())),
+    var_flags((!no_deep_copy)
+                ? rmm::device_uvector<i_t>(problem_.var_flags, handle_ptr->get_stream())
+                : rmm::device_uvector<i_t>(problem_.var_flags.size(), handle_ptr->get_stream())),
     integer_indices((!no_deep_copy) ? 0 : problem_.integer_indices.size(),
                     handle_ptr->get_stream()),
     binary_indices((!no_deep_copy) ? 0 : problem_.binary_indices.size(), handle_ptr->get_stream()),
@@ -284,6 +291,7 @@ problem_t<i_t, f_t>::problem_t(const problem_t<i_t, f_t>& problem_, bool no_deep
     objective_name(problem_.objective_name),
     is_scaled_(problem_.is_scaled_),
     preprocess_called(problem_.preprocess_called),
+    objective_is_integral(problem_.objective_is_integral),
     lp_state(problem_.lp_state),
     fixing_helpers(problem_.fixing_helpers, handle_ptr),
     vars_with_objective_coeffs(problem_.vars_with_objective_coeffs),
@@ -933,6 +941,7 @@ typename problem_t<i_t, f_t>::view_t problem_t<i_t, f_t>::view()
   v.variable_types = raft::device_span<var_t>{variable_types.data(), variable_types.size()};
   v.is_binary_variable =
     raft::device_span<i_t>{is_binary_variable.data(), is_binary_variable.size()};
+  v.var_flags         = raft::device_span<i_t>{var_flags.data(), var_flags.size()};
   v.related_variables = raft::device_span<i_t>{related_variables.data(), related_variables.size()};
   v.related_variables_offsets =
     raft::device_span<i_t>{related_variables_offsets.data(), related_variables_offsets.size()};
@@ -953,6 +962,7 @@ void problem_t<i_t, f_t>::resize_variables(size_t size)
   variable_types.resize(size, handle_ptr->get_stream());
   objective_coefficients.resize(size, handle_ptr->get_stream());
   is_binary_variable.resize(size, handle_ptr->get_stream());
+  var_flags.resize(size, handle_ptr->get_stream());  // 0 is default - no flag
   related_variables_offsets.resize(size, handle_ptr->get_stream());
 }
 
@@ -1058,6 +1068,31 @@ void problem_t<i_t, f_t>::insert_constraints(constraints_delta_t<i_t, f_t>& h_co
                "nnz and offset should match!");
   cuopt_assert(offsets.size() == n_constraints + 1, "offset size should match!");
   combine_constraint_bounds<i_t, f_t>(*this, combined_bounds);
+}
+
+template <typename i_t, typename f_t>
+void problem_t<i_t, f_t>::set_implied_integers(const std::vector<i_t>& implied_integer_indices)
+{
+  raft::common::nvtx::range fun_scope("set_implied_integers");
+  auto d_indices = cuopt::device_copy(implied_integer_indices, handle_ptr->get_stream());
+  thrust::for_each(
+    handle_ptr->get_thrust_policy(),
+    d_indices.begin(),
+    d_indices.end(),
+    [var_flags = make_span(var_flags), var_types = make_span(variable_types)] __device__(i_t idx) {
+      cuopt_assert(idx < var_flags.size(), "Index out of bounds");
+      cuopt_assert(var_types[idx] == var_t::CONTINUOUS, "Variable is integer");
+      var_flags[idx] |= (i_t)VAR_IMPLY_INTEGER;
+    });
+  objective_is_integral = thrust::all_of(handle_ptr->get_thrust_policy(),
+                                         thrust::make_counting_iterator(0),
+                                         thrust::make_counting_iterator(n_variables),
+                                         [v = view()] __device__(i_t var_idx) {
+                                           if (v.objective_coefficients[var_idx] == 0) return true;
+                                           return v.is_integer(v.objective_coefficients[var_idx]) &&
+                                                  (v.variable_types[var_idx] == var_t::INTEGER ||
+                                                   (v.var_flags[var_idx] & VAR_IMPLY_INTEGER));
+                                         });
 }
 
 template <typename i_t, typename f_t>
@@ -1490,6 +1525,7 @@ void problem_t<i_t, f_t>::preprocess_problem()
   presolve_data.initialize_var_mapping(*this, handle_ptr);
   integer_indices.resize(n_variables, handle_ptr->get_stream());
   is_binary_variable.resize(n_variables, handle_ptr->get_stream());
+  var_flags.resize(n_variables, handle_ptr->get_stream());
   original_ids.resize(n_variables);
   std::iota(original_ids.begin(), original_ids.end(), 0);
   reverse_original_ids.resize(n_variables);

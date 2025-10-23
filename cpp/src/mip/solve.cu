@@ -210,7 +210,7 @@ mip_solution_t<i_t, f_t> solve_mip(optimization_problem_t<i_t, f_t>& op_problem,
       const double presolve_time_limit = std::min(0.1 * time_limit, 60.0);
       const bool dual_postsolve        = false;
       presolver = std::make_unique<detail::third_party_presolve_t<i_t, f_t>>();
-      auto [reduced_op_problem, feasible] =
+      auto [reduced_op_problem, feasible, presolve_info] =
         presolver->apply(op_problem,
                          cuopt::linear_programming::problem_category_t::MIP,
                          dual_postsolve,
@@ -224,8 +224,13 @@ mip_solution_t<i_t, f_t> solve_mip(optimization_problem_t<i_t, f_t>& op_problem,
                                         op_problem.get_handle_ptr()->get_stream());
       }
 
-      problem       = detail::problem_t<i_t, f_t>(reduced_op_problem);
+      problem = detail::problem_t<i_t, f_t>(reduced_op_problem);
+      problem.set_implied_integers(presolve_info.implied_integer_indices);
       presolve_time = timer.elapsed_time();
+      if (presolve_info.implied_integer_indices.size() > 0) {
+        CUOPT_LOG_INFO("%d implied integers", presolve_info.implied_integer_indices.size());
+      }
+      if (problem.is_objective_integral()) { CUOPT_LOG_INFO("Objective function is integral"); }
       CUOPT_LOG_INFO("Papilo presolve time: %f", presolve_time);
     }
     if (settings.user_problem_file != "") {

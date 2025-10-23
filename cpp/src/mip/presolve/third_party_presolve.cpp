@@ -391,14 +391,14 @@ void set_presolve_parameters(papilo::Presolve<f_t>& presolver,
 }
 
 template <typename i_t, typename f_t>
-std::pair<optimization_problem_t<i_t, f_t>, bool> third_party_presolve_t<i_t, f_t>::apply(
-  optimization_problem_t<i_t, f_t> const& op_problem,
-  problem_category_t category,
-  bool dual_postsolve,
-  f_t absolute_tolerance,
-  f_t relative_tolerance,
-  double time_limit,
-  i_t num_cpu_threads)
+std::tuple<optimization_problem_t<i_t, f_t>, bool, presolve_information_t<i_t, f_t>>
+third_party_presolve_t<i_t, f_t>::apply(optimization_problem_t<i_t, f_t> const& op_problem,
+                                        problem_category_t category,
+                                        bool dual_postsolve,
+                                        f_t absolute_tolerance,
+                                        f_t relative_tolerance,
+                                        double time_limit,
+                                        i_t num_cpu_threads)
 {
   papilo::Problem<f_t> papilo_problem = build_papilo_problem(op_problem, category);
 
@@ -421,9 +421,11 @@ std::pair<optimization_problem_t<i_t, f_t>, bool> third_party_presolve_t<i_t, f_
 
   auto result = presolver.apply(papilo_problem);
   check_presolve_status(result.status);
+  presolve_information_t<i_t, f_t> presolve_info;
   if (result.status == papilo::PresolveStatus::kInfeasible ||
       result.status == papilo::PresolveStatus::kUnbndOrInfeas) {
-    return std::make_pair(optimization_problem_t<i_t, f_t>(op_problem.get_handle_ptr()), false);
+    return std::make_tuple(
+      optimization_problem_t<i_t, f_t>(op_problem.get_handle_ptr()), false, presolve_info);
   }
   post_solve_storage_ = result.postsolve;
   CUOPT_LOG_INFO("Presolve removed: %d constraints, %d variables, %d nonzeros",
@@ -435,8 +437,15 @@ std::pair<optimization_problem_t<i_t, f_t>, bool> third_party_presolve_t<i_t, f_
                  papilo_problem.getNCols(),
                  papilo_problem.getConstraintMatrix().getNnz());
 
-  return std::make_pair(
-    build_optimization_problem<i_t, f_t>(papilo_problem, op_problem.get_handle_ptr()), true);
+  auto opt_problem =
+    build_optimization_problem<i_t, f_t>(papilo_problem, op_problem.get_handle_ptr());
+  auto col_flags = papilo_problem.getColFlags();
+  for (size_t i = 0; i < col_flags.size(); i++) {
+    if (col_flags[i].test(papilo::ColFlag::kImplInt))
+      presolve_info.implied_integer_indices.push_back(i);
+  }
+
+  return std::make_tuple(opt_problem, true, presolve_info);
 }
 
 template <typename i_t, typename f_t>
