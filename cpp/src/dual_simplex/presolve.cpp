@@ -597,7 +597,7 @@ void convert_user_problem(const user_problem_t<i_t, f_t>& user_problem,
       }
       if (problem.upper[j] < inf) {
         num_upper_bounds++;
-        vars_with_upper_bounds.push_back(j)
+        vars_with_upper_bounds.push_back(j);
       }
     }
 
