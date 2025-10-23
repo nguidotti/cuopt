@@ -19,7 +19,6 @@
 
 #include <dual_simplex/initial_basis.hpp>
 #include <dual_simplex/mip_node.hpp>
-#include <dual_simplex/node_presolve.hpp>
 #include <dual_simplex/phase2.hpp>
 #include <dual_simplex/pseudo_costs.hpp>
 #include <dual_simplex/simplex_solver_settings.hpp>
@@ -53,6 +52,9 @@ enum class mip_exploration_status_t {
 };
 
 template <typename i_t, typename f_t>
+class node_presolver_t;
+
+template <typename i_t, typename f_t>
 void upper_bound_callback(f_t upper_bound);
 
 template <typename i_t, typename f_t>
@@ -64,7 +66,7 @@ struct diving_root_t {
   diving_root_t(mip_node_t<i_t, f_t>&& node,
                 const std::vector<f_t>& lower,
                 const std::vector<f_t>& upper)
-    : node(std::move(node)), upper(upper), lower(lower)
+    : node(std::move(node)), lower(lower), upper(upper)
   {
   }
 

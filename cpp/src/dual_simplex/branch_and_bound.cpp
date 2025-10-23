@@ -21,6 +21,7 @@
 #include <dual_simplex/initial_basis.hpp>
 #include <dual_simplex/logger.hpp>
 #include <dual_simplex/mip_node.hpp>
+#include <dual_simplex/node_presolve.hpp>
 #include <dual_simplex/phase2.hpp>
 #include <dual_simplex/presolve.hpp>
 #include <dual_simplex/pseudo_costs.hpp>
@@ -686,6 +687,12 @@ void branch_and_bound_t<i_t, f_t>::set_variable_bounds(mip_node_t<i_t, f_t>* nod
                                                        const std::vector<f_t>& root_upper,
                                                        bool recompute)
 {
+  assert(bounds_changed.size() == original_lp_.lower.size());
+  assert(lower.size() == original_lp_.lower.size());
+  assert(upper.size() == original_lp_.upper.size());
+  assert(root_lower.size() == original_lp_.lower.size());
+  assert(root_upper.size() == original_lp_.upper.size());
+
   // Reset the bound_changed markers
   std::fill(bounds_changed.begin(), bounds_changed.end(), false);
 
