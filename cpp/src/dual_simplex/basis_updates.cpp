@@ -2060,6 +2060,7 @@ int basis_update_mpf_t<i_t, f_t>::refactor_basis(
   std::vector<i_t> slacks_needed;
 
   if (L0_.m != A.m) { resize(A.m); }
+  std::vector<i_t> q;
   if (factorize_basis(A,
                       settings,
                       basic_list,
@@ -2067,7 +2068,7 @@ int basis_update_mpf_t<i_t, f_t>::refactor_basis(
                       U0_,
                       row_permutation_,
                       inverse_row_permutation_,
-                      col_permutation_,
+                      q,
                       deficient,
                       slacks_needed) == -1) {
     settings.log.debug("Initial factorization failed\n");
@@ -2097,7 +2098,7 @@ int basis_update_mpf_t<i_t, f_t>::refactor_basis(
                         U0_,
                         row_permutation_,
                         inverse_row_permutation_,
-                        col_permutation_,
+                        q,
                         deficient,
                         slacks_needed) == -1) {
 #ifdef CHECK_L_FACTOR
@@ -2108,8 +2109,8 @@ int basis_update_mpf_t<i_t, f_t>::refactor_basis(
     settings.log.debug("Basis repaired\n");
   }
 
-  assert(col_permutation_.size() == A.m);
-  reorder_basic_list(col_permutation_, basic_list);
+  assert(q.size() == A.m);
+  reorder_basic_list(q, basic_list);  // We no longer need q after reordering the basic list
   reset();
   return 0;
 }
