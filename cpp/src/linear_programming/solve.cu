@@ -843,7 +843,7 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
       const double presolve_time_limit =
         std::max(1.0, std::min(0.1 * lp_timer.remaining_time(), 60.0));
       presolver = std::make_unique<detail::third_party_presolve_t<i_t, f_t>>();
-      auto [reduced_problem, feasible, presolve_info] =
+      auto [reduced_problem, feasible, _] =
         presolver->apply(op_problem,
                          cuopt::linear_programming::problem_category_t::LP,
                          settings.dual_postsolve,

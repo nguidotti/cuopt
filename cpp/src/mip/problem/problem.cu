@@ -90,6 +90,7 @@ void problem_t<i_t, f_t>::op_problem_cstr_body(const optimization_problem_t<i_t,
   if (maximize) convert_to_maximization_problem(*this);
   if (is_mip) {
     var_flags.resize(n_variables, handle_ptr->get_stream());
+    thrust::fill(handle_ptr->get_thrust_policy(), var_flags.begin(), var_flags.end(), 0);
     integer_indices.resize(n_variables, handle_ptr->get_stream());
     is_binary_variable.resize(n_variables, handle_ptr->get_stream());
     compute_n_integer_vars();
@@ -1284,6 +1285,13 @@ void problem_t<i_t, f_t>::remove_given_variables(problem_t<i_t, f_t>& original_p
                  original_problem.variable_types.begin(),
                  variable_types.begin());
   variable_types.resize(variable_map.size(), handle_ptr->get_stream());
+  // keep implied-integer and other flags consistent with new variable set
+  thrust::gather(handle_ptr->get_thrust_policy(),
+                 variable_map.begin(),
+                 variable_map.end(),
+                 original_problem.var_flags.begin(),
+                 var_flags.begin());
+  var_flags.resize(variable_map.size(), handle_ptr->get_stream());
   const i_t TPB = 64;
   // compute new offsets
   compute_new_offsets<i_t, f_t><<<variable_map.size(), TPB, 0, handle_ptr->get_stream()>>>(
