@@ -64,13 +64,11 @@ template <typename i_t, typename f_t>
 node_presolver_t<i_t, f_t>::node_presolver_t(const lp_problem_t<i_t, f_t>& problem,
                                              const std::vector<char>& row_sense,
                                              const csc_matrix_t<i_t, f_t>& Arow,
-                                             const std::vector<variable_type_t>& var_types,
-                                             const simplex_solver_settings_t<i_t, f_t>& settings)
+                                             const std::vector<variable_type_t>& var_types)
   : bounds_changed(problem.num_cols, false),
     A(problem.A),
     Arow(Arow),
     var_types(var_types),
-    settings(settings),
     delta_min_activity(problem.num_rows),
     delta_max_activity(problem.num_rows),
     constraint_lb(problem.num_rows),
@@ -98,8 +96,10 @@ node_presolver_t<i_t, f_t>::node_presolver_t(const lp_problem_t<i_t, f_t>& probl
 }
 
 template <typename i_t, typename f_t>
-bool node_presolver_t<i_t, f_t>::bound_strengthening(std::vector<f_t>& lower_bounds,
-                                                     std::vector<f_t>& upper_bounds)
+bool node_presolver_t<i_t, f_t>::bound_strengthening(
+  std::vector<f_t>& lower_bounds,
+  std::vector<f_t>& upper_bounds,
+  const simplex_solver_settings_t<i_t, f_t>& settings)
 {
   const i_t m = A.m;
   const i_t n = A.n;

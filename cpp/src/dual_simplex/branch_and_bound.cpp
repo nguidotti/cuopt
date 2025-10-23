@@ -552,8 +552,8 @@ branch_and_bound_t<i_t, f_t>::child_selection(mip_node_t<i_t, f_t>* node_ptr)
 }
 
 template <typename i_t, typename f_t>
-node_status_t branch_and_bound_t<i_t, f_t>::solve_node(search_tree_t<i_t, f_t>& search_tree,
-                                                       mip_node_t<i_t, f_t>* node_ptr,
+node_status_t branch_and_bound_t<i_t, f_t>::solve_node(mip_node_t<i_t, f_t>* node_ptr,
+                                                       search_tree_t<i_t, f_t>& search_tree,
                                                        lp_problem_t<i_t, f_t>& leaf_problem,
                                                        node_presolver_t<i_t, f_t>& presolver,
                                                        char thread_type,
@@ -572,7 +572,8 @@ node_status_t branch_and_bound_t<i_t, f_t>::solve_node(search_tree_t<i_t, f_t>& 
   lp_settings.inside_mip = 2;
   lp_settings.time_limit = settings_.time_limit - toc(stats_.start_time);
 
-  bool feasible = presolver.bound_strengthening(leaf_problem.lower, leaf_problem.upper);
+  bool feasible =
+    presolver.bound_strengthening(leaf_problem.lower, leaf_problem.upper, lp_settings);
 
   dual::status_t lp_status = dual::status_t::DUAL_UNBOUNDED;
 
@@ -700,8 +701,9 @@ void branch_and_bound_t<i_t, f_t>::set_variable_bounds(mip_node_t<i_t, f_t>* nod
 }
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::exploration_ramp_up(search_tree_t<i_t, f_t>* search_tree,
-                                                       mip_node_t<i_t, f_t>* node,
+void branch_and_bound_t<i_t, f_t>::exploration_ramp_up(mip_node_t<i_t, f_t>* node,
+                                                       search_tree_t<i_t, f_t>* search_tree,
+                                                       const csc_matrix_t<i_t, f_t>& Arow,
                                                        i_t initial_heap_size)
 {
   if (status_ != mip_exploration_status_t::RUNNING) { return; }
@@ -711,9 +713,10 @@ void branch_and_bound_t<i_t, f_t>::exploration_ramp_up(search_tree_t<i_t, f_t>* 
   // to repair the heuristic solution.
   repair_heuristic_solutions();
 
-  i_t tid           = omp_get_thread_num();
-  auto presolver    = thread_data_[tid].presolver;
-  auto leaf_problem = thread_data_[tid].leaf_problem;
+  // Make a copy of the original LP. We will modify its bounds at each leaf
+  lp_problem_t<i_t, f_t> leaf_problem = original_lp_;
+  std::vector<char> row_sense;
+  node_presolver_t<i_t, f_t> presolver(leaf_problem, row_sense, Arow, var_types_);
 
   f_t lower_bound      = node->lower_bound;
   f_t upper_bound      = get_upper_bound();
@@ -764,15 +767,15 @@ void branch_and_bound_t<i_t, f_t>::exploration_ramp_up(search_tree_t<i_t, f_t>* 
 
   // Set the correct bounds for the leaf problem
   set_variable_bounds(node,
-                      leaf_problem->lower,
-                      leaf_problem->upper,
-                      presolver->bounds_changed,
+                      leaf_problem.lower,
+                      leaf_problem.upper,
+                      presolver.bounds_changed,
                       original_lp_.lower,
                       original_lp_.upper,
                       true);
 
   node_status_t node_status =
-    solve_node(*search_tree, node, *leaf_problem, *presolver, 'B', settings_.log);
+    solve_node(node, *search_tree, leaf_problem, presolver, 'B', settings_.log);
 
   if (node_status == node_status_t::TIME_LIMIT) {
     status_ = mip_exploration_status_t::TIME_LIMIT;
@@ -784,10 +787,10 @@ void branch_and_bound_t<i_t, f_t>::exploration_ramp_up(search_tree_t<i_t, f_t>* 
     // If we haven't generated enough nodes to keep the threads busy, continue the ramp up phase
     if (stats_.nodes_unexplored < initial_heap_size) {
 #pragma omp task
-      exploration_ramp_up(search_tree, node->get_down_child(), initial_heap_size);
+      exploration_ramp_up(node->get_down_child(), search_tree, Arow, initial_heap_size);
 
 #pragma omp task
-      exploration_ramp_up(search_tree, node->get_up_child(), initial_heap_size);
+      exploration_ramp_up(node->get_up_child(), search_tree, Arow, initial_heap_size);
 
     } else {
       // We've generated enough nodes, push further nodes onto the heap
@@ -801,16 +804,14 @@ void branch_and_bound_t<i_t, f_t>::exploration_ramp_up(search_tree_t<i_t, f_t>* 
 
 template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t task_id,
+                                                   mip_node_t<i_t, f_t>* start_node,
                                                    search_tree_t<i_t, f_t>& search_tree,
-                                                   mip_node_t<i_t, f_t>* start_node)
+                                                   lp_problem_t<i_t, f_t>& leaf_problem,
+                                                   node_presolver_t<i_t, f_t>& presolver)
 {
   bool recompute = true;
   std::deque<mip_node_t<i_t, f_t>*> stack;
   stack.push_front(start_node);
-
-  i_t tid           = omp_get_thread_num();
-  auto presolver    = thread_data_[tid].presolver;
-  auto leaf_problem = thread_data_[tid].leaf_problem;
 
   while (stack.size() > 0 && status_ == mip_exploration_status_t::RUNNING) {
     if (task_id == 0) { repair_heuristic_solutions(); }
@@ -874,15 +875,15 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t task_id,
 
     // Set the correct bounds for the leaf problem
     set_variable_bounds(node_ptr,
-                        leaf_problem->lower,
-                        leaf_problem->upper,
-                        presolver->bounds_changed,
+                        leaf_problem.lower,
+                        leaf_problem.upper,
+                        presolver.bounds_changed,
                         original_lp_.lower,
                         original_lp_.upper,
                         recompute);
 
     node_status_t node_status =
-      solve_node(search_tree, node_ptr, *leaf_problem, *presolver, 'B', settings_.log);
+      solve_node(node_ptr, search_tree, leaf_problem, presolver, 'B', settings_.log);
     recompute = node_status != node_status_t::HAS_CHILDREN;
 
     if (node_status == node_status_t::TIME_LIMIT) {
@@ -906,7 +907,7 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t task_id,
         // would be better if we discard the node instead.
         if (get_heap_size() > settings_.num_bfs_threads) {
           mutex_dive_queue_.lock();
-          dive_queue_.emplace(node->detach_copy(), leaf_problem->lower, leaf_problem->upper);
+          dive_queue_.emplace(node->detach_copy(), leaf_problem.lower, leaf_problem.upper);
           mutex_dive_queue_.unlock();
         }
 
@@ -925,12 +926,19 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t task_id,
 }
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::best_first_thread(i_t id, search_tree_t<i_t, f_t>& search_tree)
+void branch_and_bound_t<i_t, f_t>::best_first_thread(i_t id,
+                                                     search_tree_t<i_t, f_t>& search_tree,
+                                                     const csc_matrix_t<i_t, f_t>& Arow)
 {
   f_t lower_bound = -inf;
   f_t upper_bound = inf;
   f_t abs_gap     = inf;
   f_t rel_gap     = inf;
+
+  // Make a copy of the original LP. We will modify its bounds at each leaf
+  lp_problem_t<i_t, f_t> leaf_problem = original_lp_;
+  std::vector<char> row_sense;
+  node_presolver_t<i_t, f_t> presolver(leaf_problem, row_sense, Arow, var_types_);
 
   while (status_ == mip_exploration_status_t::RUNNING && abs_gap > settings_.absolute_mip_gap_tol &&
          rel_gap > settings_.relative_mip_gap_tol &&
@@ -957,7 +965,7 @@ void branch_and_bound_t<i_t, f_t>::best_first_thread(i_t id, search_tree_t<i_t, 
       }
 
       // Best-first search with plunging
-      explore_subtree(id, search_tree, node_ptr);
+      explore_subtree(id, node_ptr, search_tree, leaf_problem, presolver);
       active_subtrees_--;
     }
 
@@ -979,14 +987,15 @@ void branch_and_bound_t<i_t, f_t>::best_first_thread(i_t id, search_tree_t<i_t, 
 }
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::diving_thread()
+void branch_and_bound_t<i_t, f_t>::diving_thread(const csc_matrix_t<i_t, f_t>& Arow)
 {
   logger_t log;
   log.log = false;
 
-  i_t tid           = omp_get_thread_num();
-  auto presolver    = thread_data_[tid].presolver;
-  auto leaf_problem = thread_data_[tid].leaf_problem;
+  // Make a copy of the original LP. We will modify its bounds at each leaf
+  lp_problem_t<i_t, f_t> leaf_problem = original_lp_;
+  std::vector<char> row_sense;
+  node_presolver_t<i_t, f_t> presolver(leaf_problem, row_sense, Arow, var_types_);
 
   while (status_ == mip_exploration_status_t::RUNNING &&
          (active_subtrees_ > 0 || get_heap_size() > 0)) {
@@ -1019,15 +1028,15 @@ void branch_and_bound_t<i_t, f_t>::diving_thread()
 
         // Set the correct bounds for the leaf problem
         set_variable_bounds(node_ptr,
-                            leaf_problem->lower,
-                            leaf_problem->upper,
-                            presolver->bounds_changed,
+                            leaf_problem.lower,
+                            leaf_problem.upper,
+                            presolver.bounds_changed,
                             start_node->lower,
                             start_node->upper,
                             recompute);
 
         node_status_t node_status =
-          solve_node(subtree, node_ptr, *leaf_problem, *presolver, 'D', log);
+          solve_node(node_ptr, subtree, leaf_problem, presolver, 'D', log);
 
         if (node_status == node_status_t::TIME_LIMIT) {
           return;
@@ -1047,7 +1056,7 @@ void branch_and_bound_t<i_t, f_t>::diving_thread()
             mutex_dive_queue_.lock();
             mip_node_t<i_t, f_t>* new_node = stack.back();
             stack.pop_back();
-            dive_queue_.emplace(new_node->detach_copy(), leaf_problem->lower, leaf_problem->upper);
+            dive_queue_.emplace(new_node->detach_copy(), leaf_problem.lower, leaf_problem.upper);
             mutex_dive_queue_.unlock();
           }
         }
@@ -1214,19 +1223,9 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   min_diving_queue_size_      = 4 * settings_.num_diving_threads;
   status_                     = mip_exploration_status_t::RUNNING;
   lower_bound_ceiling_        = inf;
-  thread_data_.resize(settings_.num_threads, {nullptr, nullptr});
 
 #pragma omp parallel num_threads(settings_.num_threads)
   {
-    // Make a copy of the original LP. We will modify its bounds at each leaf
-    lp_problem_t<i_t, f_t> leaf_problem = original_lp_;
-    std::vector<char> row_sense;
-    node_presolver_t<i_t, f_t> presolver(leaf_problem, row_sense, Arow, var_types_, settings_);
-
-    i_t tid                        = omp_get_thread_num();
-    thread_data_[tid].presolver    = &presolver;
-    thread_data_[tid].leaf_problem = &leaf_problem;
-
 #pragma omp master
     {
       auto down_child  = search_tree.root.get_down_child();
@@ -1234,10 +1233,10 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
       i_t initial_size = 2 * settings_.num_threads;
 
 #pragma omp task
-      exploration_ramp_up(&search_tree, down_child, initial_size);
+      exploration_ramp_up(down_child, &search_tree, Arow, initial_size);
 
 #pragma omp task
-      exploration_ramp_up(&search_tree, up_child, initial_size);
+      exploration_ramp_up(up_child, &search_tree, Arow, initial_size);
     }
 
 #pragma omp barrier
@@ -1248,12 +1247,12 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
           (active_subtrees_ > 0 || get_heap_size() > 0)) {
         for (i_t i = 0; i < settings_.num_bfs_threads; i++) {
 #pragma omp task
-          best_first_thread(i, search_tree);
+          best_first_thread(i, search_tree, Arow);
         }
 
         for (i_t i = 0; i < settings_.num_diving_threads; i++) {
 #pragma omp task
-          diving_thread();
+          diving_thread(Arow);
         }
       }
     }
