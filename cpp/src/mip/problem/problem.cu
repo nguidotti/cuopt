@@ -1533,7 +1533,6 @@ void problem_t<i_t, f_t>::preprocess_problem()
   presolve_data.initialize_var_mapping(*this, handle_ptr);
   integer_indices.resize(n_variables, handle_ptr->get_stream());
   is_binary_variable.resize(n_variables, handle_ptr->get_stream());
-  var_flags.resize(n_variables, handle_ptr->get_stream());
   original_ids.resize(n_variables);
   std::iota(original_ids.begin(), original_ids.end(), 0);
   reverse_original_ids.resize(n_variables);
