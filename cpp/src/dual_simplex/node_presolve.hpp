@@ -28,18 +28,18 @@ class node_presolve_t {
   node_presolve_t(const lp_problem_t<i_t, f_t>& problem,
                   const std::vector<char>& row_sense,
                   const csc_matrix_t<i_t, f_t>& Arow,
-                  const std::vector<variable_type_t>& var_types);
+                  const std::vector<variable_type_t>& var_types,
+                  const simplex_solver_settings_t<i_t, f_t>& settings);
 
-  bool bound_strengthening(std::vector<f_t>& lower_bounds,
-                           std::vector<f_t>& upper_bounds,
-                           const simplex_solver_settings_t<i_t, f_t>& settings);
+  bool bound_strengthening(std::vector<f_t>& lower_bounds, std::vector<f_t>& upper_bounds);
 
   std::vector<bool> bounds_changed;
 
  private:
-  const lp_problem_t<i_t, f_t>& problem;
+  const csc_matrix_t<i_t, f_t>& A;
   const csc_matrix_t<i_t, f_t>& Arow;
   const std::vector<variable_type_t>& var_types;
+  const simplex_solver_settings_t<i_t, f_t>& settings;
 
   std::vector<f_t> delta_min_activity;
   std::vector<f_t> delta_max_activity;

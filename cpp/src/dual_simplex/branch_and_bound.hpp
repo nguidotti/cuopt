@@ -213,6 +213,13 @@ class branch_and_bound_t {
   // its blocks the progression of the lower bound.
   omp_atomic_t<f_t> lower_bound_ceiling_;
 
+  // Stores the node presolver per thread.
+  struct thread_data_t {
+    node_presolve_t<i_t, f_t>* presolve;
+    lp_problem_t<i_t, f_t>* leaf_problem;
+  };
+  std::vector<thread_data_t> thread_data_;
+
   // Set the final solution.
   mip_status_t set_final_solution(mip_solution_t<i_t, f_t>& solution, f_t lower_bound);
 
@@ -238,27 +245,20 @@ class branch_and_bound_t {
   // there is enough unexplored nodes. This is done recursively using OpenMP tasks.
   void exploration_ramp_up(search_tree_t<i_t, f_t>* search_tree,
                            mip_node_t<i_t, f_t>* node,
-                           lp_problem_t<i_t, f_t>& leaf_problem,
-                           const csc_matrix_t<i_t, f_t>& Arow,
                            i_t initial_heap_size);
 
   // Explore the search tree using the best-first search with plunging strategy.
   void explore_subtree(i_t task_id,
                        search_tree_t<i_t, f_t>& search_tree,
-                       mip_node_t<i_t, f_t>* start_node,
-                       lp_problem_t<i_t, f_t>& leaf_problem,
-                       node_presolve_t<i_t, f_t>& presolve);
+                       mip_node_t<i_t, f_t>* start_node);
 
   // Each "main" thread pops a node from the global heap and then performs a plunge
   // (i.e., a shallow dive) into the subtree determined by the node.
-  void best_first_thread(i_t id,
-                         search_tree_t<i_t, f_t>& search_tree,
-                         lp_problem_t<i_t, f_t>& leaf_problem,
-                         node_presolve_t<i_t, f_t>& presolve);
+  void best_first_thread(i_t id, search_tree_t<i_t, f_t>& search_tree);
 
   // Each diving thread pops the first node from the dive queue and then performs
   // a deep dive into the subtree determined by the node.
-  void diving_thread(lp_problem_t<i_t, f_t>& leaf_problem, node_presolve_t<i_t, f_t>& presolve);
+  void diving_thread();
 
   // Solve the LP relaxation of a leaf node and update the tree.
   node_status_t solve_node(search_tree_t<i_t, f_t>& search_tree,

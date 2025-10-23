@@ -64,11 +64,13 @@ template <typename i_t, typename f_t>
 node_presolve_t<i_t, f_t>::node_presolve_t(const lp_problem_t<i_t, f_t>& problem,
                                            const std::vector<char>& row_sense,
                                            const csc_matrix_t<i_t, f_t>& Arow,
-                                           const std::vector<variable_type_t>& var_types)
+                                           const std::vector<variable_type_t>& var_types,
+                                           const simplex_solver_settings_t<i_t, f_t>& settings)
   : bounds_changed(problem.num_cols, false),
-    problem(problem),
+    A(problem.A),
     Arow(Arow),
     var_types(var_types),
+    settings(settings),
     delta_min_activity(problem.num_rows),
     delta_max_activity(problem.num_rows),
     constraint_lb(problem.num_rows),
@@ -96,13 +98,11 @@ node_presolve_t<i_t, f_t>::node_presolve_t(const lp_problem_t<i_t, f_t>& problem
 }
 
 template <typename i_t, typename f_t>
-bool node_presolve_t<i_t, f_t>::bound_strengthening(
-  std::vector<f_t>& lower_bounds,
-  std::vector<f_t>& upper_bounds,
-  const simplex_solver_settings_t<i_t, f_t>& settings)
+bool node_presolve_t<i_t, f_t>::bound_strengthening(std::vector<f_t>& lower_bounds,
+                                                    std::vector<f_t>& upper_bounds)
 {
-  const i_t m = problem.num_rows;
-  const i_t n = problem.num_cols;
+  const i_t m = A.m;
+  const i_t n = A.n;
 
   std::vector<bool> constraint_changed(m, false);
   std::vector<bool> variable_changed(n, false);
@@ -110,10 +110,10 @@ bool node_presolve_t<i_t, f_t>::bound_strengthening(
 
   for (i_t i = 0; i < bounds_changed.size(); ++i) {
     if (bounds_changed[i]) {
-      const i_t row_start = problem.A.col_start[i];
-      const i_t row_end   = problem.A.col_start[i + 1];
+      const i_t row_start = A.col_start[i];
+      const i_t row_end   = A.col_start[i + 1];
       for (i_t p = row_start; p < row_end; ++p) {
-        const i_t j           = problem.A.i[p];
+        const i_t j           = A.i[p];
         constraint_changed[j] = true;
       }
     }
@@ -182,13 +182,13 @@ bool node_presolve_t<i_t, f_t>::bound_strengthening(
       f_t new_lb = old_lb;
       f_t new_ub = old_ub;
 
-      const i_t row_start = problem.A.col_start[k];
-      const i_t row_end   = problem.A.col_start[k + 1];
+      const i_t row_start = A.col_start[k];
+      const i_t row_end   = A.col_start[k + 1];
       for (i_t p = row_start; p < row_end; ++p) {
-        const i_t i = problem.A.i[p];
+        const i_t i = A.i[p];
 
         if (!constraint_changed[i]) { continue; }
-        const f_t a_ik = problem.A.x[p];
+        const f_t a_ik = A.x[p];
 
         f_t delta_min_act = delta_min_activity[i];
         f_t delta_max_act = delta_max_activity[i];
@@ -220,7 +220,7 @@ bool node_presolve_t<i_t, f_t>::bound_strengthening(
       }
       if (new_lb != old_lb || new_ub != old_ub) {
         for (i_t p = row_start; p < row_end; ++p) {
-          const i_t i                = problem.A.i[p];
+          const i_t i                = A.i[p];
           constraint_changed_next[i] = true;
         }
       }
