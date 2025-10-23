@@ -189,9 +189,9 @@ lp_status_t solve_linear_program_with_advanced_basis(
   assert(num_basic == phase1_problem.num_rows);
   i_t iter = 0;
   lp_solution_t<i_t, f_t> phase1_solution(phase1_problem.num_rows, phase1_problem.num_cols);
-  std::vector<f_t> junk;
+  edge_norms.clear();
   dual::status_t phase1_status = dual_phase2(
-    1, 1, start_time, phase1_problem, settings, phase1_vstatus, phase1_solution, iter, junk);
+    1, 1, start_time, phase1_problem, settings, phase1_vstatus, phase1_solution, iter, edge_norms);
   if (phase1_status == dual::status_t::NUMERICAL ||
       phase1_status == dual::status_t::DUAL_UNBOUNDED) {
     settings.log.printf("Failed in Phase 1\n");
@@ -226,7 +226,7 @@ lp_status_t solve_linear_program_with_advanced_basis(
       // Became dual infeasible. Try phase 1 again
       phase1_vstatus = vstatus;
       settings.log.printf("Running Phase 1 again\n");
-      junk.clear();
+      edge_norms.clear();
       initialize_basis_update = false;
       dual_phase2_with_advanced_basis(1,
                                       0,
