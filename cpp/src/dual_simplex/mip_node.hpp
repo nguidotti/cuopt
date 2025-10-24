@@ -99,8 +99,8 @@ class mip_node_t {
   // Here we assume that we are traversing from the deepest node to the
   // root of the tree
   void update_branched_variable_bounds(std::vector<f_t>& lower,
-                             std::vector<f_t>& upper,
-                             std::vector<bool>& bounds_changed) const
+                                       std::vector<f_t>& upper,
+                                       std::vector<bool>& bounds_changed) const
   {
     assert(branch_var >= 0);
     assert(lower.size() > branch_var);
