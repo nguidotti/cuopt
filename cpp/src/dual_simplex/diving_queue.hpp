@@ -41,6 +41,11 @@ struct diving_root_t {
   {
     return a.node.lower_bound > b.node.lower_bound;
   }
+
+  friend bool operator<(const diving_root_t<i_t, f_t>& a, const diving_root_t<i_t, f_t>& b)
+  {
+    return a.node.lower_bound > b.node.lower_bound;
+  }
 };
 
 // A min-heap for storing the starting nodes for the dives.
@@ -52,6 +57,14 @@ class diving_queue_t {
   std::vector<diving_root_t<i_t, f_t>> buffer;
   static constexpr i_t max_size_ = 256;
 
+  void discard_worst_node()
+  {
+    auto max_it = std::max_element(buffer.begin(), buffer.end(), std::less<>());
+    std::swap(*max_it, buffer.back());
+    buffer.pop_back();
+    std::make_heap(buffer.begin(), buffer.end(), std::greater<>());
+  }
+
  public:
   diving_queue_t() { buffer.reserve(max_size_); }
 
@@ -59,7 +72,7 @@ class diving_queue_t {
   {
     buffer.push_back(std::move(node));
     std::push_heap(buffer.begin(), buffer.end(), std::greater<>());
-    if (buffer.size() > max_size()) { buffer.pop_back(); }
+    if (buffer.size() > max_size()) { discard_worst_node(); }
   }
 
   void emplace(mip_node_t<i_t, f_t>&& node,
@@ -68,11 +81,12 @@ class diving_queue_t {
   {
     buffer.emplace_back(std::move(node), lower, upper);
     std::push_heap(buffer.begin(), buffer.end(), std::greater<>());
-    if (buffer.size() > max_size()) { buffer.pop_back(); }
+    if (buffer.size() > max_size()) { discard_worst_node(); }
   }
 
   diving_root_t<i_t, f_t> pop()
   {
+    assert(!buffer.empty() && "Cannot pop from an empty queue!");
     std::pop_heap(buffer.begin(), buffer.end(), std::greater<>());
     diving_root_t<i_t, f_t> node = std::move(buffer.back());
     buffer.pop_back();
@@ -81,7 +95,13 @@ class diving_queue_t {
 
   i_t size() const { return buffer.size(); }
   constexpr i_t max_size() const { return max_size_; }
-  const diving_root_t<i_t, f_t>& top() const { return buffer.front(); }
+
+  const diving_root_t<i_t, f_t>& top() const
+  {
+    assert(!buffer.empty() && "Cannot get top from an empty queue!");
+    return buffer.front();
+  }
+
   void clear() { buffer.clear(); }
 };
 

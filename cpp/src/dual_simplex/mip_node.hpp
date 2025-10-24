@@ -105,6 +105,7 @@ class mip_node_t {
     assert(branch_var >= 0);
     assert(lower.size() > branch_var);
     assert(upper.size() > branch_var);
+    assert(bounds_changed.size() > branch_var);
 
     // If the bounds have already been updated on another node,
     // skip this node as it contains a less tight bounds.
