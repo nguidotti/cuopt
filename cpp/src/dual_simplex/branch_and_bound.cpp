@@ -519,7 +519,7 @@ void branch_and_bound_t<i_t, f_t>::add_feasible_solution(f_t leaf_objective,
     f_t lower_bound = get_lower_bound();
     f_t obj         = compute_user_objective(original_lp_, upper_bound_);
     f_t lower       = compute_user_objective(original_lp_, lower_bound);
-    settings_.log.printf("%c%10d   %10lu    %+13.6e    %+10.6e   %6d   %7.1e     %s %9.2f\n",
+    settings_.log.printf("%s%10d   %10lu    %+13.6e    %+10.6e   %6d   %7.1e     %s %9.2f\n",
                          thread_type_symbol(thread_type),
                          nodes_explored,
                          nodes_unexplored,
