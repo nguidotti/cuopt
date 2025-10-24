@@ -63,11 +63,10 @@ void print_bounds_stats(const std::vector<f_t>& lower,
 template <typename i_t, typename f_t>
 node_presolver_t<i_t, f_t>::node_presolver_t(const lp_problem_t<i_t, f_t>& problem,
                                              const std::vector<char>& row_sense,
-                                             const csc_matrix_t<i_t, f_t>& Arow,
                                              const std::vector<variable_type_t>& var_types)
   : bounds_changed(problem.num_cols, false),
     A(problem.A),
-    Arow(Arow),
+    Arow(problem.Arow),
     var_types(var_types),
     delta_min_activity(problem.num_rows),
     delta_max_activity(problem.num_rows),
@@ -104,9 +103,9 @@ bool node_presolver_t<i_t, f_t>::bound_strengthening(
   const i_t m = A.m;
   const i_t n = A.n;
 
-  std::vector<bool> constraint_changed(m, false);
-  std::vector<bool> variable_changed(n, false);
-  std::vector<bool> constraint_changed_next(m, false);
+  constraint_changed.assign(m, false);
+  variable_changed.assign(n, false);
+  constraint_changed_next.assign(m, false);
 
   for (i_t i = 0; i < bounds_changed.size(); ++i) {
     if (bounds_changed[i]) {
@@ -119,8 +118,8 @@ bool node_presolver_t<i_t, f_t>::bound_strengthening(
     }
   }
 
-  std::vector<f_t> lower = lower_bounds;
-  std::vector<f_t> upper = upper_bounds;
+  lower = lower_bounds;
+  upper = upper_bounds;
   print_bounds_stats(lower, upper, settings, "Initial bounds");
 
   i_t iter             = 0;

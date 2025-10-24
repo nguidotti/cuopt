@@ -576,7 +576,7 @@ void convert_user_problem(const user_problem_t<i_t, f_t>& user_problem,
     convert_greater_to_less(user_problem, row_sense, problem, greater_rows, less_rows);
   }
 
-  // bounds strenghtning was moved to node_presolve.hpp
+  // bounds strengthening was moved to node_presolve.hpp
 
   settings.log.debug(
     "equality rows %d less rows %d columns %d\n", equal_rows, less_rows, problem.num_cols);

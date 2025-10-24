@@ -27,7 +27,6 @@ class node_presolver_t {
   // For pure LP bounds strengthening, var_types should be defaulted (i.e. left empty)
   node_presolver_t(const lp_problem_t<i_t, f_t>& problem,
                    const std::vector<char>& row_sense,
-                   const csc_matrix_t<i_t, f_t>& Arow,
                    const std::vector<variable_type_t>& var_types);
 
   bool bound_strengthening(std::vector<f_t>& lower_bounds,
@@ -40,6 +39,13 @@ class node_presolver_t {
   const csc_matrix_t<i_t, f_t>& A;
   const csc_matrix_t<i_t, f_t>& Arow;
   const std::vector<variable_type_t>& var_types;
+
+  std::vector<bool> constraint_changed;
+  std::vector<bool> variable_changed;
+  std::vector<bool> constraint_changed_next;
+
+  std::vector<f_t> lower;
+  std::vector<f_t> upper;
 
   std::vector<f_t> delta_min_activity;
   std::vector<f_t> delta_max_activity;
