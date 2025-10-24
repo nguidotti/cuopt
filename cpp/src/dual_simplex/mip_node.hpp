@@ -91,7 +91,7 @@ class mip_node_t {
 
     mip_node_t<i_t, f_t>* parent_ptr = parent;
     while (parent_ptr != nullptr && parent_ptr->node_id != 0) {
-      parent_ptr->update_variable_bound(lower, upper, bounds_changed);
+      parent_ptr->update_branched_variable_bounds(lower, upper, bounds_changed);
       parent_ptr = parent_ptr->parent;
     }
   }
