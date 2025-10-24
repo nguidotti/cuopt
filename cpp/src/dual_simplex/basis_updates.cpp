@@ -2049,7 +2049,7 @@ void basis_update_mpf_t<i_t, f_t>::multiply_lu(csc_matrix_t<i_t, f_t>& out) cons
 }
 
 template <typename i_t, typename f_t>
-int basis_update_mpf_t<i_t, f_t>::factorize_basis(
+int basis_update_mpf_t<i_t, f_t>::refactor_basis(
   const csc_matrix_t<i_t, f_t>& A,
   const simplex_solver_settings_t<i_t, f_t>& settings,
   std::vector<i_t>& basic_list,
@@ -2060,20 +2060,22 @@ int basis_update_mpf_t<i_t, f_t>::factorize_basis(
   std::vector<i_t> slacks_needed;
 
   if (L0_.m != A.m) { resize(A.m); }
-  if (dual_simplex::factorize_basis(A,
-                                    settings,
-                                    basic_list,
-                                    L0_,
-                                    U0_,
-                                    row_permutation_,
-                                    inverse_row_permutation_,
-                                    col_permutation_,
-                                    deficient,
-                                    slacks_needed) == -1) {
+  std::vector<i_t> q;
+  if (factorize_basis(A,
+                      settings,
+                      basic_list,
+                      L0_,
+                      U0_,
+                      row_permutation_,
+                      inverse_row_permutation_,
+                      q,
+                      deficient,
+                      slacks_needed) == -1) {
     settings.log.debug("Initial factorization failed\n");
     basis_repair(A, settings, deficient, slacks_needed, basic_list, nonbasic_list, vstatus);
 
 #ifdef CHECK_BASIS_REPAIR
+    const i_t m = A.m;
     csc_matrix_t<i_t, f_t> B(m, m, 0);
     form_b(A, basic_list, B);
     for (i_t k = 0; k < deficient.size(); ++k) {
@@ -2089,26 +2091,26 @@ int basis_update_mpf_t<i_t, f_t>::factorize_basis(
     }
 #endif
 
-    if (dual_simplex::factorize_basis(A,
-                                      settings,
-                                      basic_list,
-                                      L0_,
-                                      U0_,
-                                      row_permutation_,
-                                      inverse_row_permutation_,
-                                      col_permutation_,
-                                      deficient,
-                                      slacks_needed) == -1) {
+    if (factorize_basis(A,
+                        settings,
+                        basic_list,
+                        L0_,
+                        U0_,
+                        row_permutation_,
+                        inverse_row_permutation_,
+                        q,
+                        deficient,
+                        slacks_needed) == -1) {
 #ifdef CHECK_L_FACTOR
-      if (L.check_matrix() == -1) { settings.log.printf("Bad L after basis repair\n"); }
+      if (L0_.check_matrix() == -1) { settings.log.printf("Bad L after basis repair\n"); }
 #endif
       return deficient.size();
     }
     settings.log.debug("Basis repaired\n");
   }
 
-  assert(col_permutation_.size() == A.m);
-  reorder_basic_list(col_permutation_, basic_list);
+  assert(q.size() == A.m);
+  reorder_basic_list(q, basic_list);  // We no longer need q after reordering the basic list
   reset();
   return 0;
 }

@@ -60,7 +60,7 @@ lp_status_t solve_linear_program_advanced(const lp_problem_t<i_t, f_t>& original
 // Solve the LP using dual simplex and keep the `basis_update_mpf_t`
 // for future use.
 template <typename i_t, typename f_t>
-lp_status_t solve_linear_program_with_basis_update(
+lp_status_t solve_linear_program_with_advanced_basis(
   const lp_problem_t<i_t, f_t>& original_lp,
   const f_t start_time,
   const simplex_solver_settings_t<i_t, f_t>& settings,

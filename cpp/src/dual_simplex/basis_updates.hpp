@@ -184,8 +184,6 @@ class basis_update_mpf_t {
       row_permutation_(n),
       inverse_row_permutation_(n),
       S_(n, 0, 0),
-      col_permutation_(n),
-      inverse_col_permutation_(n),
       xi_workspace_(2 * n, 0),
       x_workspace_(n, 0.0),
       U0_transpose_(1, 1, 1),
@@ -214,8 +212,6 @@ class basis_update_mpf_t {
       row_permutation_(p),
       inverse_row_permutation_(p.size()),
       S_(Linit.m, 0, 0),
-      col_permutation_(Linit.m),
-      inverse_col_permutation_(Linit.m),
       xi_workspace_(2 * Linit.m, 0),
       x_workspace_(Linit.m, 0.0),
       U0_transpose_(1, 1, 1),
@@ -284,7 +280,6 @@ class basis_update_mpf_t {
 
   i_t reset()
   {
-    inverse_permutation(row_permutation_, inverse_row_permutation_);
     clear();
     compute_transposes();
     reset_stats();
@@ -298,8 +293,6 @@ class basis_update_mpf_t {
     row_permutation_.resize(n);
     inverse_row_permutation_.resize(n);
     S_.resize(n, 0, 0);
-    col_permutation_.resize(n);
-    inverse_col_permutation_.resize(n);
     xi_workspace_.resize(2 * n, 0);
     x_workspace_.resize(n, 0.0);
     U0_transpose_.resize(1, 1, 1);
@@ -388,19 +381,17 @@ class basis_update_mpf_t {
   void multiply_lu(csc_matrix_t<i_t, f_t>& out) const;
 
   // Compute L*U = A(p, basic_list)
-  int factorize_basis(const csc_matrix_t<i_t, f_t>& A,
-                      const simplex_solver_settings_t<i_t, f_t>& settings,
-                      std::vector<i_t>& basic_list,
-                      std::vector<i_t>& nonbasic_list,
-                      std::vector<variable_status_t>& vstatus);
+  int refactor_basis(const csc_matrix_t<i_t, f_t>& A,
+                     const simplex_solver_settings_t<i_t, f_t>& settings,
+                     std::vector<i_t>& basic_list,
+                     std::vector<i_t>& nonbasic_list,
+                     std::vector<variable_status_t>& vstatus);
 
  private:
   void clear()
   {
     pivot_indices_.clear();
     pivot_indices_.reserve(L0_.m);
-    std::iota(col_permutation_.begin(), col_permutation_.end(), 0);
-    std::iota(inverse_col_permutation_.begin(), inverse_col_permutation_.end(), 0);
     S_.col_start.resize(refactor_frequency_ + 1);
     S_.col_start[0] = 0;
     S_.col_start[1] = 0;
@@ -453,8 +444,6 @@ class basis_update_mpf_t {
   std::vector<i_t> pivot_indices_;  // indicies for rank-1 updates to L
   csc_matrix_t<i_t, f_t> S_;        // stores information about the rank-1 updates to L
   std::vector<f_t> mu_values_;      // stores information about the rank-1 updates to L
-  std::vector<i_t> col_permutation_;          // symmetric permuation q used in U(q, q) represents Q
-  std::vector<i_t> inverse_col_permutation_;  // inverse permutation represents Q'
   mutable std::vector<i_t> xi_workspace_;
   mutable std::vector<f_t> x_workspace_;
   mutable csc_matrix_t<i_t, f_t> U0_transpose_;  // Needed for sparse solves
