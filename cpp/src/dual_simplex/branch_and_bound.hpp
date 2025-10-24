@@ -188,7 +188,10 @@ class branch_and_bound_t {
                        mip_node_t<i_t, f_t>* start_node,
                        search_tree_t<i_t, f_t>& search_tree,
                        lp_problem_t<i_t, f_t>& leaf_problem,
-                       node_presolver_t<i_t, f_t>& presolver);
+                       node_presolver_t<i_t, f_t>& presolver,
+                       basis_update_mpf_t<i_t, f_t>& basis_update,
+                       std::vector<i_t>& basic_list,
+                       std::vector<i_t>& nonbasic_list);
 
   // Each "main" thread pops a node from the global heap and then performs a plunge
   // (i.e., a shallow dive) into the subtree determined by the node.
