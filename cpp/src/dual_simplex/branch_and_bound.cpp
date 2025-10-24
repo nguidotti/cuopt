@@ -192,11 +192,11 @@ std::string user_mip_gap(f_t obj_value, f_t lower_bound)
 {
   const f_t user_mip_gap = relative_gap(obj_value, lower_bound);
   if (user_mip_gap == std::numeric_limits<f_t>::infinity()) {
-    return "  -  ";
+    return "   -  ";
   } else {
     constexpr int BUFFER_LEN = 32;
     char buffer[BUFFER_LEN];
-    snprintf(buffer, BUFFER_LEN - 1, "%4.1f%%", user_mip_gap * 100);
+    snprintf(buffer, BUFFER_LEN - 1, "%5.1f%%", user_mip_gap * 100);
     return std::string(buffer);
   }
 }
@@ -426,7 +426,7 @@ void branch_and_bound_t<i_t, f_t>::repair_heuristic_solutions()
           std::string user_gap = user_mip_gap<f_t>(obj, lower);
 
           settings_.log.printf(
-            "H                           %+13.6e    %+10.6e                        %s %9.2f\n",
+            "H                            %+13.6e    %+10.6e                        %s %9.2f\n",
             obj,
             lower,
             user_gap.c_str(),
@@ -513,6 +513,10 @@ void branch_and_bound_t<i_t, f_t>::add_feasible_solution(f_t leaf_objective,
   bool send_solution   = false;
   i_t nodes_explored   = stats_.nodes_explored;
   i_t nodes_unexplored = stats_.nodes_unexplored;
+
+  settings_.log.debug("%s found a feasible solution with obj=%.10e.\n",
+                      thread_type_symbol(thread_type),
+                      compute_user_objective(original_lp_, leaf_objective));
 
   mutex_upper_.lock();
   if (leaf_objective < upper_bound_) {
@@ -1240,7 +1244,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                        settings_.num_diving_threads);
 
   settings_.log.printf(
-    " | Explored | Unexplored |    Objective    |     Bound     | Depth | Iter/Node |   Gap    "
+    "  | Explored | Unexplored |    Objective    |     Bound     | Depth | Iter/Node |   Gap    "
     "|  Time  |\n");
 
   stats_.nodes_explored       = 0;
