@@ -177,14 +177,6 @@ class branch_and_bound_t {
   // Repairs low-quality solutions from the heuristics, if it is applicable.
   void repair_heuristic_solutions();
 
-  void set_variable_bounds(mip_node_t<i_t, f_t>* node,
-                           std::vector<f_t>& lower,
-                           std::vector<f_t>& upper,
-                           std::vector<bool>& bounds_changed,
-                           const std::vector<f_t>& root_lower,
-                           const std::vector<f_t>& root_upper,
-                           bool recompute);
-
   // Ramp-up phase of the solver, where we greedily expand the tree until
   // there is enough unexplored nodes. This is done recursively using OpenMP tasks.
   void exploration_ramp_up(mip_node_t<i_t, f_t>* node,
@@ -216,6 +208,8 @@ class branch_and_bound_t {
                            node_presolver_t<i_t, f_t>& presolver,
                            thread_type_t thread_type,
                            bool recompute,
+                           const std::vector<f_t>& root_lower,
+                           const std::vector<f_t>& root_upper,
                            logger_t& log);
 
   // Sort the children based on the Martin's criteria.

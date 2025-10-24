@@ -17,6 +17,9 @@
 
 #include <dual_simplex/node_presolve.hpp>
 
+#include <algorithm>
+#include <cmath>
+
 namespace cuopt::linear_programming::dual_simplex {
 
 template <typename f_t>
@@ -206,8 +209,8 @@ bool node_presolver_t<i_t, f_t>::bound_strengthening(
         new_ub = std::floor(new_ub + settings.integer_tol);
       }
 
-      bool lb_updated = abs(new_lb - old_lb) > 1e3 * settings.primal_tol;
-      bool ub_updated = abs(new_ub - old_ub) > 1e3 * settings.primal_tol;
+      bool lb_updated = std::abs(new_lb - old_lb) > 1e3 * settings.primal_tol;
+      bool ub_updated = std::abs(new_ub - old_ub) > 1e3 * settings.primal_tol;
 
       new_lb = std::max(new_lb, lower_bounds[k]);
       new_ub = std::min(new_ub, upper_bounds[k]);

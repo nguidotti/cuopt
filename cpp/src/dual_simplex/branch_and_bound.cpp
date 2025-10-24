@@ -204,8 +204,8 @@ std::string user_mip_gap(f_t obj_value, f_t lower_bound)
 inline const char* thread_type_symbol(thread_type_t type)
 {
   switch (type) {
-    case thread_type_t::EXPLORATION: return "B ";
-    case thread_type_t::DIVING: return "D ";
+    case thread_type_t::EXPLORATION: return "B";
+    case thread_type_t::DIVING: return "D";
     default: return "U";
   }
 }
@@ -571,6 +571,8 @@ node_status_t branch_and_bound_t<i_t, f_t>::solve_node(mip_node_t<i_t, f_t>* nod
                                                        node_presolver_t<i_t, f_t>& presolver,
                                                        thread_type_t thread_type,
                                                        bool recompute,
+                                                       const std::vector<f_t>& root_lower,
+                                                       const std::vector<f_t>& root_upper,
                                                        logger_t& log)
 {
   const f_t abs_fathom_tol = settings_.absolute_mip_gap_tol / 10;
@@ -585,6 +587,20 @@ node_status_t branch_and_bound_t<i_t, f_t>::solve_node(mip_node_t<i_t, f_t>* nod
   lp_settings.cut_off    = upper_bound + settings_.dual_tol;
   lp_settings.inside_mip = 2;
   lp_settings.time_limit = settings_.time_limit - toc(stats_.start_time);
+
+  // Reset the bound_changed markers
+  std::fill(presolver.bounds_changed.begin(), presolver.bounds_changed.end(), false);
+
+  // Set the correct bounds for the leaf problem
+  if (recompute) {
+    leaf_problem.lower = root_lower;
+    leaf_problem.upper = root_upper;
+    node_ptr->get_variable_bounds(leaf_problem.lower, leaf_problem.upper, presolver.bounds_changed);
+
+  } else {
+    node_ptr->update_branched_variable_bounds(
+      leaf_problem.lower, leaf_problem.upper, presolver.bounds_changed);
+  }
 
   bool feasible =
     presolver.bound_strengthening(leaf_problem.lower, leaf_problem.upper, lp_settings);
@@ -703,35 +719,6 @@ node_status_t branch_and_bound_t<i_t, f_t>::solve_node(mip_node_t<i_t, f_t>* nod
 }
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::set_variable_bounds(mip_node_t<i_t, f_t>* node,
-                                                       std::vector<f_t>& lower,
-                                                       std::vector<f_t>& upper,
-                                                       std::vector<bool>& bounds_changed,
-                                                       const std::vector<f_t>& root_lower,
-                                                       const std::vector<f_t>& root_upper,
-                                                       bool recompute)
-{
-  assert(bounds_changed.size() == original_lp_.lower.size());
-  assert(lower.size() == original_lp_.lower.size());
-  assert(upper.size() == original_lp_.upper.size());
-  assert(root_lower.size() == original_lp_.lower.size());
-  assert(root_upper.size() == original_lp_.upper.size());
-
-  // Reset the bound_changed markers
-  std::fill(bounds_changed.begin(), bounds_changed.end(), false);
-
-  // Recompute the bounds
-  if (recompute) {
-    lower = root_lower;
-    upper = root_upper;
-    node->get_variable_bounds(lower, upper, bounds_changed);
-
-  } else {
-    node->update_branched_variable_bounds(lower, upper, bounds_changed);
-  }
-}
-
-template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::exploration_ramp_up(mip_node_t<i_t, f_t>* node,
                                                        search_tree_t<i_t, f_t>* search_tree,
                                                        i_t initial_heap_size)
@@ -800,15 +787,6 @@ void branch_and_bound_t<i_t, f_t>::exploration_ramp_up(mip_node_t<i_t, f_t>* nod
   std::vector<i_t> basic_list(m);
   std::vector<i_t> nonbasic_list;
 
-  // Set the correct bounds for the leaf problem
-  set_variable_bounds(node,
-                      leaf_problem.lower,
-                      leaf_problem.upper,
-                      presolver.bounds_changed,
-                      original_lp_.lower,
-                      original_lp_.upper,
-                      true);
-
   node_status_t node_status = solve_node(node,
                                          *search_tree,
                                          leaf_problem,
@@ -818,6 +796,8 @@ void branch_and_bound_t<i_t, f_t>::exploration_ramp_up(mip_node_t<i_t, f_t>* nod
                                          presolver,
                                          thread_type_t::EXPLORATION,
                                          true,
+                                         original_lp_.lower,
+                                         original_lp_.upper,
                                          settings_.log);
 
   if (node_status == node_status_t::TIME_LIMIT) {
@@ -921,15 +901,6 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t task_id,
       return;
     }
 
-    // Set the correct bounds for the leaf problem
-    set_variable_bounds(node_ptr,
-                        leaf_problem.lower,
-                        leaf_problem.upper,
-                        presolver.bounds_changed,
-                        original_lp_.lower,
-                        original_lp_.upper,
-                        recompute);
-
     node_status_t node_status = solve_node(node_ptr,
                                            search_tree,
                                            leaf_problem,
@@ -939,8 +910,11 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t task_id,
                                            presolver,
                                            thread_type_t::EXPLORATION,
                                            recompute,
+                                           original_lp_.lower,
+                                           original_lp_.upper,
                                            settings_.log);
-    recompute                 = node_status != node_status_t::HAS_CHILDREN;
+
+    recompute = node_status != node_status_t::HAS_CHILDREN;
 
     if (node_status == node_status_t::TIME_LIMIT) {
       status_ = mip_exploration_status_t::TIME_LIMIT;
@@ -1093,15 +1067,6 @@ void branch_and_bound_t<i_t, f_t>::diving_thread()
 
         if (toc(stats_.start_time) > settings_.time_limit) { return; }
 
-        // Set the correct bounds for the leaf problem
-        set_variable_bounds(node_ptr,
-                            leaf_problem.lower,
-                            leaf_problem.upper,
-                            presolver.bounds_changed,
-                            start_node->lower,
-                            start_node->upper,
-                            recompute);
-
         node_status_t node_status = solve_node(node_ptr,
                                                subtree,
                                                leaf_problem,
@@ -1111,8 +1076,11 @@ void branch_and_bound_t<i_t, f_t>::diving_thread()
                                                presolver,
                                                thread_type_t::DIVING,
                                                recompute,
+                                               start_node->lower,
+                                               start_node->upper,
                                                log);
-        recompute                 = node_status != node_status_t::HAS_CHILDREN;
+
+        recompute = node_status != node_status_t::HAS_CHILDREN;
 
         if (node_status == node_status_t::TIME_LIMIT) {
           return;
