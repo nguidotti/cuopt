@@ -119,7 +119,7 @@ class problem_t {
   void test_problem_fixing_time();
 
   enum var_flags_t : i_t {
-    VAR_IMPLY_INTEGER = 1 << 0,
+    VAR_IMPLIED_INTEGER = 1 << 0,
   };
 
   struct view_t {
@@ -257,7 +257,6 @@ class problem_t {
   rmm::device_uvector<f_t> combined_bounds;
   /** Type of each variable */
   rmm::device_uvector<var_t> variable_types;
-  rmm::device_uvector<i_t> var_flags;
   /** The indices of the integer variables */
   rmm::device_uvector<i_t> integer_indices;
   rmm::device_uvector<i_t> binary_indices;
