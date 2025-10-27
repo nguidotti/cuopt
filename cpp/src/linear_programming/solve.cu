@@ -28,6 +28,7 @@
 #include <mip/presolve/third_party_presolve.hpp>
 #include <mip/presolve/trivial_presolve.cuh>
 #include <mip/solver.cuh>
+#include <mip/utilities/sort_csr.cuh>
 
 #include <cuopt/linear_programming/pdlp/pdlp_hyper_params.cuh>
 #include <cuopt/linear_programming/pdlp/solver_settings.hpp>
@@ -835,6 +836,7 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
     if (!run_presolve) { CUOPT_LOG_INFO("Third-party presolve is disabled, skipping"); }
 
     if (run_presolve) {
+      detail::sort_csr(op_problem);
       // allocate no more than 10% of the time limit to presolve.
       // Note that this is not the presolve time, but the time limit for presolve.
       // But no less than 1 second, to avoid early timeout triggering known crashes
