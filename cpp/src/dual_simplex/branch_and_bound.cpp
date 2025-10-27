@@ -620,7 +620,7 @@ node_status_t branch_and_bound_t<i_t, f_t>::solve_node(mip_node_t<i_t, f_t>* nod
                             leaf_edge_norms);
 
     if (lp_status == dual::status_t::NUMERICAL) {
-      log.printf("Numerical issue node %d. Resolving from scratch.\n", node_ptr->node_id);
+      log.debug("Numerical issue node %d. Resolving from scratch.\n", node_ptr->node_id);
       lp_status_t second_status = solve_linear_program_advanced(
         leaf_problem, lp_start_time, lp_settings, leaf_solution, leaf_vstatus, leaf_edge_norms);
       lp_status = convert_lp_status_to_dual_status(second_status);
@@ -906,8 +906,12 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t task_id,
         // This lead to a SIGSEGV. Although, in this case, it
         // would be better if we discard the node instead.
         if (get_heap_size() > settings_.num_bfs_threads) {
+          std::vector<f_t> lower = original_lp_.lower;
+          std::vector<f_t> upper = original_lp_.upper;
+          node->get_variable_bounds(lower, upper, presolver.bounds_changed);
+
           mutex_dive_queue_.lock();
-          dive_queue_.emplace(node->detach_copy(), leaf_problem.lower, leaf_problem.upper);
+          dive_queue_.emplace(node->detach_copy(), std::move(lower), std::move(upper));
           mutex_dive_queue_.unlock();
         }
 
@@ -1051,10 +1055,15 @@ void branch_and_bound_t<i_t, f_t>::diving_thread()
           // lowest possible point and move to the queue, so it can
           // be picked by another thread.
           if (dive_queue_.size() < min_diving_queue_size_) {
-            mutex_dive_queue_.lock();
             mip_node_t<i_t, f_t>* new_node = stack.back();
             stack.pop_back();
-            dive_queue_.emplace(new_node->detach_copy(), leaf_problem.lower, leaf_problem.upper);
+
+            std::vector<f_t> lower = start_node->lower;
+            std::vector<f_t> upper = start_node->upper;
+            new_node->get_variable_bounds(lower, upper, presolver.bounds_changed);
+
+            mutex_dive_queue_.lock();
+            dive_queue_.emplace(new_node->detach_copy(), std::move(lower), std::move(upper));
             mutex_dive_queue_.unlock();
           }
         }
@@ -1200,11 +1209,9 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                      original_lp_,
                      log);
 
-  settings_.log.printf(
-    "Exploring the B&B tree using %d best-first threads and %d diving threads (%d threads)\n",
-    settings_.num_bfs_threads,
-    settings_.num_diving_threads,
-    settings_.num_threads);
+  settings_.log.printf("Exploring the B&B tree using %d best-first threads and %d diving threads\n",
+                       settings_.num_bfs_threads,
+                       settings_.num_diving_threads);
 
   settings_.log.printf(
     " | Explored | Unexplored |    Objective    |     Bound     | Depth | Iter/Node |   Gap    "
