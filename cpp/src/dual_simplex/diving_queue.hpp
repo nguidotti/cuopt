@@ -30,10 +30,8 @@ struct diving_root_t {
   std::vector<f_t> lower;
   std::vector<f_t> upper;
 
-  diving_root_t(mip_node_t<i_t, f_t>&& node,
-                const std::vector<f_t>& lower,
-                const std::vector<f_t>& upper)
-    : node(std::move(node)), lower(lower), upper(upper)
+  diving_root_t(mip_node_t<i_t, f_t>&& node, std::vector<f_t>&& lower, std::vector<f_t>&& upper)
+    : node(std::move(node)), lower(std::move(lower)), upper(std::move(upper))
   {
   }
 
@@ -62,11 +60,9 @@ class diving_queue_t {
     if (buffer.size() > max_size()) { buffer.pop_back(); }
   }
 
-  void emplace(mip_node_t<i_t, f_t>&& node,
-               const std::vector<f_t>& lower,
-               const std::vector<f_t>& upper)
+  void emplace(mip_node_t<i_t, f_t>&& node, std::vector<f_t>&& lower, std::vector<f_t>&& upper)
   {
-    buffer.emplace_back(std::move(node), lower, upper);
+    buffer.emplace_back(std::move(node), std::move(lower), std::move(upper));
     std::push_heap(buffer.begin(), buffer.end(), std::greater<>());
     if (buffer.size() > max_size()) { buffer.pop_back(); }
   }

@@ -930,8 +930,12 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t task_id,
         // This lead to a SIGSEGV. Although, in this case, it
         // would be better if we discard the node instead.
         if (get_heap_size() > settings_.num_bfs_threads) {
+          std::vector<f_t> lower = original_lp_.lower;
+          std::vector<f_t> upper = original_lp_.upper;
+          node->get_variable_bounds(lower, upper, presolver.bounds_changed);
+
           mutex_dive_queue_.lock();
-          dive_queue_.emplace(node->detach_copy(), leaf_problem.lower, leaf_problem.upper);
+          dive_queue_.emplace(node->detach_copy(), std::move(lower), std::move(upper));
           mutex_dive_queue_.unlock();
         }
 
@@ -1090,10 +1094,15 @@ void branch_and_bound_t<i_t, f_t>::diving_thread(thread_type_t diving_type)
           // lowest possible point and move to the queue, so it can
           // be picked by another thread.
           if (dive_queue_.size() < min_diving_queue_size_ || depth_diff > max_backtrack) {
-            mutex_dive_queue_.lock();
             mip_node_t<i_t, f_t>* new_node = stack.back();
             stack.pop_back();
-            dive_queue_.emplace(new_node->detach_copy(), leaf_problem.lower, leaf_problem.upper);
+
+            std::vector<f_t> lower = start_node->lower;
+            std::vector<f_t> upper = start_node->upper;
+            new_node->get_variable_bounds(lower, upper, presolver.bounds_changed);
+
+            mutex_dive_queue_.lock();
+            dive_queue_.emplace(new_node->detach_copy(), std::move(lower), std::move(upper));
             mutex_dive_queue_.unlock();
           }
         }
