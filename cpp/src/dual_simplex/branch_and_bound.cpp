@@ -643,7 +643,7 @@ std::pair<node_status_t, round_dir_t> branch_and_bound_t<i_t, f_t>::solve_node(
                             leaf_edge_norms);
 
     if (lp_status == dual::status_t::NUMERICAL) {
-      log.printf("Numerical issue node %d. Resolving from scratch.\n", node_ptr->node_id);
+      log.debug("Numerical issue node %d. Resolving from scratch.\n", node_ptr->node_id);
       lp_status_t second_status = solve_linear_program_advanced(
         leaf_problem, lp_start_time, lp_settings, leaf_solution, leaf_vstatus, leaf_edge_norms);
       lp_status = convert_lp_status_to_dual_status(second_status);
