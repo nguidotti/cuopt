@@ -1266,23 +1266,9 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   lower_bound_ceiling_        = inf;
   original_lp_.A.transpose(original_lp_.Arow);
 
-  const char* method = std::getenv("CUOPT_MIP_DIVING_STRATEGY");
-  if (method == nullptr) method = "DEFAULT";
-
-  std::unordered_map<thread_type_t, i_t> diving_tasks;
-
-  if (std::strcmp(method, "LINE_SEARCH") == 0) {
-    diving_tasks[thread_type_t::LINE_SEARCH_DIVING] = settings_.num_diving_threads;
-  } else if (std::strcmp(method, "PSEUDOCOST") == 0) {
-    diving_tasks[thread_type_t::PSEUDOCOST_DIVING] = settings_.num_diving_threads;
-  } else if (std::strcmp(method, "GUIDED") == 0) {
-    diving_tasks[thread_type_t::GUIDED_DIVING] = settings_.num_diving_threads;
-  } else {
-    i_t nt                                          = settings_.num_diving_threads;
-    diving_tasks[thread_type_t::LINE_SEARCH_DIVING] = nt / 4;
-    diving_tasks[thread_type_t::GUIDED_DIVING]      = nt / 4;
-    diving_tasks[thread_type_t::PSEUDOCOST_DIVING]  = nt - nt / 2;
-  }
+  std::array<thread_type_t, 4> strategies = {thread_type_t::LINE_SEARCH_DIVING,
+                                             thread_type_t::GUIDED_DIVING,
+                                             thread_type_t::PSEUDOCOST_DIVING};
 
 #pragma omp parallel num_threads(settings_.num_threads)
   {
@@ -1310,12 +1296,9 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
           best_first_thread(i, search_tree);
         }
 
-        for (auto [strategy, num_tasks] : diving_tasks) {
-          for (i_t i = 0; i < num_tasks; i++) {
-            thread_type_t diving_strategy = strategy;
+        for (i_t k = 0; k < settings_.num_diving_threads; k++) {
 #pragma omp task
-            diving_thread(diving_strategy);
-          }
+          diving_thread(strategies[k % strategies.size()]);
         }
       }
     }

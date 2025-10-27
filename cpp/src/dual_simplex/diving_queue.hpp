@@ -48,7 +48,7 @@ template <typename i_t, typename f_t>
 class diving_queue_t {
  private:
   std::vector<diving_root_t<i_t, f_t>> buffer;
-  static constexpr i_t max_size_ = 256;
+  static constexpr i_t max_size_ = INT16_MAX;
 
  public:
   diving_queue_t() { buffer.reserve(max_size_); }
@@ -57,14 +57,14 @@ class diving_queue_t {
   {
     buffer.push_back(std::move(node));
     std::push_heap(buffer.begin(), buffer.end(), std::greater<>());
-    if (buffer.size() > max_size()) { buffer.pop_back(); }
+    if (buffer.size() > max_size() - 1) { buffer.pop_back(); }
   }
 
   void emplace(mip_node_t<i_t, f_t>&& node, std::vector<f_t>&& lower, std::vector<f_t>&& upper)
   {
     buffer.emplace_back(std::move(node), std::move(lower), std::move(upper));
     std::push_heap(buffer.begin(), buffer.end(), std::greater<>());
-    if (buffer.size() > max_size()) { buffer.pop_back(); }
+    if (buffer.size() > max_size() - 1) { buffer.pop_back(); }
   }
 
   diving_root_t<i_t, f_t> pop()
