@@ -252,21 +252,21 @@ bool node_presolver_t<i_t, f_t>::bound_strengthening(
   int num_ub_changed = 0;
 
   for (i_t i = 0; i < n; ++i) {
-    if (lower[i] > lower_bounds[i] + settings.primal_tol ||
-        (!std::isfinite(lower_bounds[i]) && std::isfinite(lower[i]))) {
+    if (lower[i] > problem.lower[i] + settings.primal_tol ||
+        (!std::isfinite(problem.lower[i]) && std::isfinite(lower[i]))) {
       num_lb_changed++;
-      lb_change += std::isfinite(lower_bounds[i])
-                     ? (lower[i] - lower_bounds[i]) /
-                         (1e-6 + std::max(std::abs(lower[i]), std::abs(lower_bounds[i])))
-                     : 1.0;
+      lb_change +=
+        std::isfinite(problem.lower[i])
+          ? (lower[i] - problem.lower[i]) / (1e-6 + std::max(abs(lower[i]), abs(problem.lower[i])))
+          : 1.0;
     }
-    if (upper[i] < upper_bounds[i] - settings.primal_tol ||
-        (!std::isfinite(upper_bounds[i]) && std::isfinite(upper[i]))) {
+    if (upper[i] < problem.upper[i] - settings.primal_tol ||
+        (!std::isfinite(problem.upper[i]) && std::isfinite(upper[i]))) {
       num_ub_changed++;
-      ub_change += std::isfinite(upper_bounds[i])
-                     ? (upper_bounds[i] - upper[i]) /
-                         (1e-6 + std::max(std::abs(upper_bounds[i]), std::abs(upper[i])))
-                     : 1.0;
+      ub_change +=
+        std::isfinite(problem.upper[i])
+          ? (problem.upper[i] - upper[i]) / (1e-6 + std::max(abs(problem.upper[i]), abs(upper[i])))
+          : 1.0;
     }
   }
 
