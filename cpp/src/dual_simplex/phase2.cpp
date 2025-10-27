@@ -2246,6 +2246,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
   if (initialize_basis) {
     std::vector<i_t> superbasic_list;
     nonbasic_list.clear();
+    nonbasic_list.reserve(n - m);
     get_basis_from_vstatus(m, vstatus, basic_list, nonbasic_list, superbasic_list);
     assert(superbasic_list.size() == 0);
     assert(nonbasic_list.size() == n - m);
