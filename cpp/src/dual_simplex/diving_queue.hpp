@@ -29,15 +29,19 @@ struct diving_root_t {
   mip_node_t<i_t, f_t> node;
   std::vector<f_t> lower;
   std::vector<f_t> upper;
+  f_t score;
 
-  diving_root_t(mip_node_t<i_t, f_t>&& node, std::vector<f_t>&& lower, std::vector<f_t>&& upper)
-    : node(std::move(node)), lower(std::move(lower)), upper(std::move(upper))
+  diving_root_t(mip_node_t<i_t, f_t>&& new_node, std::vector<f_t>&& lower, std::vector<f_t>&& upper)
+    : node(std::move(new_node)), lower(std::move(lower)), upper(std::move(upper))
   {
+    score = node.best_pseudocost_estimate;
+    // score += 0.4 * (std::isnan(node.incumbent_similarity) ? node.depth :
+    // node.incumbent_similarity);
   }
 
   friend bool operator>(const diving_root_t<i_t, f_t>& a, const diving_root_t<i_t, f_t>& b)
   {
-    return a.node.lower_bound > b.node.lower_bound;
+    return a.score > b.score;
   }
 };
 
@@ -48,10 +52,10 @@ template <typename i_t, typename f_t>
 class diving_queue_t {
  private:
   std::vector<diving_root_t<i_t, f_t>> buffer;
-  static constexpr i_t max_size_ = INT16_MAX;
+  static constexpr i_t max_size_ = INT_MAX;
 
  public:
-  diving_queue_t() { buffer.reserve(max_size_); }
+  diving_queue_t() {}
 
   void push(diving_root_t<i_t, f_t>&& node)
   {

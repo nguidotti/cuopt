@@ -118,4 +118,11 @@ selected_variable_t<i_t> guided_diving(pseudo_costs_t<i_t, f_t>& pc,
                                        const std::vector<f_t>& incumbent,
                                        logger_t& log);
 
+template <typename i_t, typename f_t>
+f_t best_pseudocost_estimate(pseudo_costs_t<i_t, f_t>& pc,
+                             const std::vector<i_t>& fractional,
+                             const std::vector<f_t>& solution,
+                             f_t lower_bound,
+                             logger_t& log);
+
 }  // namespace cuopt::linear_programming::dual_simplex

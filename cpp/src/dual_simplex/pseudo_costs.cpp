@@ -496,6 +496,40 @@ selected_variable_t<i_t> guided_diving(pseudo_costs_t<i_t, f_t>& pc,
 }
 
 template <typename i_t, typename f_t>
+f_t best_pseudocost_estimate(pseudo_costs_t<i_t, f_t>& pc,
+                             const std::vector<i_t>& fractional,
+                             const std::vector<f_t>& solution,
+                             f_t lower_bound,
+                             logger_t& log)
+{
+  pc.mutex.lock();
+
+  constexpr f_t eps = 1e-6;
+  f_t estimate      = lower_bound;
+
+  i_t num_initialized_down;
+  i_t num_initialized_up;
+  f_t pc_down_avg;
+  f_t pc_up_avg;
+  pc.initialized(num_initialized_down, num_initialized_up, pc_down_avg, pc_up_avg);
+
+  for (auto j : fractional) {
+    f_t f_down = solution[j] - std::floor(solution[j]);
+    f_t f_up   = std::ceil(solution[j]) - solution[j];
+
+    f_t pc_down = pc.pseudo_cost_num_down[j] != 0
+                    ? pc.pseudo_cost_sum_down[j] / pc.pseudo_cost_num_down[j]
+                    : pc_down_avg;
+
+    f_t pc_up = pc.pseudo_cost_num_up[j] != 0 ? pc.pseudo_cost_sum_up[j] / pc.pseudo_cost_num_up[j]
+                                              : pc_up_avg;
+    estimate += std::min(std::max(pc_down * f_down, eps), std::max(pc_up * f_up, eps));
+  }
+  pc.mutex.unlock();
+  return estimate;
+}
+
+template <typename i_t, typename f_t>
 void pseudo_costs_t<i_t, f_t>::update_pseudo_costs_from_strong_branching(
   const std::vector<i_t>& fractional, const std::vector<f_t>& root_soln)
 {
@@ -555,6 +589,12 @@ template selected_variable_t<int> guided_diving(pseudo_costs_t<int, double>& pc,
                                                 const std::vector<double>& solution,
                                                 const std::vector<double>& incumbent,
                                                 logger_t& log);
+
+template double best_pseudocost_estimate(pseudo_costs_t<int, double>& pc,
+                                         const std::vector<int>& fractional,
+                                         const std::vector<double>& solution,
+                                         double lower_bound,
+                                         logger_t& log);
 
 #endif
 
