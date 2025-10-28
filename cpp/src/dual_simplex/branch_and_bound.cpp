@@ -708,12 +708,6 @@ std::pair<node_status_t, round_dir_t> branch_and_bound_t<i_t, f_t>::solve_node(
       node_ptr->best_pseudocost_estimate =
         best_pseudocost_estimate(pc_, leaf_fractional, leaf_solution.x, leaf_objective, pc_log);
 
-      // if (std::isfinite(upper_bound)) {
-      //   node_ptr->incumbent_similarity = l1_distance(leaf_solution.x, incumbent_.x);
-      // } else {
-      //   node_ptr->incumbent_similarity = NAN;
-      // }
-
       assert(leaf_vstatus.size() == leaf_problem.num_cols);
       search_tree.branch(
         node_ptr, branch_var, leaf_solution.x[branch_var], leaf_vstatus, leaf_problem, log);
@@ -1106,9 +1100,19 @@ void branch_and_bound_t<i_t, f_t>::diving_thread(thread_type_t diving_type)
         }
 
         if (stack.size() > 1) {
-          if (stack.front()->depth - stack.back()->depth > 2) {
+          i_t depth_diff    = stack.front()->depth - stack.back()->depth;
+          i_t max_backtrack = leaf_depth < max_depth ? std::max<i_t>(5, 0.1 * max_depth) : INT_MAX;
+          if (depth_diff > max_backtrack) {
             mip_node_t<i_t, f_t>* new_node = stack.back();
             stack.pop_back();
+
+            std::vector<f_t> lower = start_node->lower;
+            std::vector<f_t> upper = start_node->upper;
+            new_node->get_variable_bounds(lower, upper, presolver.bounds_changed);
+
+            mutex_dive_queue_.lock();
+            dive_queue_.emplace(new_node->detach_copy(), std::move(lower), std::move(upper));
+            mutex_dive_queue_.unlock();
           }
         }
       }

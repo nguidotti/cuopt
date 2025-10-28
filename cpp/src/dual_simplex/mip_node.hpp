@@ -66,7 +66,6 @@ class mip_node_t {
              round_dir_t branch_direction,
              f_t branch_var_value,
              f_t best_pseudocost_estimate,
-             f_t incumbent_similarity,
              const std::vector<variable_status_t>& basis)
     : status(node_status_t::ACTIVE),
       lower_bound(parent_node->lower_bound),
@@ -77,7 +76,6 @@ class mip_node_t {
       branch_dir(branch_direction),
       fractional_val(branch_var_value),
       best_pseudocost_estimate(best_pseudocost_estimate),
-      incumbent_similarity(incumbent_similarity),
       vstatus(basis)
 
   {
@@ -236,7 +234,6 @@ class mip_node_t {
   node_status_t status;
   f_t lower_bound;
   f_t best_pseudocost_estimate;
-  f_t incumbent_similarity;
   i_t depth;
   i_t node_id;
   i_t branch_var;
@@ -266,8 +263,8 @@ class node_compare_t {
  public:
   bool operator()(const mip_node_t<i_t, f_t>& a, const mip_node_t<i_t, f_t>& b) const
   {
-    f_t score_a = 0.1 * a.best_pseudocost_estimate + 0.9 * a.lower_bound;
-    f_t score_b = 0.1 * b.best_pseudocost_estimate + 0.9 * b.lower_bound;
+    f_t score_a = 0.2 * a.best_pseudocost_estimate + 0.8 * a.lower_bound;
+    f_t score_b = 0.2 * b.best_pseudocost_estimate + 0.8 * b.lower_bound;
 
     // The elements are sorted in decreasing order (i.e., a will placed be after b)
     return score_a > score_b;
@@ -275,11 +272,7 @@ class node_compare_t {
 
   bool operator()(const mip_node_t<i_t, f_t>* a, const mip_node_t<i_t, f_t>* b) const
   {
-    f_t score_a = 0.1 * a->best_pseudocost_estimate + 0.9 * a->lower_bound;
-    f_t score_b = 0.1 * b->best_pseudocost_estimate + 0.9 * b->lower_bound;
-
-    // The elements are sorted in decreasing order (i.e., a will placed be after b)
-    return score_a > score_b;
+    return operator()(*a, *b);
   }
 };
 
@@ -318,7 +311,6 @@ class search_tree_t {
                                                              round_dir_t::DOWN,
                                                              fractional_val,
                                                              parent_node->best_pseudocost_estimate,
-                                                             parent_node->incumbent_similarity,
                                                              parent_vstatus);
 
     graphviz_edge(log,
@@ -335,7 +327,6 @@ class search_tree_t {
                                                            round_dir_t::UP,
                                                            fractional_val,
                                                            parent_node->best_pseudocost_estimate,
-                                                           parent_node->incumbent_similarity,
                                                            parent_vstatus);
 
     graphviz_edge(

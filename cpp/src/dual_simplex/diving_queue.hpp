@@ -35,19 +35,16 @@ struct diving_root_t {
     : node(std::move(new_node)), lower(std::move(lower)), upper(std::move(upper))
   {
     score = node.best_pseudocost_estimate;
-    // score += 0.4 * (std::isnan(node.incumbent_similarity) ? node.depth :
-    // node.incumbent_similarity);
   }
 
   friend bool operator>(const diving_root_t<i_t, f_t>& a, const diving_root_t<i_t, f_t>& b)
   {
-    // a will be placed after b
     return a.score > b.score;
   }
 };
 
 // A min-heap for storing the starting nodes for the dives.
-// This has a maximum size of 256, such that the container
+// This has a maximum size of INT_MAX, such that the container
 // will discard the least promising node if the queue is full.
 template <typename i_t, typename f_t>
 class diving_queue_t {
