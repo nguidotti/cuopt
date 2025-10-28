@@ -18,6 +18,7 @@
 #pragma once
 
 #include <algorithm>
+#include <climits>
 #include <vector>
 
 #include <dual_simplex/mip_node.hpp>
@@ -42,7 +43,7 @@ struct diving_root_t {
 };
 
 // A min-heap for storing the starting nodes for the dives.
-// This has a maximum size of 256, such that the container
+// This has a maximum size of INT16_MAX, such that the container
 // will discard the least promising node if the queue is full.
 template <typename i_t, typename f_t>
 class diving_queue_t {
