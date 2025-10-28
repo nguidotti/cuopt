@@ -1106,24 +1106,9 @@ void branch_and_bound_t<i_t, f_t>::diving_thread(thread_type_t diving_type)
         }
 
         if (stack.size() > 1) {
-          i_t depth_diff    = stack.front()->depth - stack.back()->depth;
-          i_t max_backtrack = leaf_depth < max_depth ? std::max<i_t>(5, 0.1 * max_depth) : INT_MAX;
-
-          // If the diving thread is consuming the nodes faster than the
-          // best first search, then we split the current subtree at the
-          // lowest possible point and move to the queue, so it can
-          // be picked by another thread.
-          if (dive_queue_.size() < min_diving_queue_size_ || depth_diff > max_backtrack) {
+          if (stack.front()->depth - stack.back()->depth > 2) {
             mip_node_t<i_t, f_t>* new_node = stack.back();
             stack.pop_back();
-
-            std::vector<f_t> lower = start_node->lower;
-            std::vector<f_t> upper = start_node->upper;
-            new_node->get_variable_bounds(lower, upper, presolver.bounds_changed);
-
-            mutex_dive_queue_.lock();
-            dive_queue_.emplace(new_node->detach_copy(), std::move(lower), std::move(upper));
-            mutex_dive_queue_.unlock();
           }
         }
       }

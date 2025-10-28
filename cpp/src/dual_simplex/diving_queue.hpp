@@ -41,6 +41,7 @@ struct diving_root_t {
 
   friend bool operator>(const diving_root_t<i_t, f_t>& a, const diving_root_t<i_t, f_t>& b)
   {
+    // a will be placed after b
     return a.score > b.score;
   }
 };

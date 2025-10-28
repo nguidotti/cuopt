@@ -266,14 +266,20 @@ class node_compare_t {
  public:
   bool operator()(const mip_node_t<i_t, f_t>& a, const mip_node_t<i_t, f_t>& b) const
   {
-    return a.lower_bound >
-           b.lower_bound;  // True if a comes before b, elements that come before are output last
+    f_t score_a = 0.1 * a.best_pseudocost_estimate + 0.9 * a.lower_bound;
+    f_t score_b = 0.1 * b.best_pseudocost_estimate + 0.9 * b.lower_bound;
+
+    // The elements are sorted in decreasing order (i.e., a will placed be after b)
+    return score_a > score_b;
   }
 
   bool operator()(const mip_node_t<i_t, f_t>* a, const mip_node_t<i_t, f_t>* b) const
   {
-    return a->lower_bound >
-           b->lower_bound;  // True if a comes before b, elements that come before are output last
+    f_t score_a = 0.1 * a->best_pseudocost_estimate + 0.9 * a->lower_bound;
+    f_t score_b = 0.1 * b->best_pseudocost_estimate + 0.9 * b->lower_bound;
+
+    // The elements are sorted in decreasing order (i.e., a will placed be after b)
+    return score_a > score_b;
   }
 };
 
