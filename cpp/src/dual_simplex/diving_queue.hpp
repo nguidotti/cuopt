@@ -21,6 +21,7 @@
 #include <vector>
 
 #include <dual_simplex/mip_node.hpp>
+#include <utilities/pcg.hpp>
 
 namespace cuopt::linear_programming::dual_simplex {
 
@@ -51,6 +52,8 @@ class diving_queue_t {
  private:
   std::vector<diving_root_t<i_t, f_t>> buffer;
   static constexpr i_t max_size_ = INT_MAX;
+  PCG rng;
+  const double epsilon = 0.1;  // Probability to grab a random node
 
  public:
   diving_queue_t() {}
@@ -71,10 +74,20 @@ class diving_queue_t {
 
   diving_root_t<i_t, f_t> pop()
   {
-    std::pop_heap(buffer.begin(), buffer.end(), std::greater<>());
-    diving_root_t<i_t, f_t> node = std::move(buffer.back());
-    buffer.pop_back();
-    return node;
+    if (rng.next<f_t>() <= epsilon) {
+      i_t idx = rng.uniform<i_t>(0, buffer.size());
+      std::swap(buffer[idx], buffer.back());
+      diving_root_t<i_t, f_t> node = std::move(buffer.back());
+      buffer.pop_back();
+      std::make_heap(buffer.begin(), buffer.end(), std::greater<>());
+      return node;
+
+    } else {
+      std::pop_heap(buffer.begin(), buffer.end(), std::greater<>());
+      diving_root_t<i_t, f_t> node = std::move(buffer.back());
+      buffer.pop_back();
+      return node;
+    }
   }
 
   i_t size() const { return buffer.size(); }
