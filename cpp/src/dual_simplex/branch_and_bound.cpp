@@ -205,6 +205,7 @@ inline const char* thread_type_symbol(thread_type_t type)
 {
   switch (type) {
     case thread_type_t::EXPLORATION: return "B ";
+    case thread_type_t::COEFFICIENT_DIVING: return "CD";
     case thread_type_t::LINE_SEARCH_DIVING: return "LD";
     case thread_type_t::PSEUDOCOST_DIVING: return "PD";
     case thread_type_t::GUIDED_DIVING: return "GD";
@@ -564,6 +565,9 @@ selected_variable_t<i_t> branch_and_bound_t<i_t, f_t>::variable_selection(
       branch_var = pseudocost_branching(pc_, fractional, solution, log);
       round_dir  = martin_criteria(solution[branch_var], root_relax_soln_.x[branch_var]);
       return {branch_var, round_dir};
+
+    case thread_type_t::COEFFICIENT_DIVING:
+      return coefficient_diving(original_lp_, fractional, solution, log);
 
     case thread_type_t::LINE_SEARCH_DIVING:
       return line_search_diving(fractional, solution, root_relax_soln_.x, log);
@@ -1148,13 +1152,13 @@ void branch_and_bound_t<i_t, f_t>::diving_thread(thread_type_t diving_type)
             mip_node_t<i_t, f_t>* new_node = stack.back();
             stack.pop_back();
 
-            std::vector<f_t> lower = start_node->lower;
-            std::vector<f_t> upper = start_node->upper;
-            new_node->get_variable_bounds(lower, upper, presolver.bounds_changed);
+            // std::vector<f_t> lower = start_node->lower;
+            // std::vector<f_t> upper = start_node->upper;
+            // new_node->get_variable_bounds(lower, upper, presolver.bounds_changed);
 
-            mutex_dive_queue_.lock();
-            dive_queue_.emplace(new_node->detach_copy(), std::move(lower), std::move(upper));
-            mutex_dive_queue_.unlock();
+            // mutex_dive_queue_.lock();
+            // dive_queue_.emplace(new_node->detach_copy(), std::move(lower), std::move(upper));
+            // mutex_dive_queue_.unlock();
           }
         }
       }
@@ -1317,7 +1321,8 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   lower_bound_ceiling_        = inf;
   original_lp_.A.transpose(original_lp_.Arow);
 
-  std::array<thread_type_t, 4> strategies = {thread_type_t::LINE_SEARCH_DIVING,
+  std::array<thread_type_t, 4> strategies = {thread_type_t::COEFFICIENT_DIVING,
+                                             thread_type_t::LINE_SEARCH_DIVING,
                                              thread_type_t::GUIDED_DIVING,
                                              thread_type_t::PSEUDOCOST_DIVING};
 
