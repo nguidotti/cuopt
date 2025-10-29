@@ -583,6 +583,9 @@ std::pair<node_status_t, round_dir_t> branch_and_bound_t<i_t, f_t>::solve_node(
   mip_node_t<i_t, f_t>* node_ptr,
   search_tree_t<i_t, f_t>& search_tree,
   lp_problem_t<i_t, f_t>& leaf_problem,
+  basis_update_mpf_t<i_t, f_t>& ft,
+  std::vector<i_t>& basic_list,
+  std::vector<i_t>& nonbasic_list,
   node_presolver_t<i_t, f_t>& presolver,
   thread_type_t thread_type,
   bool recompute,
@@ -632,20 +635,32 @@ std::pair<node_status_t, round_dir_t> branch_and_bound_t<i_t, f_t>::solve_node(
     f_t lp_start_time                = tic();
     std::vector<f_t> leaf_edge_norms = edge_norms_;  // = node.steepest_edge_norms;
 
-    lp_status = dual_phase2(2,
-                            0,
-                            lp_start_time,
-                            leaf_problem,
-                            lp_settings,
-                            leaf_vstatus,
-                            leaf_solution,
-                            node_iter,
-                            leaf_edge_norms);
+    lp_status = dual_phase2_with_advanced_basis(2,
+                                                0,
+                                                recompute,
+                                                lp_start_time,
+                                                leaf_problem,
+                                                lp_settings,
+                                                leaf_vstatus,
+                                                ft,
+                                                basic_list,
+                                                nonbasic_list,
+                                                leaf_solution,
+                                                node_iter,
+                                                leaf_edge_norms);
 
     if (lp_status == dual::status_t::NUMERICAL) {
       log.debug("Numerical issue node %d. Resolving from scratch.\n", node_ptr->node_id);
-      lp_status_t second_status = solve_linear_program_advanced(
-        leaf_problem, lp_start_time, lp_settings, leaf_solution, leaf_vstatus, leaf_edge_norms);
+      lp_status_t second_status = solve_linear_program_with_advanced_basis(leaf_problem,
+                                                                           lp_start_time,
+                                                                           lp_settings,
+                                                                           leaf_solution,
+                                                                           ft,
+                                                                           basic_list,
+                                                                           nonbasic_list,
+                                                                           leaf_vstatus,
+                                                                           leaf_edge_norms);
+
       lp_status = convert_lp_status_to_dual_status(second_status);
     }
 
@@ -743,11 +758,6 @@ void branch_and_bound_t<i_t, f_t>::exploration_ramp_up(mip_node_t<i_t, f_t>* nod
   // to repair the heuristic solution.
   repair_heuristic_solutions();
 
-  // Make a copy of the original LP. We will modify its bounds at each leaf
-  lp_problem_t<i_t, f_t> leaf_problem = original_lp_;
-  std::vector<char> row_sense;
-  node_presolver_t<i_t, f_t> presolver(leaf_problem, row_sense, var_types_);
-
   f_t lower_bound      = node->lower_bound;
   f_t upper_bound      = get_upper_bound();
   f_t rel_gap          = user_relative_gap(original_lp_, upper_bound, lower_bound);
@@ -795,9 +805,22 @@ void branch_and_bound_t<i_t, f_t>::exploration_ramp_up(mip_node_t<i_t, f_t>* nod
     return;
   }
 
+  // Make a copy of the original LP. We will modify its bounds at each leaf
+  lp_problem_t<i_t, f_t> leaf_problem = original_lp_;
+  std::vector<char> row_sense;
+  node_presolver_t<i_t, f_t> presolver(leaf_problem, row_sense, var_types_);
+
+  const i_t m = leaf_problem.num_rows;
+  basis_update_mpf_t<i_t, f_t> basis_update(m, settings_.refactor_frequency);
+  std::vector<i_t> basic_list(m);
+  std::vector<i_t> nonbasic_list;
+
   auto [node_status, round_dir] = solve_node(node,
                                              *search_tree,
                                              leaf_problem,
+                                             basis_update,
+                                             basic_list,
+                                             nonbasic_list,
                                              presolver,
                                              thread_type_t::EXPLORATION,
                                              true,
@@ -835,7 +858,10 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t task_id,
                                                    mip_node_t<i_t, f_t>* start_node,
                                                    search_tree_t<i_t, f_t>& search_tree,
                                                    lp_problem_t<i_t, f_t>& leaf_problem,
-                                                   node_presolver_t<i_t, f_t>& presolver)
+                                                   node_presolver_t<i_t, f_t>& presolver,
+                                                   basis_update_mpf_t<i_t, f_t>& basis_update,
+                                                   std::vector<i_t>& basic_list,
+                                                   std::vector<i_t>& nonbasic_list)
 {
   bool recompute = true;
   std::deque<mip_node_t<i_t, f_t>*> stack;
@@ -904,6 +930,9 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t task_id,
     auto [node_status, round_dir] = solve_node(node_ptr,
                                                search_tree,
                                                leaf_problem,
+                                               basis_update,
+                                               basic_list,
+                                               nonbasic_list,
                                                presolver,
                                                thread_type_t::EXPLORATION,
                                                recompute,
@@ -962,7 +991,8 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t task_id,
 }
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::best_first_thread(i_t id, search_tree_t<i_t, f_t>& search_tree)
+void branch_and_bound_t<i_t, f_t>::best_first_thread(i_t task_id,
+                                                     search_tree_t<i_t, f_t>& search_tree)
 {
   f_t lower_bound = -inf;
   f_t upper_bound = inf;
@@ -974,32 +1004,45 @@ void branch_and_bound_t<i_t, f_t>::best_first_thread(i_t id, search_tree_t<i_t, 
   std::vector<char> row_sense;
   node_presolver_t<i_t, f_t> presolver(leaf_problem, row_sense, var_types_);
 
+  const i_t m = leaf_problem.num_rows;
+  basis_update_mpf_t<i_t, f_t> basis_update(m, settings_.refactor_frequency);
+  std::vector<i_t> basic_list(m);
+  std::vector<i_t> nonbasic_list;
+
   while (status_ == mip_exploration_status_t::RUNNING && abs_gap > settings_.absolute_mip_gap_tol &&
          rel_gap > settings_.relative_mip_gap_tol &&
          (active_subtrees_ > 0 || get_heap_size() > 0)) {
-    mip_node_t<i_t, f_t>* node_ptr = nullptr;
+    mip_node_t<i_t, f_t>* start_node = nullptr;
 
     // If there any node left in the heap, we pop the top node and explore it.
     mutex_heap_.lock();
     if (heap_.size() > 0) {
-      node_ptr = heap_.top();
+      start_node = heap_.top();
       heap_.pop();
       active_subtrees_++;
     }
     mutex_heap_.unlock();
 
-    if (node_ptr != nullptr) {
-      if (get_upper_bound() < node_ptr->lower_bound) {
+    if (start_node != nullptr) {
+      if (get_upper_bound() < start_node->lower_bound) {
         // This node was put on the heap earlier but its lower bound is now greater than the
         // current upper bound
-        search_tree.graphviz_node(settings_.log, node_ptr, "cutoff", node_ptr->lower_bound);
-        search_tree.update(node_ptr, node_status_t::FATHOMED);
+        search_tree.graphviz_node(settings_.log, start_node, "cutoff", start_node->lower_bound);
+        search_tree.update(start_node, node_status_t::FATHOMED);
         active_subtrees_--;
         continue;
       }
 
       // Best-first search with plunging
-      explore_subtree(id, node_ptr, search_tree, leaf_problem, presolver);
+      explore_subtree(task_id,
+                      start_node,
+                      search_tree,
+                      leaf_problem,
+                      presolver,
+                      basis_update,
+                      basic_list,
+                      nonbasic_list);
+
       active_subtrees_--;
     }
 
@@ -1015,7 +1058,7 @@ void branch_and_bound_t<i_t, f_t>::best_first_thread(i_t id, search_tree_t<i_t, 
     if (active_subtrees_ == 0) {
       status_ = mip_exploration_status_t::COMPLETED;
     } else {
-      local_lower_bounds_[id] = inf;
+      local_lower_bounds_[task_id] = inf;
     }
   }
 }
@@ -1030,6 +1073,11 @@ void branch_and_bound_t<i_t, f_t>::diving_thread(thread_type_t diving_type)
   lp_problem_t<i_t, f_t> leaf_problem = original_lp_;
   std::vector<char> row_sense;
   node_presolver_t<i_t, f_t> presolver(leaf_problem, row_sense, var_types_);
+
+  const i_t m = leaf_problem.num_rows;
+  basis_update_mpf_t<i_t, f_t> basis_update(m, settings_.refactor_frequency);
+  std::vector<i_t> basic_list(m);
+  std::vector<i_t> nonbasic_list;
 
   while (status_ == mip_exploration_status_t::RUNNING &&
          (active_subtrees_ > 0 || get_heap_size() > 0)) {
@@ -1066,6 +1114,9 @@ void branch_and_bound_t<i_t, f_t>::diving_thread(thread_type_t diving_type)
         auto [node_status, round_dir] = solve_node(node_ptr,
                                                    subtree,
                                                    leaf_problem,
+                                                   basis_update,
+                                                   basic_list,
+                                                   nonbasic_list,
                                                    presolver,
                                                    diving_type,
                                                    recompute,
