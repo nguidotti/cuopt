@@ -166,17 +166,6 @@ f_t sgn(f_t x)
 }
 
 template <typename f_t>
-f_t l1_distance(const std::vector<f_t>& x1, const std::vector<f_t>& x2)
-{
-  assert(x1.size() == x2.size());
-  f_t distance = 0;
-  for (size_t i = 0; i < x1.size(); ++i) {
-    distance = std::abs(x1[i] - x2[i]);
-  }
-  return distance;
-}
-
-template <typename f_t>
 f_t relative_gap(f_t obj_value, f_t lower_bound)
 {
   f_t user_mip_gap = obj_value == 0.0

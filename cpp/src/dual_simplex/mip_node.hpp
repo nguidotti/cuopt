@@ -53,6 +53,7 @@ class mip_node_t {
       node_id(0),
       branch_var(-1),
       branch_dir(round_dir_t::NONE),
+      best_pseudocost_estimate(inf),
       vstatus(basis)
   {
     children[0] = nullptr;
@@ -65,7 +66,6 @@ class mip_node_t {
              i_t branch_variable,
              round_dir_t branch_direction,
              f_t branch_var_value,
-             f_t best_pseudocost_estimate,
              const std::vector<variable_status_t>& basis)
     : status(node_status_t::ACTIVE),
       lower_bound(parent_node->lower_bound),
@@ -75,7 +75,7 @@ class mip_node_t {
       branch_var(branch_variable),
       branch_dir(branch_direction),
       fractional_val(branch_var_value),
-      best_pseudocost_estimate(best_pseudocost_estimate),
+      best_pseudocost_estimate(parent_node->best_pseudocost_estimate),
       vstatus(basis)
 
   {
@@ -310,7 +310,6 @@ class search_tree_t {
                                                              branch_var,
                                                              round_dir_t::DOWN,
                                                              fractional_val,
-                                                             parent_node->best_pseudocost_estimate,
                                                              parent_vstatus);
 
     graphviz_edge(log,
@@ -320,14 +319,8 @@ class search_tree_t {
                   round_dir_t::DOWN,
                   std::floor(fractional_val));
 
-    auto up_child = std::make_unique<mip_node_t<i_t, f_t>>(original_lp,
-                                                           parent_node,
-                                                           ++id,
-                                                           branch_var,
-                                                           round_dir_t::UP,
-                                                           fractional_val,
-                                                           parent_node->best_pseudocost_estimate,
-                                                           parent_vstatus);
+    auto up_child = std::make_unique<mip_node_t<i_t, f_t>>(
+      original_lp, parent_node, ++id, branch_var, round_dir_t::UP, fractional_val, parent_vstatus);
 
     graphviz_edge(
       log, parent_node, up_child.get(), branch_var, round_dir_t::UP, std::ceil(fractional_val));
