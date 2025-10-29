@@ -1095,13 +1095,15 @@ void branch_and_bound_t<i_t, f_t>::diving_thread(thread_type_t diving_type)
             mip_node_t<i_t, f_t>* new_node = stack.back();
             stack.pop_back();
 
-            std::vector<f_t> lower = start_node->lower;
-            std::vector<f_t> upper = start_node->upper;
-            new_node->get_variable_bounds(lower, upper, presolver.bounds_changed);
+            if (dive_queue_.size() < 4 * settings_.num_diving_threads) {
+              std::vector<f_t> lower = start_node->lower;
+              std::vector<f_t> upper = start_node->upper;
+              new_node->get_variable_bounds(lower, upper, presolver.bounds_changed);
 
-            mutex_dive_queue_.lock();
-            dive_queue_.emplace(new_node->detach_copy(), std::move(lower), std::move(upper));
-            mutex_dive_queue_.unlock();
+              mutex_dive_queue_.lock();
+              dive_queue_.emplace(new_node->detach_copy(), std::move(lower), std::move(upper));
+              mutex_dive_queue_.unlock();
+            }
           }
         }
       }
