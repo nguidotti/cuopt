@@ -1090,7 +1090,7 @@ void branch_and_bound_t<i_t, f_t>::diving_thread(thread_type_t diving_type)
     std::optional<diving_root_t<i_t, f_t>> start_node;
 
     mutex_dive_queue_.lock();
-    if (dive_queue_.size() > 0) { start_node = dive_queue_.pop(); }
+    start_node = dive_queue_.pop(diving_type);
     mutex_dive_queue_.unlock();
 
     if (start_node.has_value()) {

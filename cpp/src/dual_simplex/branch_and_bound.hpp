@@ -52,18 +52,6 @@ enum class mip_exploration_status_t {
   COMPLETED  = 5,  // The solver finished exploring the tree
 };
 
-// Indicate the search and variable selection algorithms used by the thread (See [1]).
-//
-// [1] T. Achterberg, “Constraint Integer Programming,” PhD, Technischen Universität Berlin,
-// Berlin, 2007. doi: 10.14279/depositonce-1634.
-enum class thread_type_t {
-  EXPLORATION        = 0,  // Best-First + Plunging. Pseudocost branching + Martin's criteria.
-  COEFFICIENT_DIVING = 1,  // Coefficient diving (9.2.1)
-  LINE_SEARCH_DIVING = 2,  // Line search diving (9.2.4)
-  PSEUDOCOST_DIVING  = 3,  // Pseudocost diving (9.2.5)
-  GUIDED_DIVING = 4  // Guided diving (9.2.3). If no incumbent is found yet, use pseudocost diving.
-};
-
 template <typename i_t, typename f_t>
 class node_presolver_t;
 
