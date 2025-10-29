@@ -485,11 +485,13 @@ mip_status_t branch_and_bound_t<i_t, f_t>::set_final_solution(mip_solution_t<i_t
     }
   }
 
-  if (stats_.nodes_explored > 0 && stats_.nodes_unexplored == 0 && upper_bound == inf) {
-    settings_.log.printf("Integer infeasible.\n");
-    mip_status = mip_status_t::INFEASIBLE;
-    if (settings_.heuristic_preemption_callback != nullptr) {
-      settings_.heuristic_preemption_callback();
+  if (status_ == mip_exploration_status_t::COMPLETED) {
+    if (stats_.nodes_explored > 0 && stats_.nodes_unexplored == 0 && upper_bound == inf) {
+      settings_.log.printf("Integer infeasible.\n");
+      mip_status = mip_status_t::INFEASIBLE;
+      if (settings_.heuristic_preemption_callback != nullptr) {
+        settings_.heuristic_preemption_callback();
+      }
     }
   }
 
