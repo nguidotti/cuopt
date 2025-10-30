@@ -1319,7 +1319,8 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   lower_bound_ceiling_        = inf;
   original_lp_.A.transpose(original_lp_.Arow);
 
-  std::array<thread_type_t, 4> strategies = {thread_type_t::LINE_SEARCH_DIVING,
+  std::array<thread_type_t, 4> strategies = {thread_type_t::COEFFICIENT_DIVING,
+                                             thread_type_t::LINE_SEARCH_DIVING,
                                              thread_type_t::GUIDED_DIVING,
                                              thread_type_t::PSEUDOCOST_DIVING};
 

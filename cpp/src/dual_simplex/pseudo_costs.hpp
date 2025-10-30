@@ -119,6 +119,12 @@ selected_variable_t<i_t> guided_diving(pseudo_costs_t<i_t, f_t>& pc,
                                        logger_t& log);
 
 template <typename i_t, typename f_t>
+selected_variable_t<i_t> coefficient_diving(const lp_problem_t<i_t, f_t>& lp_problem,
+                                            const std::vector<i_t>& fractional,
+                                            const std::vector<f_t>& solution,
+                                            logger_t& log);
+
+template <typename i_t, typename f_t>
 f_t best_pseudocost_estimate(pseudo_costs_t<i_t, f_t>& pc,
                              const std::vector<i_t>& fractional,
                              const std::vector<f_t>& solution,
