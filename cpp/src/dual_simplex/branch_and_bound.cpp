@@ -565,6 +565,9 @@ selected_variable_t<i_t> branch_and_bound_t<i_t, f_t>::variable_selection(
       round_dir  = martin_criteria(solution[branch_var], root_relax_soln_.x[branch_var]);
       return {branch_var, round_dir};
 
+    case thread_type_t::COEFFICIENT_DIVING:
+      return coefficient_diving(original_lp_, fractional, solution, log);
+
     case thread_type_t::LINE_SEARCH_DIVING:
       return line_search_diving(fractional, solution, root_relax_soln_.x, log);
 
