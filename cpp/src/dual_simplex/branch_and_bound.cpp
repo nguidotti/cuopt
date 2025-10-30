@@ -205,6 +205,7 @@ inline const char* thread_type_symbol(thread_type_t type)
 {
   switch (type) {
     case thread_type_t::EXPLORATION: return "B ";
+    case thread_type_t::COEFFICIENT_DIVING: return "CD";
     case thread_type_t::LINE_SEARCH_DIVING: return "LD";
     case thread_type_t::PSEUDOCOST_DIVING: return "PD";
     case thread_type_t::GUIDED_DIVING: return "GD";
