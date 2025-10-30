@@ -51,7 +51,7 @@ template <typename i_t, typename f_t>
 class diving_queue_t {
  private:
   std::vector<diving_root_t<i_t, f_t>> buffer;
-  static constexpr i_t max_size_ = INT_MAX;
+  static constexpr i_t max_size_ = INT16_MAX;
   PCG rng;
   const double epsilon = 0.1;  // Probability to grab a random node
 

@@ -1136,31 +1136,17 @@ void branch_and_bound_t<i_t, f_t>::diving_thread(thread_type_t diving_type)
           return;
 
         } else if (node_status == node_status_t::HAS_CHILDREN) {
+          if (stack.size() > 0) {
+            mip_node_t<i_t, f_t>* new_node = stack.back();
+            stack.pop_back();
+          }
+
           if (round_dir == round_dir_t::DOWN) {
             stack.push_front(node_ptr->get_up_child());
             stack.push_front(node_ptr->get_down_child());
           } else {
             stack.push_front(node_ptr->get_down_child());
             stack.push_front(node_ptr->get_up_child());
-          }
-        }
-
-        if (stack.size() > 1) {
-          i_t depth_diff    = stack.front()->depth - stack.back()->depth;
-          i_t max_backtrack = leaf_depth < max_depth ? std::max<i_t>(5, 0.1 * max_depth) : INT_MAX;
-          if (depth_diff > max_backtrack) {
-            mip_node_t<i_t, f_t>* new_node = stack.back();
-            stack.pop_back();
-
-            if (dive_queue_.size() < 4 * settings_.num_diving_threads) {
-              std::vector<f_t> lower = start_node->lower;
-              std::vector<f_t> upper = start_node->upper;
-              new_node->get_variable_bounds(lower, upper, presolver.bounds_changed);
-
-              mutex_dive_queue_.lock();
-              dive_queue_.emplace(new_node->detach_copy(), std::move(lower), std::move(upper));
-              mutex_dive_queue_.unlock();
-            }
           }
         }
       }
