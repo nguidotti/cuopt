@@ -1292,17 +1292,14 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 
 #pragma omp master
     {
-      if (status_ == mip_exploration_status_t::RUNNING &&
-          (active_subtrees_ > 0 || get_heap_size() > 0)) {
-        for (i_t i = 0; i < settings_.num_bfs_threads; i++) {
+      for (i_t i = 0; i < settings_.num_bfs_threads; i++) {
 #pragma omp task
-          best_first_thread(i, search_tree);
-        }
+        best_first_thread(i, search_tree);
+      }
 
-        for (i_t i = 0; i < settings_.num_diving_threads; i++) {
+      for (i_t i = 0; i < settings_.num_diving_threads; i++) {
 #pragma omp task
-          diving_thread();
-        }
+        diving_thread();
       }
     }
   }
