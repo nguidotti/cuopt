@@ -1070,7 +1070,7 @@ void branch_and_bound_t<i_t, f_t>::best_first_thread(i_t task_id,
 }
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::diving_thread(thread_type_t diving_type)
+void branch_and_bound_t<i_t, f_t>::diving_thread(thread_type_t diving_type, i_t backtrack)
 {
   logger_t log;
   log.log = false;
@@ -1136,17 +1136,19 @@ void branch_and_bound_t<i_t, f_t>::diving_thread(thread_type_t diving_type)
           return;
 
         } else if (node_status == node_status_t::HAS_CHILDREN) {
-          if (stack.size() > 0) {
-            mip_node_t<i_t, f_t>* new_node = stack.back();
-            stack.pop_back();
-          }
-
           if (round_dir == round_dir_t::DOWN) {
             stack.push_front(node_ptr->get_up_child());
             stack.push_front(node_ptr->get_down_child());
           } else {
             stack.push_front(node_ptr->get_down_child());
             stack.push_front(node_ptr->get_up_child());
+          }
+        }
+
+        if (stack.size() > 1) {
+          if (stack.front()->depth - stack.back()->depth > backtrack) {
+            mip_node_t<i_t, f_t>* new_node = stack.back();
+            stack.pop_back();
           }
         }
       }
@@ -1340,7 +1342,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 
       for (i_t k = 0; k < settings_.num_diving_threads; k++) {
 #pragma omp task
-        diving_thread(strategies[k % strategies.size()]);
+        diving_thread(strategies[k % strategies.size()], 5);
       }
     }
   }
