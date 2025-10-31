@@ -17,7 +17,7 @@
 
 #include <omp.h>
 #include <algorithm>
-#include <dual_simplex/bounds_strenghtening.hpp>
+#include <dual_simplex/bounds_strengthening.hpp>
 #include <dual_simplex/branch_and_bound.hpp>
 #include <dual_simplex/initial_basis.hpp>
 #include <dual_simplex/logger.hpp>
