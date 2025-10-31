@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include <dual_simplex/bounds_strenghtening.hpp>
+#include <dual_simplex/bounds_strengthening.hpp>
 
 #include <algorithm>
 #include <cmath>
