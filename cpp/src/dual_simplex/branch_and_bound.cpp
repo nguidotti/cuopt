@@ -984,10 +984,6 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t task_id,
         // This lead to a SIGSEGV. Although, in this case, it
         // would be better if we discard the node instead.
         if (get_heap_size() > settings_.num_bfs_threads) {
-          std::vector<f_t> lower = original_lp_.lower;
-          std::vector<f_t> upper = original_lp_.upper;
-          node->get_variable_bounds(lower, upper, presolver.bounds_changed);
-
           mutex_dive_queue_.lock();
           dive_queue_.emplace(node->detach_copy());
           mutex_dive_queue_.unlock();
