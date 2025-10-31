@@ -27,15 +27,12 @@ namespace cuopt::linear_programming::dual_simplex {
 
 template <typename i_t, typename f_t>
 struct diving_root_t {
-  mip_node_t<i_t, f_t> node;
-  std::vector<f_t> lower;
-  std::vector<f_t> upper;
+  mip_node_t<i_t, f_t> root_node;
   f_t score;
 
-  diving_root_t(mip_node_t<i_t, f_t>&& new_node, std::vector<f_t>&& lower, std::vector<f_t>&& upper)
-    : node(std::move(new_node)), lower(std::move(lower)), upper(std::move(upper))
+  diving_root_t(mip_node_t<i_t, f_t>&& root_node) : root_node(std::move(root_node))
   {
-    score = node.best_pseudocost_estimate;
+    score = root_node.best_pseudocost_estimate;
   }
 
   friend bool operator>(const diving_root_t<i_t, f_t>& a, const diving_root_t<i_t, f_t>& b)
@@ -51,7 +48,6 @@ template <typename i_t, typename f_t>
 class diving_queue_t {
  private:
   std::vector<diving_root_t<i_t, f_t>> buffer;
-  static constexpr i_t max_size_ = INT16_MAX;
   PCG rng;
   const double epsilon = 0.1;  // Probability to grab a random node
 
@@ -62,14 +58,12 @@ class diving_queue_t {
   {
     buffer.push_back(std::move(node));
     std::push_heap(buffer.begin(), buffer.end(), std::greater<>());
-    if (buffer.size() > max_size() - 1) { buffer.pop_back(); }
   }
 
-  void emplace(mip_node_t<i_t, f_t>&& node, std::vector<f_t>&& lower, std::vector<f_t>&& upper)
+  void emplace(mip_node_t<i_t, f_t>&& root_node)
   {
-    buffer.emplace_back(std::move(node), std::move(lower), std::move(upper));
+    buffer.emplace_back(std::move(root_node));
     std::push_heap(buffer.begin(), buffer.end(), std::greater<>());
-    if (buffer.size() > max_size() - 1) { buffer.pop_back(); }
   }
 
   diving_root_t<i_t, f_t> pop()
@@ -91,7 +85,6 @@ class diving_queue_t {
   }
 
   i_t size() const { return buffer.size(); }
-  constexpr i_t max_size() const { return max_size_; }
   const diving_root_t<i_t, f_t>& top() const { return buffer.front(); }
   void clear() { buffer.clear(); }
 };

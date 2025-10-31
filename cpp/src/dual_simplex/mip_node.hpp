@@ -29,7 +29,7 @@
 namespace cuopt::linear_programming::dual_simplex {
 
 enum class node_status_t : int {
-  ACTIVE           = 0,  // Node still in the tree
+  PENDING          = 0,  // Node is still in the tree, waiting to be process
   INTEGER_FEASIBLE = 1,  // Node has an integer feasible solution
   INFEASIBLE       = 2,  // Node is infeasible
   FATHOMED         = 3,  // Node objective is greater than the upper bound
@@ -43,10 +43,84 @@ enum class round_dir_t { NONE = -1, DOWN = 0, UP = 1 };
 bool inactive_status(node_status_t status);
 
 template <typename i_t, typename f_t>
+class mip_node_t;
+
+template <typename i_t, typename f_t>
+class node_link_t {
+ public:
+  node_link_t(mip_node_t<i_t, f_t>* node) { reset(node); }
+  node_link_t(const node_link_t& other) { *this = other; }
+  virtual ~node_link_t() { reset(); }
+
+  node_link_t& operator=(const node_link_t& other)
+  {
+    if (this != &other) {
+      reset();
+      ptr = other.ptr;
+      if (ptr) ++ptr->counter;
+    }
+
+    return *this;
+  }
+
+  mip_node_t<i_t, f_t>* get() const
+  {
+    if (ptr)
+      return ptr->node;
+    else
+      return nullptr;
+  }
+
+  void reset(mip_node_t<i_t, f_t>* node = nullptr)
+  {
+    if (ptr) {
+      --ptr->counter;
+      if (ptr->counter == 0) { delete ptr; }
+      ptr = nullptr;
+    }
+
+    if (node != nullptr) {
+      ptr          = new internal_t;
+      ptr->counter = 1;
+      ptr->node    = node;
+    }
+  }
+
+  void fathom()
+  {
+    if (ptr) { ptr->node = nullptr; }
+  }
+
+  operator bool() const { return ptr && ptr->node; }
+
+ private:
+  struct internal_t {
+    omp_atomic_t<mip_node_t<i_t, f_t>*> node;
+    omp_atomic_t<i_t> counter;
+  };
+
+  internal_t* ptr = nullptr;
+};
+
+template <typename i_t, typename f_t>
 class mip_node_t {
  public:
+  mip_node_t()
+    : status(node_status_t::PENDING),
+      lower_bound(-inf),
+      depth(0),
+      parent(nullptr),
+      node_id(0),
+      branch_var(-1),
+      branch_dir(round_dir_t::NONE),
+      best_pseudocost_estimate(inf),
+      vstatus(0),
+      original(nullptr)
+  {
+  }
+
   mip_node_t(f_t root_lower_bound, const std::vector<variable_status_t>& basis)
-    : status(node_status_t::ACTIVE),
+    : status(node_status_t::PENDING),
       lower_bound(root_lower_bound),
       depth(0),
       parent(nullptr),
@@ -54,7 +128,8 @@ class mip_node_t {
       branch_var(-1),
       branch_dir(round_dir_t::NONE),
       best_pseudocost_estimate(inf),
-      vstatus(basis)
+      vstatus(basis),
+      original(this)
   {
     children[0] = nullptr;
     children[1] = nullptr;
@@ -67,10 +142,11 @@ class mip_node_t {
              round_dir_t branch_direction,
              f_t branch_var_value,
              const std::vector<variable_status_t>& basis)
-    : status(node_status_t::ACTIVE),
+    : status(node_status_t::PENDING),
       lower_bound(parent_node->lower_bound),
       depth(parent_node->depth + 1),
       parent(parent_node),
+      original(this),
       node_id(node_num),
       branch_var(branch_variable),
       branch_dir(branch_direction),
@@ -221,13 +297,20 @@ class mip_node_t {
   // This detaches the node from the tree.
   mip_node_t<i_t, f_t> detach_copy() const
   {
-    mip_node_t<i_t, f_t> copy(lower_bound, vstatus);
-    copy.branch_var       = branch_var;
-    copy.branch_dir       = branch_dir;
-    copy.branch_var_lower = branch_var_lower;
-    copy.branch_var_upper = branch_var_upper;
-    copy.fractional_val   = fractional_val;
-    copy.node_id          = node_id;
+    mip_node_t<i_t, f_t> copy;
+    copy.status                   = status;
+    copy.lower_bound              = lower_bound;
+    copy.best_pseudocost_estimate = best_pseudocost_estimate;
+    copy.depth                    = 0;
+    copy.node_id                  = node_id;
+    copy.branch_var               = branch_var;
+    copy.branch_dir               = branch_dir;
+    copy.branch_var_lower         = branch_var_lower;
+    copy.branch_var_upper         = branch_var_upper;
+    copy.fractional_val           = fractional_val;
+    copy.original                 = original;
+    copy.parent                   = nullptr;
+    copy.vstatus                  = vstatus;
     return copy;
   }
 
@@ -242,6 +325,11 @@ class mip_node_t {
   f_t branch_var_upper;
   f_t fractional_val;
 
+  // Stores a pointer to the node in the main tree. If the node is inactive,
+  // then it is equal to `nullptr`.
+  // For C++20, this can be replaced by std::atomic<std::shared_ptr>
+  node_link_t<i_t, f_t> original;
+
   mip_node_t<i_t, f_t>* parent;
   std::unique_ptr<mip_node_t> children[2];
 
@@ -252,6 +340,7 @@ template <typename i_t, typename f_t>
 void remove_fathomed_nodes(std::vector<mip_node_t<i_t, f_t>*>& stack)
 {
   for (int i = 0; i < stack.size(); ++i) {
+    if (stack[i]->original.get() == stack[i]) { stack[i]->original.fathom(); }
     for (int child = 0; child < 2; ++child) {
       if (stack[i]->children[child] != nullptr) { stack[i]->children[child].reset(); }
     }
@@ -263,8 +352,8 @@ class node_compare_t {
  public:
   bool operator()(const mip_node_t<i_t, f_t>& a, const mip_node_t<i_t, f_t>& b) const
   {
-    f_t score_a = 0.2 * a.best_pseudocost_estimate + 0.8 * a.lower_bound;
-    f_t score_b = 0.2 * b.best_pseudocost_estimate + 0.8 * b.lower_bound;
+    f_t score_a = 0.1 * a.best_pseudocost_estimate + 0.9 * a.lower_bound;
+    f_t score_b = 0.1 * b.best_pseudocost_estimate + 0.9 * b.lower_bound;
 
     // The elements are sorted in decreasing order (i.e., a will placed be after b)
     return score_a > score_b;

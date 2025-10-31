@@ -200,9 +200,21 @@ class branch_and_bound_t {
   // (i.e., a shallow dive) into the subtree determined by the node.
   void best_first_thread(i_t id, search_tree_t<i_t, f_t>& search_tree);
 
+  // Perform a deep dive into the subtree determined by the node_link
+  // (i.e., a link to a node in the main tree).
+  void dive(search_tree_t<i_t, f_t>& main_tree,
+            mip_node_t<i_t, f_t>& start_node,
+            lp_problem_t<i_t, f_t>& leaf_problem,
+            node_presolver_t<i_t, f_t>& presolver,
+            basis_update_mpf_t<i_t, f_t>& basis_update,
+            std::vector<i_t>& basic_list,
+            std::vector<i_t>& nonbasic_list,
+            thread_type_t diving_type,
+            i_t backtrack);
+
   // Each diving thread pops the first node from the dive queue and then performs
   // a deep dive into the subtree determined by the node.
-  void diving_thread(thread_type_t diving_type, i_t backtrack);
+  void diving_thread(search_tree_t<i_t, f_t>& main_tree, thread_type_t diving_type, i_t backtrack);
 
   // Solve the LP relaxation of a leaf node and update the tree.
   std::pair<node_status_t, round_dir_t> solve_node(mip_node_t<i_t, f_t>* node_ptr,
