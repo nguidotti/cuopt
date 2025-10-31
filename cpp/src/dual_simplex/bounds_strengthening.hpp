@@ -22,22 +22,23 @@
 namespace cuopt::linear_programming::dual_simplex {
 
 template <typename i_t, typename f_t>
-class node_presolver_t {
+class bounds_strengthening_t {
  public:
   // For pure LP bounds strengthening, var_types should be defaulted (i.e. left empty)
-  node_presolver_t(const lp_problem_t<i_t, f_t>& problem,
-                   const std::vector<char>& row_sense,
-                   const std::vector<variable_type_t>& var_types);
+  bounds_strengthening_t(const lp_problem_t<i_t, f_t>& problem,
+                         const csr_matrix_t<i_t, f_t>& Arow,
+                         const std::vector<char>& row_sense,
+                         const std::vector<variable_type_t>& var_types);
 
-  bool bound_strengthening(std::vector<f_t>& lower_bounds,
-                           std::vector<f_t>& upper_bounds,
-                           const simplex_solver_settings_t<i_t, f_t>& settings);
+  bool bounds_strengthening(std::vector<f_t>& lower_bounds,
+                            std::vector<f_t>& upper_bounds,
+                            const simplex_solver_settings_t<i_t, f_t>& settings);
 
   std::vector<bool> bounds_changed;
 
  private:
   const csc_matrix_t<i_t, f_t>& A;
-  const csc_matrix_t<i_t, f_t>& Arow;
+  const csr_matrix_t<i_t, f_t>& Arow;
   const std::vector<variable_type_t>& var_types;
 
   std::vector<bool> constraint_changed;

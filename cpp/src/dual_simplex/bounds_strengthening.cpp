@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include <dual_simplex/node_presolve.hpp>
+#include <dual_simplex/bounds_strenghtening.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -64,12 +64,14 @@ void print_bounds_stats(const std::vector<f_t>& lower,
 }
 
 template <typename i_t, typename f_t>
-node_presolver_t<i_t, f_t>::node_presolver_t(const lp_problem_t<i_t, f_t>& problem,
-                                             const std::vector<char>& row_sense,
-                                             const std::vector<variable_type_t>& var_types)
+bounds_strengthening_t<i_t, f_t>::bounds_strengthening_t(
+  const lp_problem_t<i_t, f_t>& problem,
+  const csr_matrix_t<i_t, f_t>& Arow,
+  const std::vector<char>& row_sense,
+  const std::vector<variable_type_t>& var_types)
   : bounds_changed(problem.num_cols, false),
     A(problem.A),
-    Arow(problem.Arow),
+    Arow(Arow),
     var_types(var_types),
     delta_min_activity(problem.num_rows),
     delta_max_activity(problem.num_rows),
@@ -98,7 +100,7 @@ node_presolver_t<i_t, f_t>::node_presolver_t(const lp_problem_t<i_t, f_t>& probl
 }
 
 template <typename i_t, typename f_t>
-bool node_presolver_t<i_t, f_t>::bound_strengthening(
+bool bounds_strengthening_t<i_t, f_t>::bounds_strengthening(
   std::vector<f_t>& lower_bounds,
   std::vector<f_t>& upper_bounds,
   const simplex_solver_settings_t<i_t, f_t>& settings)
@@ -130,13 +132,13 @@ bool node_presolver_t<i_t, f_t>::bound_strengthening(
   while (iter < iter_limit) {
     for (i_t i = 0; i < m; ++i) {
       if (!constraint_changed[i]) { continue; }
-      const i_t row_start = Arow.col_start[i];
-      const i_t row_end   = Arow.col_start[i + 1];
+      const i_t row_start = Arow.row_start[i];
+      const i_t row_end   = Arow.row_start[i + 1];
 
       f_t min_a = 0.0;
       f_t max_a = 0.0;
       for (i_t p = row_start; p < row_end; ++p) {
-        const i_t j    = Arow.i[p];
+        const i_t j    = Arow.j[p];
         const f_t a_ij = Arow.x[p];
 
         variable_changed[j] = true;
@@ -289,7 +291,7 @@ bool node_presolver_t<i_t, f_t>::bound_strengthening(
 }
 
 #ifdef DUAL_SIMPLEX_INSTANTIATE_DOUBLE
-template class node_presolver_t<int, double>;
+template class bounds_strengthening_t<int, double>;
 #endif
 
 }  // namespace cuopt::linear_programming::dual_simplex

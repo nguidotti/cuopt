@@ -62,7 +62,7 @@ enum class thread_type_t {
 };
 
 template <typename i_t, typename f_t>
-class node_presolver_t;
+class bounds_strengthening_t;
 
 template <typename i_t, typename f_t>
 void upper_bound_callback(f_t upper_bound);
@@ -181,6 +181,7 @@ class branch_and_bound_t {
   // there is enough unexplored nodes. This is done recursively using OpenMP tasks.
   void exploration_ramp_up(mip_node_t<i_t, f_t>* node,
                            search_tree_t<i_t, f_t>* search_tree,
+                           const csr_matrix_t<i_t, f_t>& Arow,
                            i_t initial_heap_size);
 
   // Explore the search tree using the best-first search with plunging strategy.
@@ -188,18 +189,20 @@ class branch_and_bound_t {
                        mip_node_t<i_t, f_t>* start_node,
                        search_tree_t<i_t, f_t>& search_tree,
                        lp_problem_t<i_t, f_t>& leaf_problem,
-                       node_presolver_t<i_t, f_t>& presolver,
+                       bounds_strengthening_t<i_t, f_t>& presolver,
                        basis_update_mpf_t<i_t, f_t>& basis_update,
                        std::vector<i_t>& basic_list,
                        std::vector<i_t>& nonbasic_list);
 
   // Each "main" thread pops a node from the global heap and then performs a plunge
   // (i.e., a shallow dive) into the subtree determined by the node.
-  void best_first_thread(i_t id, search_tree_t<i_t, f_t>& search_tree);
+  void best_first_thread(i_t id,
+                         search_tree_t<i_t, f_t>& search_tree,
+                         const csr_matrix_t<i_t, f_t>& Arow);
 
   // Each diving thread pops the first node from the dive queue and then performs
   // a deep dive into the subtree determined by the node.
-  void diving_thread();
+  void diving_thread(const csr_matrix_t<i_t, f_t>& Arow);
 
   // Solve the LP relaxation of a leaf node and update the tree.
   node_status_t solve_node(mip_node_t<i_t, f_t>* node_ptr,
@@ -208,7 +211,7 @@ class branch_and_bound_t {
                            basis_update_mpf_t<i_t, f_t>& ft,
                            std::vector<i_t>& basic_list,
                            std::vector<i_t>& nonbasic_list,
-                           node_presolver_t<i_t, f_t>& presolver,
+                           bounds_strengthening_t<i_t, f_t>& presolver,
                            thread_type_t thread_type,
                            bool recompute,
                            const std::vector<f_t>& root_lower,
