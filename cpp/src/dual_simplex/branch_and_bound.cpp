@@ -485,11 +485,13 @@ mip_status_t branch_and_bound_t<i_t, f_t>::set_final_solution(mip_solution_t<i_t
     }
   }
 
-  if (stats_.nodes_explored > 0 && stats_.nodes_unexplored == 0 && upper_bound == inf) {
-    settings_.log.printf("Integer infeasible.\n");
-    mip_status = mip_status_t::INFEASIBLE;
-    if (settings_.heuristic_preemption_callback != nullptr) {
-      settings_.heuristic_preemption_callback();
+  if (status_ == mip_exploration_status_t::COMPLETED) {
+    if (stats_.nodes_explored > 0 && stats_.nodes_unexplored == 0 && upper_bound == inf) {
+      settings_.log.printf("Integer infeasible.\n");
+      mip_status = mip_status_t::INFEASIBLE;
+      if (settings_.heuristic_preemption_callback != nullptr) {
+        settings_.heuristic_preemption_callback();
+      }
     }
   }
 
@@ -717,11 +719,6 @@ void branch_and_bound_t<i_t, f_t>::exploration_ramp_up(mip_node_t<i_t, f_t>* nod
   // to repair the heuristic solution.
   repair_heuristic_solutions();
 
-  // Make a copy of the original LP. We will modify its bounds at each leaf
-  lp_problem_t<i_t, f_t> leaf_problem = original_lp_;
-  std::vector<char> row_sense;
-  bounds_strengthening_t<i_t, f_t> presolver(leaf_problem, Arow, row_sense, var_types_);
-
   f_t lower_bound      = node->lower_bound;
   f_t upper_bound      = get_upper_bound();
   f_t rel_gap          = user_relative_gap(original_lp_, upper_bound, lower_bound);
@@ -768,6 +765,11 @@ void branch_and_bound_t<i_t, f_t>::exploration_ramp_up(mip_node_t<i_t, f_t>* nod
     status_ = mip_exploration_status_t::TIME_LIMIT;
     return;
   }
+
+  // Make a copy of the original LP. We will modify its bounds at each leaf
+  lp_problem_t<i_t, f_t> leaf_problem = original_lp_;
+  std::vector<char> row_sense;
+  bounds_strengthening_t<i_t, f_t> presolver(leaf_problem, Arow, row_sense, var_types_);
 
   node_status_t node_status = solve_node(node,
                                          *search_tree,
@@ -931,7 +933,7 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t task_id,
 }
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::best_first_thread(i_t id,
+void branch_and_bound_t<i_t, f_t>::best_first_thread(i_t task_id,
                                                      search_tree_t<i_t, f_t>& search_tree,
                                                      const csr_matrix_t<i_t, f_t>& Arow)
 {
@@ -948,29 +950,29 @@ void branch_and_bound_t<i_t, f_t>::best_first_thread(i_t id,
   while (status_ == mip_exploration_status_t::RUNNING && abs_gap > settings_.absolute_mip_gap_tol &&
          rel_gap > settings_.relative_mip_gap_tol &&
          (active_subtrees_ > 0 || get_heap_size() > 0)) {
-    mip_node_t<i_t, f_t>* node_ptr = nullptr;
+    mip_node_t<i_t, f_t>* start_node = nullptr;
 
     // If there any node left in the heap, we pop the top node and explore it.
     mutex_heap_.lock();
     if (heap_.size() > 0) {
-      node_ptr = heap_.top();
+      start_node = heap_.top();
       heap_.pop();
       active_subtrees_++;
     }
     mutex_heap_.unlock();
 
-    if (node_ptr != nullptr) {
-      if (get_upper_bound() < node_ptr->lower_bound) {
+    if (start_node != nullptr) {
+      if (get_upper_bound() < start_node->lower_bound) {
         // This node was put on the heap earlier but its lower bound is now greater than the
         // current upper bound
-        search_tree.graphviz_node(settings_.log, node_ptr, "cutoff", node_ptr->lower_bound);
-        search_tree.update(node_ptr, node_status_t::FATHOMED);
+        search_tree.graphviz_node(settings_.log, start_node, "cutoff", start_node->lower_bound);
+        search_tree.update(start_node, node_status_t::FATHOMED);
         active_subtrees_--;
         continue;
       }
 
       // Best-first search with plunging
-      explore_subtree(id, node_ptr, search_tree, leaf_problem, presolver);
+      explore_subtree(task_id, start_node, search_tree, leaf_problem, presolver);
       active_subtrees_--;
     }
 
@@ -986,7 +988,7 @@ void branch_and_bound_t<i_t, f_t>::best_first_thread(i_t id,
     if (active_subtrees_ == 0) {
       status_ = mip_exploration_status_t::COMPLETED;
     } else {
-      local_lower_bounds_[id] = inf;
+      local_lower_bounds_[task_id] = inf;
     }
   }
 }
@@ -1251,17 +1253,14 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 
 #pragma omp master
     {
-      if (status_ == mip_exploration_status_t::RUNNING &&
-          (active_subtrees_ > 0 || get_heap_size() > 0)) {
-        for (i_t i = 0; i < settings_.num_bfs_threads; i++) {
+      for (i_t i = 0; i < settings_.num_bfs_threads; i++) {
 #pragma omp task
-          best_first_thread(i, search_tree, Arow);
-        }
+        best_first_thread(i, search_tree, Arow);
+      }
 
-        for (i_t i = 0; i < settings_.num_diving_threads; i++) {
+      for (i_t i = 0; i < settings_.num_diving_threads; i++) {
 #pragma omp task
-          diving_thread(Arow);
-        }
+        diving_thread(Arow);
       }
     }
   }
