@@ -74,8 +74,8 @@ class node_link_t {
   void reset(mip_node_t<i_t, f_t>* node = nullptr)
   {
     if (ptr) {
-      --ptr->counter;
-      if (ptr->counter == 0) { delete ptr; }
+      i_t count = ptr->counter--;
+      if (count == 0) { delete ptr; }
       ptr = nullptr;
     }
 
