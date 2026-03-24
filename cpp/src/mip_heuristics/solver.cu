@@ -223,13 +223,14 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
     branch_and_bound_settings.clique_cuts   = context.settings.clique_cuts;
     branch_and_bound_settings.strong_chvatal_gomory_cuts =
       context.settings.strong_chvatal_gomory_cuts;
-    branch_and_bound_settings.reduced_cost_strengthening =
-      context.settings.reduced_cost_strengthening >= 0 ? context.settings.reduced_cost_strengthening
-                                                       : 3;
     branch_and_bound_settings.cut_change_threshold  = context.settings.cut_change_threshold;
     branch_and_bound_settings.cut_min_orthogonality = context.settings.cut_min_orthogonality;
     branch_and_bound_settings.mip_batch_pdlp_strong_branching =
       context.settings.mip_batch_pdlp_strong_branching;
+    branch_and_bound_settings.reduced_cost_strengthening =
+      context.settings.reduced_cost_strengthening == -1
+        ? 3
+        : context.settings.reduced_cost_strengthening;
 
     if (context.settings.num_cpu_threads < 0) {
       branch_and_bound_settings.num_threads = std::max(1, omp_get_max_threads() - 1);
