@@ -98,28 +98,6 @@ class mip_node_t {
     children[1]      = nullptr;
   }
 
-  // Check if no node in the path violates the initial bounds after branching on a given variable.
-  // The bound violation can happen after the initial bounds is changed via reduced cost
-  // strengthening and one of the node in the path was created based on the old values.
-  bool check_variable_bounds(const std::vector<f_t>& start_lower,
-                             const std::vector<f_t>& start_upper)
-  {
-    if (branch_var_upper < start_lower[branch_var] || branch_var_lower > start_upper[branch_var]) {
-      return false;
-    }
-
-    mip_node_t* parent_ptr = parent;
-    while (parent_ptr != nullptr && parent_ptr->node_id != 0) {
-      if (parent_ptr->branch_var_upper < start_lower[parent_ptr->branch_var] ||
-          parent_ptr->branch_var_lower > start_upper[parent_ptr->branch_var]) {
-        return false;
-      }
-      parent_ptr = parent_ptr->parent;
-    }
-
-    return true;
-  }
-
   // Get the variable bounds starting at the current node and then traversing it back until the
   // the root node. The bounds are initially set based on the `start_lower` and `start_upper`.
   // Return true if all bounds are valid (i.e., no node in the path violates the initial bounds
@@ -171,12 +149,13 @@ class mip_node_t {
     // If the bounds have already been updated on another node,
     // skip this node as it contains looser bounds, since we
     // are traversing up the tree toward the root
-    if (bounds_changed[branch_var]) { return true; }
+    if (!bounds_changed[branch_var]) {
+      // Apply the bounds at the current node
+      lower[branch_var]          = branch_var_lower;
+      upper[branch_var]          = branch_var_upper;
+      bounds_changed[branch_var] = true;
+    }
 
-    // Apply the bounds at the current node
-    lower[branch_var]          = branch_var_lower;
-    upper[branch_var]          = branch_var_upper;
-    bounds_changed[branch_var] = true;
     return true;
   }
 

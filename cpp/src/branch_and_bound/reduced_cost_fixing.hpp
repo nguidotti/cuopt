@@ -37,37 +37,34 @@ std::pair<i_t, i_t> reduced_cost_fixing(const std::vector<f_t>& reduced_costs,
 
   for (i_t j = 0; j < num_cols_to_check; j++) {
     if (std::isfinite(reduced_costs[j]) && std::abs(reduced_costs[j]) > threshold) {
-      const f_t lower_j            = lower_bounds[j];
-      const f_t upper_j            = upper_bounds[j];
-      f_t reduced_cost_upper_bound = upper_j;
-      f_t reduced_cost_lower_bound = lower_j;
+      const f_t lower_j = lower_bounds[j];
+      const f_t upper_j = upper_bounds[j];
+      const bool is_integer =
+        var_types[j] == variable_type_t::INTEGER || var_types[j] == variable_type_t::BINARY;
+
       if (lower_j > -inf && reduced_costs[j] > 0) {
-        const f_t new_upper_bound = lower_j + abs_gap / reduced_costs[j];
-        reduced_cost_upper_bound  = var_types[j] == variable_type_t::INTEGER
-                                      ? std::floor(new_upper_bound + weaken)
-                                      : new_upper_bound;
-        if (reduced_cost_upper_bound < upper_j && var_types[j] == variable_type_t::INTEGER) {
+        f_t new_upper_bound = lower_j + abs_gap / reduced_costs[j];
+        if (is_integer) { new_upper_bound = std::floor(new_upper_bound + weaken); }
+
+        if (new_upper_bound < upper_j) {
           ++num_improved;
-          upper_bounds[j]   = reduced_cost_upper_bound;
-          bounds_changed[j] = true;
-        }
-      }
-      if (upper_j < inf && reduced_costs[j] < 0) {
-        const f_t new_lower_bound = upper_j + abs_gap / reduced_costs[j];
-        reduced_cost_lower_bound  = var_types[j] == variable_type_t::INTEGER
-                                      ? std::ceil(new_lower_bound - weaken)
-                                      : new_lower_bound;
-        if (reduced_cost_lower_bound > lower_j && var_types[j] == variable_type_t::INTEGER) {
-          ++num_improved;
-          lower_bounds[j]   = reduced_cost_lower_bound;
+          upper_bounds[j]   = new_upper_bound;
           bounds_changed[j] = true;
         }
       }
 
-      if (var_types[j] == variable_type_t::INTEGER &&
-          reduced_cost_upper_bound <= reduced_cost_lower_bound + fixed_tol) {
-        ++num_fixed;
+      if (upper_j < inf && reduced_costs[j] < 0) {
+        f_t new_lower_bound = upper_j + abs_gap / reduced_costs[j];
+        if (is_integer) { new_lower_bound = std::ceil(new_lower_bound - weaken); }
+
+        if (new_lower_bound > lower_j) {
+          ++num_improved;
+          lower_bounds[j]   = new_lower_bound;
+          bounds_changed[j] = true;
+        }
       }
+
+      if (is_integer && upper_bounds[j] <= lower_bounds[j] + fixed_tol) { ++num_fixed; }
     }
   }
 

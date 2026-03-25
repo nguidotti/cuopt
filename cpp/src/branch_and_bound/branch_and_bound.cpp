@@ -1725,21 +1725,9 @@ void branch_and_bound_t<i_t, f_t>::run_scheduler()
           continue;
         }
 
-        mutex_original_lp_.lock();
-        bool feasible = worker->init_best_first(start_node.value(), original_lp_);
-        mutex_original_lp_.unlock();
-
-        if (!feasible) {
-          // This node was put on the heap earlier but its variables bounds now violates the
-          // bounds at the root node
-          start_node.value()->lower_bound = inf;
-          search_tree_.graphviz_node(settings_.log, start_node.value(), "infeasible", 0.0);
-          search_tree_.update(start_node.value(), node_status_t::INFEASIBLE);
-          continue;
-        }
-
         // Remove the worker from the idle list.
         worker_pool_.pop_idle_worker();
+        worker->init_best_first(start_node.value(), original_lp_);
         last_node_depth = start_node.value()->depth;
         last_int_infeas = start_node.value()->integer_infeasible;
         active_workers_per_strategy_[strategy]++;
@@ -1831,19 +1819,7 @@ void branch_and_bound_t<i_t, f_t>::single_threaded_solve()
       continue;
     }
 
-    mutex_original_lp_.lock();
-    bool feasible = worker.init_best_first(start_node.value(), original_lp_);
-    mutex_original_lp_.unlock();
-
-    if (!feasible) {
-      // This node was put on the heap earlier but its variables bounds now violates the
-      // bounds at the root node
-      start_node.value()->lower_bound = inf;
-      search_tree_.graphviz_node(settings_.log, start_node.value(), "infeasible", 0.0);
-      search_tree_.update(start_node.value(), node_status_t::INFEASIBLE);
-      continue;
-    }
-
+    worker.init_best_first(start_node.value(), original_lp_);
     plunge_with(&worker);
   }
 }
