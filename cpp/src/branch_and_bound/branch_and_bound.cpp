@@ -1732,9 +1732,9 @@ void branch_and_bound_t<i_t, f_t>::run_scheduler()
         if (!feasible) {
           // This node was put on the heap earlier but its variables bounds now violates the
           // bounds at the root node
-          search_tree_.graphviz_node(
-            settings_.log, start_node.value(), "cutoff", start_node.value()->lower_bound);
-          search_tree_.update(start_node.value(), node_status_t::FATHOMED);
+          start_node.value()->lower_bound = inf;
+          search_tree_.graphviz_node(settings_.log, start_node.value(), "infeasible", 0.0);
+          search_tree_.update(start_node.value(), node_status_t::INFEASIBLE);
           continue;
         }
 
@@ -1838,9 +1838,9 @@ void branch_and_bound_t<i_t, f_t>::single_threaded_solve()
     if (!feasible) {
       // This node was put on the heap earlier but its variables bounds now violates the
       // bounds at the root node
-      search_tree_.graphviz_node(
-        settings_.log, start_node.value(), "cutoff", start_node.value()->lower_bound);
-      search_tree_.update(start_node.value(), node_status_t::FATHOMED);
+      start_node.value()->lower_bound = inf;
+      search_tree_.graphviz_node(settings_.log, start_node.value(), "infeasible", 0.0);
+      search_tree_.update(start_node.value(), node_status_t::INFEASIBLE);
       continue;
     }
 
@@ -2654,7 +2654,6 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
           search_tree_.graphviz_node(
             settings_.log, start_node.value(), "cutoff", start_node.value()->lower_bound);
           search_tree_.update(start_node.value(), node_status_t::FATHOMED);
-          continue;
         } else {
           node_queue_.push(
             start_node.value());  // Needed to ensure we don't lose the correct lower bound

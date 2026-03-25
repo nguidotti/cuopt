@@ -27,6 +27,7 @@ std::pair<i_t, i_t> reduced_cost_fixing(const std::vector<f_t>& reduced_costs,
   const f_t threshold   = 100.0 * settings.integer_tol;
   const f_t weaken      = settings.integer_tol;
   const f_t fixed_tol   = settings.fixed_tol;
+  const f_t abs_gap     = upper_bound - obj;
   i_t num_improved      = 0;
   i_t num_fixed         = 0;
   i_t num_cols_to_check = reduced_costs.size();  // Reduced costs will be smaller than the original
@@ -38,7 +39,6 @@ std::pair<i_t, i_t> reduced_cost_fixing(const std::vector<f_t>& reduced_costs,
     if (std::isfinite(reduced_costs[j]) && std::abs(reduced_costs[j]) > threshold) {
       const f_t lower_j            = lower_bounds[j];
       const f_t upper_j            = upper_bounds[j];
-      const f_t abs_gap            = upper_bound - obj;
       f_t reduced_cost_upper_bound = upper_j;
       f_t reduced_cost_lower_bound = lower_j;
       if (lower_j > -inf && reduced_costs[j] > 0) {
@@ -63,6 +63,7 @@ std::pair<i_t, i_t> reduced_cost_fixing(const std::vector<f_t>& reduced_costs,
           bounds_changed[j] = true;
         }
       }
+
       if (var_types[j] == variable_type_t::INTEGER &&
           reduced_cost_upper_bound <= reduced_cost_lower_bound + fixed_tol) {
         ++num_fixed;
@@ -71,7 +72,7 @@ std::pair<i_t, i_t> reduced_cost_fixing(const std::vector<f_t>& reduced_costs,
   }
 
   if (num_fixed > 0 || num_improved > 0) {
-    settings.log.debug(
+    settings.log.printf(
       "Reduced costs: Found %d improved bounds and %d fixed variables\n", num_improved, num_fixed);
   }
   return {num_fixed, num_improved};
