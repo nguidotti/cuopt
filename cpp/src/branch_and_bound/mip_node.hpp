@@ -31,7 +31,11 @@ enum class node_status_t : int {
 
 enum class rounding_direction_t : int8_t { NONE = -1, DOWN = 0, UP = 1 };
 
-bool inactive_status(node_status_t status);
+inline bool inactive_status(node_status_t status)
+{
+  return (status == node_status_t::FATHOMED || status == node_status_t::INTEGER_FEASIBLE ||
+          status == node_status_t::INFEASIBLE || status == node_status_t::NUMERICAL);
+}
 
 template <typename i_t, typename f_t>
 class mip_node_t {
@@ -100,7 +104,7 @@ class mip_node_t {
 
   // If the start bounds has changed (via reduced cost strengthening), check if the
   // node is still feasible.
-  bool is_infeasible(const std::vector<f_t>& start_lower, const std::vector<f_t>& start_upper)
+  bool is_infeasible(const std::vector<f_t>& start_lower, const std::vector<f_t>& start_upper) const
   {
     return branch_var_upper < start_lower[branch_var] || branch_var_lower > start_upper[branch_var];
   }
