@@ -98,10 +98,33 @@ class mip_node_t {
     children[1]      = nullptr;
   }
 
+  // If the start bounds has changed (via reduced cost strengthening), check if the
+  // node is still feasible.
+  bool is_infeasible(const std::vector<f_t>& start_lower, const std::vector<f_t>& start_upper)
+  {
+    return branch_var_upper < start_lower[branch_var] || branch_var_lower > start_upper[branch_var];
+  }
+
+  // Check all the nodes from the current one until the root are still feasible according
+  // to the variable bounds of the branched variable.
+  bool check_variable_bounds(const std::vector<f_t>& start_lower,
+                             const std::vector<f_t>& start_upper)
+  {
+    if (is_infeasible(start_lower, start_upper)) { return false; }
+
+    mip_node_t* parent_ptr = parent;
+    while (parent_ptr != nullptr && parent_ptr->node_id != 0) {
+      if (parent_ptr->is_infeasible(start_lower, start_upper)) { return false; }
+      parent_ptr = parent_ptr->parent;
+    }
+
+    return true;
+  }
+
   // Get the variable bounds starting at the current node and then traversing it back until the
   // the root node. The bounds are initially set based on the `start_lower` and `start_upper`.
-  // Return true if all bounds are valid (i.e., no node in the path violates the initial bounds
-  // after branching on a given variable).
+  // Return true if all nodes from the current one until the root are still feasible according
+  // to the variable bounds
   bool get_variable_bounds(const std::vector<f_t>& start_lower,
                            const std::vector<f_t>& start_upper,
                            std::vector<f_t>& lower,
@@ -127,8 +150,8 @@ class mip_node_t {
   }
 
   // Here we assume that we are traversing from the deepest node to the
-  // root of the tree. Return true if no bounds were violated in this node
-  // considering the starting bounds
+  // root of the tree. Return true if this node is feasible according
+  // to the variable bounds
   bool update_branched_variable_bounds(const std::vector<f_t>& start_lower,
                                        const std::vector<f_t>& start_upper,
                                        std::vector<f_t>& lower,
@@ -140,11 +163,7 @@ class mip_node_t {
     assert(upper.size() > branch_var);
     assert(bounds_changed.size() > branch_var);
 
-    // If the start bounds has changed (via reduced cost strengthening), check if the
-    // bounds in the node is still valid.
-    if (branch_var_upper < start_lower[branch_var] || branch_var_lower > start_upper[branch_var]) {
-      return false;
-    }
+    if (is_infeasible(start_lower, start_upper)) { return false; }
 
     // If the bounds have already been updated on another node,
     // skip this node as it contains looser bounds, since we
