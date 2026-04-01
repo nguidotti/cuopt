@@ -907,7 +907,7 @@ struct nondeterministic_policy_t : tree_update_policy_t<i_t, f_t> {
   {
   }
 
-  f_t upper_bound() const override { return bnb.upper_bound_.load(); }
+  f_t upper_bound() const override { return bnb.get_cutoff(); }
 
   void update_pseudo_costs(mip_node_t<i_t, f_t>* node, f_t leaf_obj) override
   {
@@ -1329,10 +1329,11 @@ dual::status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(
 
   simplex_solver_settings_t lp_settings = settings_;
   lp_settings.set_log(false);
+  f_t cutoff = get_cutoff();
   if (original_lp_.objective_is_integral) {
-    lp_settings.cut_off = std::ceil(upper_bound_ - settings_.integer_tol) + settings_.dual_tol;
+    lp_settings.cut_off = std::ceil(cutoff - settings_.integer_tol) + settings_.dual_tol;
   } else {
-    lp_settings.cut_off = upper_bound_ + settings_.dual_tol;
+    lp_settings.cut_off = cutoff + settings_.dual_tol;
   }
   lp_settings.inside_mip    = 2;
   lp_settings.time_limit    = settings_.time_limit - toc(exploration_stats_.start_time);
@@ -1471,7 +1472,7 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(branch_and_bound_worker_t<i_t, f_
     rel_gap     = user_relative_gap(original_lp_, upper_bound, lower_bound);
     abs_gap     = lower_bound - lower_bound;
 
-    if (node_ptr->lower_bound > upper_bound) {
+    if (node_ptr->lower_bound > get_cutoff()) {
       search_tree_.graphviz_node(settings_.log, node_ptr, "cutoff", node_ptr->lower_bound);
       search_tree_.update(node_ptr, node_status_t::FATHOMED);
       worker->recompute_basis  = true;
@@ -1597,7 +1598,7 @@ void branch_and_bound_t<i_t, f_t>::dive_with(branch_and_bound_worker_t<i_t, f_t>
     rel_gap     = user_relative_gap(original_lp_, upper_bound, lower_bound);
     abs_gap     = lower_bound - lower_bound;
 
-    if (node_ptr->lower_bound > upper_bound) {
+    if (node_ptr->lower_bound > get_cutoff()) {
       worker->recompute_basis  = true;
       worker->recompute_bounds = true;
       continue;
@@ -1731,7 +1732,7 @@ void branch_and_bound_t<i_t, f_t>::run_scheduler()
         std::optional<mip_node_t<i_t, f_t>*> start_node = node_queue_.pop_best_first();
 
         if (!start_node.has_value()) { continue; }
-        if (upper_bound_ < start_node.value()->lower_bound) {
+        if (get_cutoff() < start_node.value()->lower_bound) {
           // This node was put on the heap earlier but its lower bound is now greater than the
           // current upper bound
           search_tree_.graphviz_node(
@@ -1767,7 +1768,7 @@ void branch_and_bound_t<i_t, f_t>::run_scheduler()
         std::optional<mip_node_t<i_t, f_t>*> start_node = node_queue_.pop_diving();
 
         if (!start_node.has_value()) { continue; }
-        if (upper_bound_ < start_node.value()->lower_bound ||
+        if (get_cutoff() < start_node.value()->lower_bound ||
             start_node.value()->depth < diving_settings.min_node_depth) {
           continue;
         }
@@ -1835,7 +1836,7 @@ void branch_and_bound_t<i_t, f_t>::single_threaded_solve()
     std::optional<mip_node_t<i_t, f_t>*> start_node = node_queue_.pop_best_first();
 
     if (!start_node.has_value()) { continue; }
-    if (upper_bound_ < start_node.value()->lower_bound) {
+    if (get_cutoff() < start_node.value()->lower_bound) {
       // This node was put on the heap earlier but its lower bound is now greater than the
       // current upper bound
       search_tree_.graphviz_node(
@@ -2342,18 +2343,18 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
       std::vector<f_t> new_lower;
       std::vector<f_t> new_upper;
 
-      if (settings_.reduced_cost_strengthening >= 1 && upper_bound_.load() < last_upper_bound) {
+      if (settings_.reduced_cost_strengthening >= 1 && get_cutoff() < last_upper_bound) {
         mutex_original_lp_.lock();
         new_lower = original_lp_.lower;
         new_upper = original_lp_.upper;
         mutex_original_lp_.unlock();
         mutex_upper_.lock();
-        last_upper_bound = upper_bound_.load();
+        last_upper_bound = get_cutoff();
         reduced_cost_fixing(root_relax_soln_.z,
                             var_types_,
                             settings_,
                             root_objective_,
-                            upper_bound_.load(),
+                            get_cutoff(),
                             new_lower,
                             new_upper,
                             bounds_changed);
@@ -2544,7 +2545,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     return solver_status_;
   }
 
-  if (settings_.reduced_cost_strengthening >= 2 && upper_bound_.load() < last_upper_bound) {
+  if (settings_.reduced_cost_strengthening >= 2 && get_cutoff() < last_upper_bound) {
     std::vector<bool> bounds_changed;
 
     mutex_original_lp_.lock();
@@ -2557,7 +2558,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                                                          var_types_,
                                                          settings_,
                                                          root_objective_,
-                                                         upper_bound_.load(),
+                                                         get_cutoff(),
                                                          lower_bounds,
                                                          upper_bounds,
                                                          bounds_changed);
@@ -2665,7 +2666,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
         std::optional<mip_node_t<i_t, f_t>*> start_node = node_queue_.pop_best_first();
 
         if (!start_node.has_value()) { continue; }
-        if (upper_bound_ < start_node.value()->lower_bound) {
+        if (get_cutoff() < start_node.value()->lower_bound) {
           // This node was put on the heap earlier but its lower bound is now greater than the
           // current upper bound
           search_tree_.graphviz_node(
@@ -3521,7 +3522,7 @@ void branch_and_bound_t<i_t, f_t>::deterministic_sort_replay_events(
 template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::deterministic_prune_worker_nodes_vs_incumbent()
 {
-  f_t upper_bound = upper_bound_.load();
+  f_t upper_bound = get_cutoff();
 
   for (auto& worker : *deterministic_workers_) {
     // Check nodes in plunge stack - filter in place
@@ -3657,14 +3658,14 @@ void branch_and_bound_t<i_t, f_t>::deterministic_populate_diving_heap()
   const int num_diving                  = deterministic_diving_workers_->size();
   constexpr int target_nodes_per_worker = 10;
   const int target_total                = num_diving * target_nodes_per_worker;
-  f_t upper_bound                       = upper_bound_.load();
+  f_t cutoff                            = get_cutoff();
 
   // Collect candidate nodes from BFS worker backlog heaps
   std::vector<std::pair<mip_node_t<i_t, f_t>*, f_t>> candidates;
 
   for (auto& worker : *deterministic_workers_) {
     for (auto* node : worker.backlog.data()) {
-      if (node->lower_bound < upper_bound) {
+      if (node->lower_bound < cutoff) {
         f_t score = node->objective_estimate;
         if (score >= inf) { score = node->lower_bound; }
         candidates.push_back({node, score});
