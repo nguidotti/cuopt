@@ -1470,7 +1470,7 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(branch_and_bound_worker_t<i_t, f_
     lower_bound = get_lower_bound();
     upper_bound = upper_bound_;
     rel_gap     = user_relative_gap(original_lp_, upper_bound, lower_bound);
-    abs_gap     = lower_bound - lower_bound;
+    abs_gap     = upper_bound - lower_bound;
 
     if (node_ptr->lower_bound > get_cutoff()) {
       search_tree_.graphviz_node(settings_.log, node_ptr, "cutoff", node_ptr->lower_bound);
@@ -1596,7 +1596,7 @@ void branch_and_bound_t<i_t, f_t>::dive_with(branch_and_bound_worker_t<i_t, f_t>
     lower_bound = get_lower_bound();
     upper_bound = upper_bound_;
     rel_gap     = user_relative_gap(original_lp_, upper_bound, lower_bound);
-    abs_gap     = lower_bound - lower_bound;
+    abs_gap     = upper_bound - lower_bound;
 
     if (node_ptr->lower_bound > get_cutoff()) {
       worker->recompute_basis  = true;
@@ -2488,7 +2488,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
       report(' ', obj, root_objective_, 0, num_fractional);
 
       f_t rel_gap = user_relative_gap(original_lp_, upper_bound_.load(), root_objective_);
-      f_t abs_gap = upper_bound_ - root_relax_objective;
+      f_t abs_gap = upper_bound_.load() - root_objective_;
       if (rel_gap < settings_.relative_mip_gap_tol || abs_gap < settings_.absolute_mip_gap_tol) {
         set_solution_at_root(solution, cut_info);
         set_final_solution(solution, root_objective_);
