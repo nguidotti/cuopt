@@ -347,7 +347,7 @@ void branch_and_bound_t<i_t, f_t>::report_heuristic(f_t obj)
     std::string user_gap_text = to_percentage(user_gap);
 
     std::string log_line =
-      std::format("H {:>12} {:>12} {:^19.6e} {:^15.6e} {:>8} {:>7} {:^11} {:^11} {:^15}",
+      std::format("H {:>12} {:>12} {:^+19.6e} {:^+15.6e} {:>8} {:>7} {:^11} {:^11} {:^15}",
                   "",  // nodes explored
                   "",  // nodes unexplored
                   user_obj,
@@ -397,7 +397,7 @@ void branch_and_bound_t<i_t, f_t>::report(
   std::string tree_completion = to_percentage(search_tree_.progress.load());
 
   std::string log_line =
-    std::format("{:^1} {:>12} {:>12} {:^19.6e} {:^15.6e} {:>8} {:>7} {:^11.1e} {:^11} {:^15}",
+    std::format("{:^1} {:>12} {:>12} {:^+19.6e} {:^+15.6e} {:>8} {:>7} {:^11.1e} {:^11} {:^15}",
                 symbol,
                 nodes_explored,
                 nodes_unexplored,
@@ -1523,7 +1523,7 @@ dual::status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(
                                                   worker->leaf_edge_norms);
 
       if (lp_status == dual::status_t::NUMERICAL) {
-        log.debug("Numerical issue node %d. Resolving from scratch.\n", node_ptr->node_id);
+        log.debug_format("Numerical issue node {}. Resolving from scratch.\n", node_ptr->node_id);
         lp_status_t second_status =
           solve_linear_program_with_advanced_basis(worker->leaf_problem,
                                                    lp_start_time,
