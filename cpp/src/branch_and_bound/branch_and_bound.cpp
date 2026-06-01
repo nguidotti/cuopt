@@ -373,10 +373,9 @@ void branch_and_bound_t<i_t, f_t>::report_heuristic(f_t obj)
         user_gap_text,
         toc(exploration_stats_.start_time));
     } else {
-      settings_.log.print_format(
-        "New solution from primal heuristics. Objective {:+.6e}. Time {:.2f}\n",
-        compute_user_objective(original_lp_, obj),
-        toc(exploration_stats_.start_time));
+      settings_.log.printf("New solution from primal heuristics. Objective %+.6e. Time %.2f\n",
+                           compute_user_objective(original_lp_, obj),
+                           toc(exploration_stats_.start_time));
     }
   }
 }
@@ -1523,7 +1522,7 @@ dual::status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(
                                                   worker->leaf_edge_norms);
 
       if (lp_status == dual::status_t::NUMERICAL) {
-        log.debug_format("Numerical issue node {}. Resolving from scratch.\n", node_ptr->node_id);
+        log.debug("Numerical issue node %d. Resolving from scratch.\n", node_ptr->node_id);
         lp_status_t second_status =
           solve_linear_program_with_advanced_basis(worker->leaf_problem,
                                                    lp_start_time,
@@ -3491,8 +3490,7 @@ node_status_t branch_and_bound_t<i_t, f_t>::solve_node_deterministic(
                                                              &worker.work_context);
 
   if (lp_status == dual::status_t::NUMERICAL) {
-    settings_.log.print_format("Numerical issue node {}. Resolving from scratch.\n",
-                               node_ptr->node_id);
+    settings_.log.printf("Numerical issue node %d. Resolving from scratch.\n", node_ptr->node_id);
     lp_status_t second_status = solve_linear_program_with_advanced_basis(worker.leaf_problem,
                                                                          lp_start_time,
                                                                          lp_settings,
