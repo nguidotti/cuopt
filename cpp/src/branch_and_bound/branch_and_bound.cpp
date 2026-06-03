@@ -1554,7 +1554,8 @@ bool branch_and_bound_t<i_t, f_t>::should_restart(f_t current_abs_gap)
 {
   if (settings_.sub_mip || restart_count_ >= settings_.max_restarts) return false;
 
-  i_t num_nodes = exploration_stats_.nodes_explored;
+  i_t num_nodes   = exploration_stats_.nodes_explored;
+  i_t total_nodes = exploration_stats_.total_nodes_explored;
   if (num_nodes < settings_.restart_min_nodes) return false;
 
   i_t nodes_since_last_check = num_nodes - exploration_stats_.restart_nodes_at_last_check;
@@ -1564,6 +1565,7 @@ bool branch_and_bound_t<i_t, f_t>::should_restart(f_t current_abs_gap)
   f_t progress_since_last_check =
     std::max(current_progress - exploration_stats_.restart_progress_at_last_check, 1E-6);
   i_t tree_size_estimate =
+    exploration_stats_.restart_nodes_at_last_check +
     nodes_since_last_check * (1.0 - current_progress) / progress_since_last_check;
 
   f_t gap_reduction = exploration_stats_.restart_gap_at_last_check / current_abs_gap;
@@ -1579,10 +1581,13 @@ bool branch_and_bound_t<i_t, f_t>::should_restart(f_t current_abs_gap)
     gap_reduction,
     tree_size_estimate);
 
-  if (gap_reduction < 1.0 && tree_size_estimate >= settings_.restart_tree_size_factor * num_nodes) {
+  if (gap_reduction < 1.05 &&
+      tree_size_estimate >= settings_.restart_tree_size_factor * total_nodes) {
     ++exploration_stats_.restart_large_tree_count;
+    i_t min_count =
+      settings_.restart_min_estimates + total_nodes * settings_.restart_threshold_grow_per_node;
     return exploration_stats_.restart_large_tree_count >=
-           settings_.restart_consecutive_large_tree_estimate;
+           min_count * std::pow(settings_.restart_threshold_grow_per_restart, restart_count_);
   }
 
   exploration_stats_.restart_large_tree_count       = 0;
@@ -1690,6 +1695,7 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
     dual::status_t lp_status = solve_node_lp(node_ptr, worker, exploration_stats_, settings_.log);
     ++exploration_stats_.nodes_since_last_log;
     ++exploration_stats_.nodes_explored;
+    ++exploration_stats_.total_nodes_explored;
     --exploration_stats_.nodes_unexplored;
     --exploration_stats_.nodes_being_solved;
 
@@ -2488,13 +2494,14 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   raft::common::nvtx::range scope("BB::solve");
 
   logger_t log;
-  log.log                             = false;
-  log.log_prefix                      = settings_.log.log_prefix;
-  solver_status_                      = mip_status_t::UNSET;
-  is_running_                         = false;
-  root_lp_current_lower_bound_        = -inf;
-  exploration_stats_.nodes_unexplored = 0;
-  exploration_stats_.nodes_explored   = 0;
+  log.log                                 = false;
+  log.log_prefix                          = settings_.log.log_prefix;
+  solver_status_                          = mip_status_t::UNSET;
+  is_running_                             = false;
+  root_lp_current_lower_bound_            = -inf;
+  exploration_stats_.nodes_unexplored     = 0;
+  exploration_stats_.total_nodes_explored = 0;
+  exploration_stats_.nodes_explored       = 0;
   original_lp_.A.to_compressed_row(Arow_);
 
   settings_.log.printf("Reduced cost strengthening enabled: %d\n",
@@ -2923,7 +2930,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     }
 
     if (solver_status_ == mip_status_t::RESTART) {
-      settings_.log.print_format("\n\nRestarting B&B after {}s and {} nodes\n",
+      settings_.log.print_format("\n\nRestarting B&B after {:.2f}s and {} nodes\n",
                                  toc(exploration_stats_.start_time),
                                  exploration_stats_.nodes_explored.load());
       search_tree_.clean();
@@ -2951,7 +2958,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     exploration_stats_.nodes_explored                 = 0;
     exploration_stats_.nodes_unexplored               = 2;
     exploration_stats_.nodes_since_last_log           = 0;
-    exploration_stats_.last_log                       = tic();
+    exploration_stats_.last_log                       = 0;
     exploration_stats_.restart_large_tree_count       = 0;
     exploration_stats_.restart_gap_at_last_check      = upper_bound_ - get_lower_bound();
     exploration_stats_.restart_nodes_at_last_check    = 0;

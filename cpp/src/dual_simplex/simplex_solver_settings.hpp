@@ -224,11 +224,13 @@ struct simplex_solver_settings_t {
   i_t bnb_nodes_per_steal;
   i_t bnb_max_steal_attempts;
 
-  i_t restart_min_nodes                       = 10000;
-  i_t restart_consecutive_large_tree_estimate = 10;
-  i_t restart_tree_size_factor                = 25;
-  i_t restart_check_freq                      = 100;
-  i_t max_restarts                            = 3;
+  i_t restart_min_nodes                  = 1000;
+  i_t restart_min_estimates              = 10;
+  f_t restart_threshold_grow_per_node    = 0.001;
+  f_t restart_threshold_grow_per_restart = 1.5;
+  i_t restart_tree_size_factor           = 50;
+  i_t restart_check_freq                 = 100;
+  i_t max_restarts                       = 50;
 
   // Settings for the reliability branching.
   // - -1: automatic
