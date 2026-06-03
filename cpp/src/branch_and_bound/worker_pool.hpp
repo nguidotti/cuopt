@@ -91,6 +91,17 @@ class worker_pool_t {
   i_t num_idle() const { return num_idle_workers_; }
   i_t size() const { return workers_.size(); }
 
+  void reset()
+  {
+    std::lock_guard lock(mutex_);
+    num_idle_workers_ = workers_.size();
+    idle_workers_.clear_resize(workers_.size());
+    for (i_t i = 0; i < workers_.size(); ++i) {
+      workers_[i]->reset_state();
+      idle_workers_.push_back(i);
+    }
+  }
+
  private:
   std::vector<std::unique_ptr<WorkerType>> workers_;
   bool is_initialized_ = false;

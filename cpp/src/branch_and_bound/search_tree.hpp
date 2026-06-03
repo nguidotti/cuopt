@@ -173,6 +173,7 @@ class search_tree_t {
   omp_atomic_t<i_t> num_inner_nodes = 0;
 
   // Track the solver progress based on how much the tree was explored
+  // using the tree weight metric
   omp_atomic_t<f_t> progress = 0;
 
   static constexpr bool write_graphviz = false;

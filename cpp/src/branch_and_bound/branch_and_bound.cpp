@@ -1550,6 +1550,49 @@ dual::status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(
 }
 
 template <typename i_t, typename f_t>
+bool branch_and_bound_t<i_t, f_t>::should_restart(f_t current_abs_gap)
+{
+  if (settings_.sub_mip || restart_count_ >= settings_.max_restarts) return false;
+
+  i_t num_nodes = exploration_stats_.nodes_explored;
+  if (num_nodes < settings_.restart_min_nodes) return false;
+
+  i_t nodes_since_last_check = num_nodes - exploration_stats_.restart_nodes_at_last_check;
+  if (nodes_since_last_check < settings_.restart_check_freq) return false;
+
+  f_t current_progress = search_tree_.progress;
+  f_t progress_since_last_check =
+    std::max(current_progress - exploration_stats_.restart_progress_at_last_check, 1E-6);
+  i_t tree_size_estimate =
+    nodes_since_last_check * (1.0 - current_progress) / progress_since_last_check;
+
+  f_t gap_reduction = exploration_stats_.restart_gap_at_last_check / current_abs_gap;
+
+  settings_.log.debug_format(
+    "[Restart] Current: explored={}, progress={:.4g}, gap={:.4g}. Since last: explored={}, "
+    "progress={:.4g}, gap={:.4g}. Tree size estimate={}",
+    num_nodes,
+    current_progress,
+    current_abs_gap,
+    nodes_since_last_check,
+    progress_since_last_check,
+    gap_reduction,
+    tree_size_estimate);
+
+  if (gap_reduction < 1.0 && tree_size_estimate >= settings_.restart_tree_size_factor * num_nodes) {
+    ++exploration_stats_.restart_large_tree_count;
+    return exploration_stats_.restart_large_tree_count >=
+           settings_.restart_consecutive_large_tree_estimate;
+  }
+
+  exploration_stats_.restart_large_tree_count       = 0;
+  exploration_stats_.restart_gap_at_last_check      = current_abs_gap;
+  exploration_stats_.restart_progress_at_last_check = current_progress;
+  exploration_stats_.restart_nodes_at_last_check    = num_nodes;
+  return false;
+}
+
+template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
                                                mip_node_t<i_t, f_t>* start_node)
 {
@@ -1572,7 +1615,14 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
 
   while (stack.size() > 0 && (solver_status_ == mip_status_t::UNSET && is_running_) &&
          rel_gap > settings_.relative_mip_gap_tol && abs_gap > settings_.absolute_mip_gap_tol) {
-    if (worker->worker_id == 0) { repair_heuristic_solutions(); }
+    if (worker->worker_id == 0) {
+      if (should_restart(abs_gap)) {
+        solver_status_ = mip_status_t::RESTART;
+        break;
+      }
+
+      repair_heuristic_solutions();
+    }
 
     if (worker->total_active_diving_workers < worker->total_max_diving_workers &&
         worker->node_queue.diving_queue_size() > 0) {
@@ -2835,20 +2885,6 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     }
   }
 
-  // Choose variable to branch on
-  i_t branch_var = pc_.variable_selection(fractional, root_relax_soln_.x);
-
-  search_tree_.root      = std::move(mip_node_t<i_t, f_t>(root_objective_, root_vstatus_));
-  search_tree_.num_nodes = 0;
-  search_tree_.graphviz_node(settings_.log, &search_tree_.root, "lower bound", root_objective_);
-  search_tree_.branch(&search_tree_.root,
-                      branch_var,
-                      root_relax_soln_.x[branch_var],
-                      num_fractional,
-                      root_vstatus_,
-                      original_lp_,
-                      log);
-
   if (symmetry_ != nullptr) {
     i_t removed =
       symmetry_->generators.template prune_by_bounds<f_t>(original_lp_.lower, original_lp_.upper);
@@ -2861,49 +2897,84 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     }
   }
 
-  settings_.log.printf("Exploring the B&B tree using %d threads\n\n", settings_.num_threads);
-  node_concurrent_halt_ = 0;
-
-  exploration_stats_.nodes_explored       = 0;
-  exploration_stats_.nodes_unexplored     = 2;
-  exploration_stats_.nodes_since_last_log = 0;
-  exploration_stats_.last_log             = tic();
-  min_node_queue_size_                    = 20;
-
   if (settings_.diving_settings.coefficient_diving != 0) {
     calculate_variable_locks(original_lp_, var_up_locks_, var_down_locks_);
   }
-  print_table_header();
+
+  settings_.log.printf("Exploring the B&B tree using %d threads\n\n", settings_.num_threads);
+
+  const i_t num_workers        = settings_.num_threads;
+  const i_t num_bfs_workers    = std::max(settings_.num_threads / 2, 1);
+  const i_t num_diving_workers = num_workers - num_bfs_workers;
+  bfs_worker_pool_.init(num_bfs_workers, original_lp_, Arow_, var_types_, symmetry_, settings_);
+
+  if (num_diving_workers > 0) {
+    diving_worker_pool_.init(
+      num_diving_workers, original_lp_, Arow_, var_types_, symmetry_, settings_, num_bfs_workers);
+  }
+
+  restart_count_       = 0;
+  min_node_queue_size_ = 20;
+
+  do {
+    if (toc(exploration_stats_.start_time) > settings_.time_limit) {
+      solver_status_ = mip_status_t::TIME_LIMIT;
+      break;
+    }
+
+    if (solver_status_ == mip_status_t::RESTART) {
+      settings_.log.print_format("\n\nRestarting B&B after {}s and {} nodes\n",
+                                 toc(exploration_stats_.start_time),
+                                 exploration_stats_.nodes_explored.load());
+      search_tree_.clean();
+      bfs_worker_pool_.reset();
+      diving_worker_pool_.reset();
+      solver_status_ = mip_status_t::UNSET;
+      ++restart_count_;
+    }
+
+    // Choose variable to branch on
+    i_t branch_var = pc_.variable_selection(fractional, root_relax_soln_.x);
+
+    search_tree_.root      = std::move(mip_node_t<i_t, f_t>(root_objective_, root_vstatus_));
+    search_tree_.num_nodes = 0;
+    search_tree_.graphviz_node(settings_.log, &search_tree_.root, "lower bound", root_objective_);
+    search_tree_.branch(&search_tree_.root,
+                        branch_var,
+                        root_relax_soln_.x[branch_var],
+                        num_fractional,
+                        root_vstatus_,
+                        original_lp_,
+                        log);
+
+    node_concurrent_halt_                             = 0;
+    exploration_stats_.nodes_explored                 = 0;
+    exploration_stats_.nodes_unexplored               = 2;
+    exploration_stats_.nodes_since_last_log           = 0;
+    exploration_stats_.last_log                       = tic();
+    exploration_stats_.restart_large_tree_count       = 0;
+    exploration_stats_.restart_gap_at_last_check      = upper_bound_ - get_lower_bound();
+    exploration_stats_.restart_nodes_at_last_check    = 0;
+    exploration_stats_.restart_progress_at_last_check = 0;
+
+    print_table_header();
 
 #pragma omp taskgroup
-  {
-    if (settings_.deterministic) {
-      run_deterministic_coordinator(Arow_);
-    } else {
-      const i_t num_workers        = settings_.num_threads;
-      const i_t num_bfs_workers    = std::max(settings_.num_threads / 2, 1);
-      const i_t num_diving_workers = num_workers - num_bfs_workers;
-      bfs_worker_pool_.init(num_bfs_workers, original_lp_, Arow_, var_types_, symmetry_, settings_);
-
-      if (num_diving_workers > 0) {
-        diving_worker_pool_.init(num_diving_workers,
-                                 original_lp_,
-                                 Arow_,
-                                 var_types_,
-                                 symmetry_,
-                                 settings_,
-                                 num_bfs_workers);
+    {
+      if (settings_.deterministic) {
+        run_deterministic_coordinator(Arow_);
+      } else {
+        bfs_worker_t<i_t, f_t>* initial_worker = bfs_worker_pool_.pop_idle_worker();
+        node_queue_t<i_t, f_t>& node_queue     = initial_worker->node_queue;
+        node_queue.push_lockfree(search_tree_.root.get_down_child());
+        node_queue.push_lockfree(search_tree_.root.get_up_child());
+        initial_worker->lower_bound = initial_worker->node_queue.get_lower_bound();
+        initial_worker->set_active();
+        best_first_search_with(initial_worker);
       }
+    }  // Implicit barrier for all tasks created within the group (RINS, B&B workers)
 
-      bfs_worker_t<i_t, f_t>* initial_worker = bfs_worker_pool_.pop_idle_worker();
-      node_queue_t<i_t, f_t>& node_queue     = initial_worker->node_queue;
-      node_queue.push_lockfree(search_tree_.root.get_down_child());
-      node_queue.push_lockfree(search_tree_.root.get_up_child());
-      initial_worker->lower_bound = initial_worker->node_queue.get_lower_bound();
-      initial_worker->set_active();
-      best_first_search_with(initial_worker);
-    }
-  }  // Implicit barrier for all tasks created within the group (RINS, B&B workers)
+  } while (solver_status_ == mip_status_t::RESTART);
 
   is_running_ = false;
 

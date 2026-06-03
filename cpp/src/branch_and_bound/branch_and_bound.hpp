@@ -60,6 +60,7 @@ enum class mip_status_t {
   NUMERICAL  = 5,  // The solver encountered a numerical error
   UNSET      = 6,  // The status is not set
   WORK_LIMIT = 7,  // The solver reached a deterministic work limit
+  RESTART    = 8,  // The solver triggered a restart
 };
 
 template <typename i_t, typename f_t>
@@ -264,6 +265,8 @@ class branch_and_bound_t {
   omp_atomic_t<f_t> lower_bound_numerical_;
   std::function<void(f_t)> user_bound_callback_;
 
+  i_t restart_count_;
+
   void print_table_header();
   void report_heuristic(f_t obj);
   void report(char symbol,
@@ -315,6 +318,8 @@ class branch_and_bound_t {
 
   // Repairs low-quality solutions from the heuristics, if it is applicable.
   void repair_heuristic_solutions();
+
+  bool should_restart(f_t current_abs_gap);
 
   // Launch a new diving worker from a given best-first worker.
   bool launch_diving_worker(bfs_worker_t<i_t, f_t>* bfs_worker);
