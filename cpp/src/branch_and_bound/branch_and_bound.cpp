@@ -748,7 +748,7 @@ void branch_and_bound_t<i_t, f_t>::set_final_solution(mip_solution_t<i_t, f_t>& 
   bool is_maximization = original_lp_.obj_scale < 0.0;
 
   settings_.log.printf("Explored %d nodes in %.2fs.\n",
-                       exploration_stats_.nodes_explored,
+                       exploration_stats_.total_nodes_explored,
                        toc(exploration_stats_.start_time));
   if (exploration_stats_.orbital_fixing_nodes.load() > 0 ||
       exploration_stats_.orbital_conflict_nodes.load() > 0) {
@@ -809,7 +809,7 @@ void branch_and_bound_t<i_t, f_t>::set_final_solution(mip_solution_t<i_t, f_t>& 
     solution.objective = incumbent_.objective;
   }
   solution.lower_bound        = lower_bound;
-  solution.nodes_explored     = exploration_stats_.nodes_explored;
+  solution.nodes_explored     = exploration_stats_.total_nodes_explored;
   solution.simplex_iterations = exploration_stats_.total_lp_iters;
 }
 
