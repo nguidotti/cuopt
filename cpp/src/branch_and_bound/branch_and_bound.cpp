@@ -1680,7 +1680,7 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
       break;
     }
 
-    if (exploration_stats_.nodes_explored + exploration_stats_.nodes_being_solved >
+    if (exploration_stats_.total_nodes_explored + exploration_stats_.nodes_being_solved >
         settings_.node_limit) {
       solver_status_ = mip_status_t::NODE_LIMIT;
       stack.push_front(node_ptr);
@@ -2528,20 +2528,6 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   exploration_stats_.nodes_explored       = 0;
   original_lp_.A.to_compressed_row(Arow_);
 
-  if (settings_.diving_settings.coefficient_diving != 0) {
-    calculate_variable_locks(original_lp_, var_up_locks_, var_down_locks_);
-  }
-
-  const i_t num_workers        = settings_.num_threads;
-  const i_t num_bfs_workers    = std::max(settings_.num_threads / 2, 1);
-  const i_t num_diving_workers = num_workers - num_bfs_workers;
-  bfs_worker_pool_.init(num_bfs_workers, original_lp_, Arow_, var_types_, symmetry_, settings_);
-
-  if (num_diving_workers > 0) {
-    diving_worker_pool_.init(
-      num_diving_workers, original_lp_, Arow_, var_types_, symmetry_, settings_, num_bfs_workers);
-  }
-
   settings_.log.printf("Reduced cost strengthening enabled: %d\n",
                        settings_.reduced_cost_strengthening);
 
@@ -2884,6 +2870,20 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     solver_status_ = mip_status_t::TIME_LIMIT;
     set_final_solution(solution, root_objective_);
     return solver_status_;
+  }
+
+  if (settings_.diving_settings.coefficient_diving != 0) {
+    calculate_variable_locks(original_lp_, var_up_locks_, var_down_locks_);
+  }
+
+  const i_t num_workers        = settings_.num_threads;
+  const i_t num_bfs_workers    = std::max(settings_.num_threads / 2, 1);
+  const i_t num_diving_workers = num_workers - num_bfs_workers;
+  bfs_worker_pool_.init(num_bfs_workers, original_lp_, Arow_, var_types_, symmetry_, settings_);
+
+  if (num_diving_workers > 0) {
+    diving_worker_pool_.init(
+      num_diving_workers, original_lp_, Arow_, var_types_, symmetry_, settings_, num_bfs_workers);
   }
 
   do {
