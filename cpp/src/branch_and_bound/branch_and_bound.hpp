@@ -84,6 +84,7 @@ class branch_and_bound_t {
   branch_and_bound_t(const user_problem_t<i_t, f_t>& user_problem,
                      const simplex_solver_settings_t<i_t, f_t>& solver_settings,
                      f_t start_time,
+                     std::atomic<int>* restart_concurrent_halt,
                      const probing_implied_bound_t<i_t, f_t>& probing_implied_bound,
                      std::shared_ptr<detail::clique_table_t<i_t, f_t>> clique_table = nullptr,
                      mip_symmetry_t<i_t, f_t>* symmetry                             = nullptr);
@@ -236,6 +237,7 @@ class branch_and_bound_t {
   bool enable_concurrent_lp_root_solve_{false};
   std::atomic<int> root_concurrent_halt_{0};
   std::atomic<int> node_concurrent_halt_{0};
+  std::atomic<int>* restart_concurrent_halt_{nullptr};
   bool is_root_solution_set{false};
 
   // Pseudocosts

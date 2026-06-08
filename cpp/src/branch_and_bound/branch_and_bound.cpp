@@ -236,6 +236,7 @@ branch_and_bound_t<i_t, f_t>::branch_and_bound_t(
   const user_problem_t<i_t, f_t>& user_problem,
   const simplex_solver_settings_t<i_t, f_t>& solver_settings,
   f_t start_time,
+  std::atomic<int>* restart_concurrent_halt,
   const probing_implied_bound_t<i_t, f_t>& probing_implied_bound,
   std::shared_ptr<detail::clique_table_t<i_t, f_t>> clique_table,
   mip_symmetry_t<i_t, f_t>* symmetry)
@@ -249,6 +250,7 @@ branch_and_bound_t<i_t, f_t>::branch_and_bound_t(
     incumbent_(1),
     root_relax_soln_(1, 1),
     root_crossover_soln_(1, 1),
+    restart_concurrent_halt_(restart_concurrent_halt),
     pc_(1, solver_settings),
     solver_status_(mip_status_t::UNSET)
 {
@@ -285,6 +287,7 @@ branch_and_bound_t<i_t, f_t>::branch_and_bound_t(
   upper_bound_                 = inf;
   root_objective_              = std::numeric_limits<f_t>::quiet_NaN();
   root_lp_current_lower_bound_ = -inf;
+  pc_.concurrent_halt_         = &node_concurrent_halt_;
 }
 
 template <typename i_t, typename f_t>
@@ -381,15 +384,14 @@ void branch_and_bound_t<i_t, f_t>::report(
   char symbol, f_t obj, f_t lower_bound, i_t node_depth, i_t node_int_infeas, double work_time)
 {
   update_user_bound(lower_bound);
-  const i_t nodes_explored    = exploration_stats_.nodes_explored;
-  const i_t nodes_unexplored  = exploration_stats_.nodes_unexplored;
-  const f_t user_obj          = compute_user_objective(original_lp_, obj);
-  const f_t user_lower        = compute_user_objective(original_lp_, lower_bound);
-  const f_t iters             = static_cast<f_t>(exploration_stats_.total_lp_iters);
-  const f_t iter_node         = nodes_explored > 0 ? iters / nodes_explored : iters;
-  f_t user_gap                = user_relative_gap(original_lp_, obj, lower_bound);
-  std::string user_gap_text   = to_percentage(user_gap);
-  std::string tree_completion = to_percentage(search_tree_.progress.load());
+  const i_t nodes_explored   = exploration_stats_.nodes_explored;
+  const i_t nodes_unexplored = exploration_stats_.nodes_unexplored;
+  const f_t user_obj         = compute_user_objective(original_lp_, obj);
+  const f_t user_lower       = compute_user_objective(original_lp_, lower_bound);
+  const f_t iters            = static_cast<f_t>(exploration_stats_.total_lp_iters);
+  const f_t iter_node        = nodes_explored > 0 ? iters / nodes_explored : iters;
+  f_t user_gap               = user_relative_gap(original_lp_, obj, lower_bound);
+  std::string user_gap_text  = to_percentage(user_gap);
 
   std::string log_line =
     std::format("{:^1} {:>12} {:>12} {:^+19.6e} {:^+15.6e} {:>8} {:>7} {:^11.1e} {:^11}",
@@ -1596,6 +1598,8 @@ template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
                                                mip_node_t<i_t, f_t>* start_node)
 {
+  raft::common::nvtx::range scope_guess("BB::plunge");
+
   assert(worker != nullptr && worker->is_active.load());
   assert(start_node != nullptr);
 
@@ -1617,21 +1621,18 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
          rel_gap > settings_.relative_mip_gap_tol && abs_gap > settings_.absolute_mip_gap_tol) {
     if (worker->worker_id == 0) {
       if (should_restart(abs_gap)) {
-        solver_status_ = mip_status_t::RESTART;
+        mip_node_t<i_t, f_t>* node = stack.front();
+        report(' ', upper_bound_, lower_bound, node->depth, node->integer_infeasible);
+        solver_status_            = mip_status_t::RESTART;
+        node_concurrent_halt_     = 1;
+        *restart_concurrent_halt_ = 1;
         break;
       }
 
       repair_heuristic_solutions();
     }
 
-    if (worker->total_active_diving_workers < worker->total_max_diving_workers &&
-        worker->node_queue.diving_queue_size() > 0) {
-      launch_diving_worker(worker);
-    }
-
-    if (bfs_worker_pool_.num_idle() > 0 && worker->node_queue.best_first_queue_size() > 0) {
-      launch_bfs_worker(worker);
-    }
+    if (*restart_concurrent_halt_ == 1) { break; }
 
     assert(stack.size() <= 2);
     mip_node_t<i_t, f_t>* node_ptr = stack.front();
@@ -1752,6 +1753,15 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
     upper_bound = upper_bound_;
     rel_gap     = user_relative_gap(original_lp_, upper_bound, lower_bound);
     abs_gap     = compute_user_abs_gap(original_lp_, upper_bound, lower_bound);
+
+    if (worker->total_active_diving_workers < worker->total_max_diving_workers &&
+        worker->node_queue.diving_queue_size() > 0) {
+      launch_diving_worker(worker);
+    }
+
+    if (bfs_worker_pool_.num_idle() > 0 && worker->node_queue.best_first_queue_size() > 0) {
+      launch_bfs_worker(worker);
+    }
   }
 
   // If the solver exits early without consuming the local stack, or converged according to
@@ -1771,6 +1781,8 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
 template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::launch_bfs_worker(bfs_worker_t<i_t, f_t>* worker)
 {
+  raft::common::nvtx::range scope_guess("BB::launch_bfs_worker");
+
   bfs_worker_t<i_t, f_t>* idle_worker = bfs_worker_pool_.pop_idle_worker();
   if (!idle_worker) return;
 
@@ -1804,6 +1816,8 @@ void branch_and_bound_t<i_t, f_t>::launch_bfs_worker(bfs_worker_t<i_t, f_t>* wor
 template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::work_stealing(bfs_worker_t<i_t, f_t>* worker)
 {
+  raft::common::nvtx::range scope_guess("BB::work_stealing");
+
   i_t nodes_to_steal = settings_.bnb_nodes_per_steal >= 0 ? settings_.bnb_nodes_per_steal
                                                           : MIP_DEFAULT_NODES_PER_STEAL;
   i_t max_attempts   = settings_.bnb_max_steal_attempts >= 0 ? settings_.bnb_max_steal_attempts
@@ -1818,6 +1832,8 @@ void branch_and_bound_t<i_t, f_t>::work_stealing(bfs_worker_t<i_t, f_t>* worker)
 template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::best_first_search_with(bfs_worker_t<i_t, f_t>* worker)
 {
+  raft::common::nvtx::range scope_guess("BB::bfs_worker");
+
   f_t lower_bound = get_lower_bound();
   f_t abs_gap     = compute_user_abs_gap(original_lp_, upper_bound_.load(), lower_bound);
   f_t rel_gap     = user_relative_gap(original_lp_, upper_bound_.load(), lower_bound);
@@ -1849,6 +1865,8 @@ void branch_and_bound_t<i_t, f_t>::best_first_search_with(bfs_worker_t<i_t, f_t>
       break;
     }
 
+    if (*restart_concurrent_halt_ == 1) { break; }
+
     // Pre-emptively set the lower bound of the worker
     worker->lower_bound              = node_queue.get_lower_bound();
     mip_node_t<i_t, f_t>* start_node = node_queue.pop();
@@ -1876,6 +1894,8 @@ void branch_and_bound_t<i_t, f_t>::best_first_search_with(bfs_worker_t<i_t, f_t>
       break;
     }
 
+    if (solver_status_ == mip_status_t::RESTART) { break; }
+
     // Steal a node with some probability or when it is empty. The victim is determined at random.
     if (node_queue.best_first_queue_size() == 0 || worker->rng.next_double() < steal_chance) {
       work_stealing(worker);
@@ -1893,7 +1913,7 @@ void branch_and_bound_t<i_t, f_t>::best_first_search_with(bfs_worker_t<i_t, f_t>
 template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::dive_with(diving_worker_t<i_t, f_t>* worker)
 {
-  raft::common::nvtx::range scope("BB::diving_thread");
+  raft::common::nvtx::range scope("BB::diving_worker");
   if (worker->orbital_fixing) { worker->orbital_fixing->disable(); }
   logger_t log;
   log.log = false;
@@ -1942,6 +1962,7 @@ void branch_and_bound_t<i_t, f_t>::dive_with(diving_worker_t<i_t, f_t>* worker)
       break;
     }
     if (dive_stats.nodes_explored >= diving_node_limit) { break; }
+    if (*restart_concurrent_halt_ == 1) { break; }
 
     dual::status_t lp_status = solve_node_lp(node_ptr, worker, dive_stats, log);
     ++dive_stats.nodes_explored;
@@ -1987,6 +2008,8 @@ void branch_and_bound_t<i_t, f_t>::dive_with(diving_worker_t<i_t, f_t>* worker)
 template <typename i_t, typename f_t>
 bool branch_and_bound_t<i_t, f_t>::launch_diving_worker(bfs_worker_t<i_t, f_t>* bfs_worker)
 {
+  raft::common::nvtx::range scope_guess("BB::launch_diving_worker");
+
   // Get an idle worker.
   diving_worker_t<i_t, f_t>* diving_worker = diving_worker_pool_.pop_idle_worker();
   if (diving_worker == nullptr) { return false; }
@@ -2056,6 +2079,8 @@ lp_status_t branch_and_bound_t<i_t, f_t>::solve_root_relaxation(
   std::vector<i_t>& nonbasic_list,
   std::vector<f_t>& edge_norms)
 {
+  raft::common::nvtx::range scope_guess("BB::solve_root_relaxation");
+
   f_t start_time          = tic();
   f_t user_objective      = 0;
   i_t iter                = 0;
@@ -2227,6 +2252,8 @@ auto branch_and_bound_t<i_t, f_t>::do_cut_pass(
   i_t& cut_pool_size,
   [[maybe_unused]] const std::vector<f_t>& saved_solution) -> cut_pass_result_t
 {
+  raft::common::nvtx::range scope_guess("BB::cut_pass");
+
 #ifdef PRINT_FRACTIONAL_INFO
   settings_.log.printf("Found %d fractional variables on cut pass %d\n", num_fractional, cut_pass);
   for (i_t j : fractional) {
@@ -2493,11 +2520,27 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   log.log_prefix                          = settings_.log.log_prefix;
   solver_status_                          = mip_status_t::UNSET;
   is_running_                             = false;
+  restart_count_                          = 0;
+  min_node_queue_size_                    = 20;
   root_lp_current_lower_bound_            = -inf;
   exploration_stats_.nodes_unexplored     = 0;
   exploration_stats_.total_nodes_explored = 0;
   exploration_stats_.nodes_explored       = 0;
   original_lp_.A.to_compressed_row(Arow_);
+
+  if (settings_.diving_settings.coefficient_diving != 0) {
+    calculate_variable_locks(original_lp_, var_up_locks_, var_down_locks_);
+  }
+
+  const i_t num_workers        = settings_.num_threads;
+  const i_t num_bfs_workers    = std::max(settings_.num_threads / 2, 1);
+  const i_t num_diving_workers = num_workers - num_bfs_workers;
+  bfs_worker_pool_.init(num_bfs_workers, original_lp_, Arow_, var_types_, symmetry_, settings_);
+
+  if (num_diving_workers > 0) {
+    diving_worker_pool_.init(
+      num_diving_workers, original_lp_, Arow_, var_types_, symmetry_, settings_, num_bfs_workers);
+  }
 
   settings_.log.printf("Reduced cost strengthening enabled: %d\n",
                        settings_.reduced_cost_strengthening);
@@ -2843,82 +2886,69 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     return solver_status_;
   }
 
-  if (settings_.reduced_cost_strengthening >= 2 && upper_bound_.load() < last_upper_bound) {
-    std::vector<f_t> lower_bounds;
-    std::vector<f_t> upper_bounds;
-    i_t num_fixed = find_reduced_cost_fixings(upper_bound_.load(), lower_bounds, upper_bounds);
-    if (num_fixed > 0) {
-      std::vector<bool> bounds_changed(original_lp_.num_cols, true);
-      std::vector<char> row_sense;
-
-      bounds_strengthening_t<i_t, f_t> node_presolve(original_lp_, Arow_, row_sense, var_types_);
-
-      mutex_original_lp_.lock();
-      original_lp_.lower = lower_bounds;
-      original_lp_.upper = upper_bounds;
-      bool feasible      = node_presolve.bounds_strengthening(
-        settings_, bounds_changed, original_lp_.lower, original_lp_.upper);
-      mutex_original_lp_.unlock();
-      if (!feasible) {
-        settings_.log.printf("Bound strengthening failed\n");
-        return mip_status_t::NUMERICAL;  // We had a feasible integer solution, but bound
-                                         // strengthening thinks we are infeasible.
-      }
-      // Go through and check the fractional variables and remove any that are now fixed to their
-      // bounds
-      std::vector<i_t> to_remove(fractional.size(), 0);
-      i_t num_to_remove = 0;
-      for (i_t k = 0; k < fractional.size(); k++) {
-        const i_t j = fractional[k];
-        if (std::abs(original_lp_.upper[j] - original_lp_.lower[j]) < settings_.fixed_tol) {
-          to_remove[k] = 1;
-          num_to_remove++;
-        }
-      }
-      if (num_to_remove > 0) {
-        std::vector<i_t> new_fractional;
-        new_fractional.reserve(fractional.size() - num_to_remove);
-        for (i_t k = 0; k < fractional.size(); k++) {
-          if (!to_remove[k]) { new_fractional.push_back(fractional[k]); }
-        }
-        fractional     = new_fractional;
-        num_fractional = fractional.size();
-      }
-    }
-  }
-
-  if (symmetry_ != nullptr) {
-    i_t removed =
-      symmetry_->generators.template prune_by_bounds<f_t>(original_lp_.lower, original_lp_.upper);
-    if (removed > 0) {
-      symmetry_->num_generators = static_cast<int>(symmetry_->generators.num_generators());
-      settings_.log.printf(
-        "Pruned %d generators invalidated by root-level bound tightening, %d remain\n",
-        removed,
-        symmetry_->num_generators);
-    }
-  }
-
-  if (settings_.diving_settings.coefficient_diving != 0) {
-    calculate_variable_locks(original_lp_, var_up_locks_, var_down_locks_);
-  }
-
-  settings_.log.printf("Exploring the B&B tree using %d threads\n\n", settings_.num_threads);
-
-  const i_t num_workers        = settings_.num_threads;
-  const i_t num_bfs_workers    = std::max(settings_.num_threads / 2, 1);
-  const i_t num_diving_workers = num_workers - num_bfs_workers;
-  bfs_worker_pool_.init(num_bfs_workers, original_lp_, Arow_, var_types_, symmetry_, settings_);
-
-  if (num_diving_workers > 0) {
-    diving_worker_pool_.init(
-      num_diving_workers, original_lp_, Arow_, var_types_, symmetry_, settings_, num_bfs_workers);
-  }
-
-  restart_count_       = 0;
-  min_node_queue_size_ = 20;
-
   do {
+    if (settings_.reduced_cost_strengthening >= 2 && upper_bound_.load() < last_upper_bound) {
+      last_upper_bound = upper_bound_.load();
+
+      std::vector<f_t> lower_bounds;
+      std::vector<f_t> upper_bounds;
+      i_t num_fixed = find_reduced_cost_fixings(upper_bound_.load(), lower_bounds, upper_bounds);
+      if (num_fixed > 0) {
+        std::vector<bool> bounds_changed(original_lp_.num_cols, true);
+        std::vector<char> row_sense;
+
+        bounds_strengthening_t<i_t, f_t> node_presolve(original_lp_, Arow_, row_sense, var_types_);
+
+        mutex_original_lp_.lock();
+        original_lp_.lower = lower_bounds;
+        original_lp_.upper = upper_bounds;
+        bool feasible      = node_presolve.bounds_strengthening(
+          settings_, bounds_changed, original_lp_.lower, original_lp_.upper);
+        mutex_original_lp_.unlock();
+        if (!feasible) {
+          settings_.log.printf("Bound strengthening failed\n");
+          return mip_status_t::NUMERICAL;  // We had a feasible integer solution, but bound
+                                           // strengthening thinks we are infeasible.
+        }
+        // Go through and check the fractional variables and remove any that are now fixed to their
+        // bounds
+        std::vector<i_t> to_remove(fractional.size(), 0);
+        i_t num_to_remove = 0;
+        for (i_t k = 0; k < fractional.size(); k++) {
+          const i_t j = fractional[k];
+          if (std::abs(original_lp_.upper[j] - original_lp_.lower[j]) < settings_.fixed_tol) {
+            to_remove[k] = 1;
+            num_to_remove++;
+          }
+        }
+        if (num_to_remove > 0) {
+          std::vector<i_t> new_fractional;
+          new_fractional.reserve(fractional.size() - num_to_remove);
+          for (i_t k = 0; k < fractional.size(); k++) {
+            if (!to_remove[k]) { new_fractional.push_back(fractional[k]); }
+          }
+          fractional     = new_fractional;
+          num_fractional = fractional.size();
+        }
+      }
+    }
+
+    if (symmetry_ != nullptr) {
+      i_t removed =
+        symmetry_->generators.template prune_by_bounds<f_t>(original_lp_.lower, original_lp_.upper);
+      if (removed > 0) {
+        symmetry_->num_generators = static_cast<int>(symmetry_->generators.num_generators());
+        settings_.log.printf(
+          "Pruned %d generators invalidated by root-level bound tightening, %d remain\n",
+          removed,
+          symmetry_->num_generators);
+      }
+    }
+
+    if (restart_count_ == 0) {
+      settings_.log.printf("Exploring the B&B tree using %d threads\n\n", settings_.num_threads);
+    }
+
     if (toc(exploration_stats_.start_time) > settings_.time_limit) {
       solver_status_ = mip_status_t::TIME_LIMIT;
       break;
@@ -2949,7 +2979,9 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                         original_lp_,
                         log);
 
-    node_concurrent_halt_                             = 0;
+    if (!settings_.sub_mip) *restart_concurrent_halt_ = 0;
+    node_concurrent_halt_ = 0;
+
     exploration_stats_.nodes_explored                 = 0;
     exploration_stats_.nodes_unexplored               = 2;
     exploration_stats_.nodes_since_last_log           = 0;
@@ -2975,7 +3007,6 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
         best_first_search_with(initial_worker);
       }
     }  // Implicit barrier for all tasks created within the group (RINS, B&B workers)
-
   } while (solver_status_ == mip_status_t::RESTART);
 
   is_running_ = false;

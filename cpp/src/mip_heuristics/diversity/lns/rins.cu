@@ -263,8 +263,11 @@ void rins_t<i_t, f_t>::run_rins()
     rins_solution_queue.push_back(solution);
   };
   dual_simplex::probing_implied_bound_t<i_t, f_t> empty_probing(branch_and_bound_problem.num_cols);
-  dual_simplex::branch_and_bound_t<i_t, f_t> branch_and_bound(
-    branch_and_bound_problem, branch_and_bound_settings, dual_simplex::tic(), empty_probing);
+  dual_simplex::branch_and_bound_t<i_t, f_t> branch_and_bound(branch_and_bound_problem,
+                                                              branch_and_bound_settings,
+                                                              dual_simplex::tic(),
+                                                              &context.restart_concurrent_halt,
+                                                              empty_probing);
   branch_and_bound.set_initial_guess(cuopt::host_copy(fixed_assignment, rins_handle.get_stream()));
   branch_and_bound_status = branch_and_bound.solve(branch_and_bound_solution);
 
@@ -298,6 +301,7 @@ void rins_t<i_t, f_t>::run_rins()
                           static_cast<f_t>(context.settings.heuristic_params.rins_max_time_limit));
   }
 
+  fj_cpu->preemption_flag = 1;
 #pragma omp taskwait  // Wait for the CPU FJ (RINS) to finish
   CUOPT_LOG_DEBUG("CPUFJ (RINS) task was stopped");
 

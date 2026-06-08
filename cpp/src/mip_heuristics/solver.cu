@@ -425,6 +425,7 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
       branch_and_bound_problem,
       branch_and_bound_settings,
       timer_.get_tic_start(),
+      &context.restart_concurrent_halt,
       probing_implied_bound,
       context.problem_ptr->clique_table,
       context.symmetry.get());

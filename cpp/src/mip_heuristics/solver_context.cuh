@@ -77,6 +77,8 @@ struct mip_solver_context_t {
 
   // Symmetry information for orbital fixing during B&B. Null if no exploitable symmetry.
   std::unique_ptr<dual_simplex::mip_symmetry_t<i_t, f_t>> symmetry;
+
+  std::atomic<int> restart_concurrent_halt{0};
 };
 
 }  // namespace cuopt::linear_programming::detail

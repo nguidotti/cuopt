@@ -462,6 +462,7 @@ std::pair<f_t, dual::status_t> trial_branching(const lp_problem_t<i_t, f_t>& ori
                                                const basis_update_mpf_t<i_t, f_t>& basis_factors,
                                                const std::vector<i_t>& basic_list,
                                                const std::vector<i_t>& nonbasic_list,
+                                               std::atomic<int>* concurrent_halt,
                                                i_t branch_var,
                                                f_t branch_var_lower,
                                                f_t branch_var_upper,
@@ -482,6 +483,7 @@ std::pair<f_t, dual::status_t> trial_branching(const lp_problem_t<i_t, f_t>& ori
   child_settings.scale_columns   = false;
   child_settings.cut_off =
     objective_upper_bound(child_problem, upper_bound, child_settings.dual_tol);
+  child_settings.concurrent_halt = concurrent_halt;
 
   lp_solution_t<i_t, f_t> solution(original_lp.num_rows, original_lp.num_cols);
   iter                                             = 0;
@@ -1707,7 +1709,7 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
   std::vector<f_t> pdlp_obj_down(num_candidates, std::numeric_limits<f_t>::quiet_NaN());
   std::vector<f_t> pdlp_obj_up(num_candidates, std::numeric_limits<f_t>::quiet_NaN());
 
-  std::atomic<int> concurrent_halt{0};
+  std::atomic<int> pdlp_concurrent_halt{0};
 
   if (use_pdlp) {
 #pragma omp task default(shared) priority(CUOPT_HIGH_TASK_PRIORITY)
@@ -1715,7 +1717,7 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
                                           rb_mode,
                                           num_candidates,
                                           start_time,
-                                          concurrent_halt,
+                                          pdlp_concurrent_halt,
                                           original_lp,
                                           new_slacks,
                                           leaf_solution.x,
@@ -1731,7 +1733,7 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
   if (toc(start_time) > settings.time_limit) {
     settings.log.debug("Time limit reached\n");
     if (use_pdlp) {
-      concurrent_halt.store(1);
+      pdlp_concurrent_halt.store(1);
 #pragma omp taskwait  // Wait for the batch PDLP task to finish
     }
     return branch_var;
@@ -1748,6 +1750,8 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
 #pragma omp taskloop if (num_tasks > 1) priority(CUOPT_HIGH_TASK_PRIORITY) \
   num_tasks(num_tasks) default(shared)
     for (i_t i = 0; i < num_candidates; ++i) {
+      if (*concurrent_halt_ == 1) continue;  // OpenMP does not allow to break out of the loop
+
       auto [score, j] = unreliable_list[i];
 
       if (toc(start_time) > settings.time_limit) { continue; }
@@ -1768,6 +1772,7 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
                                                      worker->basis_factors,
                                                      worker->basic_list,
                                                      worker->nonbasic_list,
+                                                     concurrent_halt_,
                                                      j,
                                                      worker->leaf_problem.lower[j],
                                                      std::floor(leaf_solution.x[j]),
@@ -1813,6 +1818,7 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
                                                      worker->basis_factors,
                                                      worker->basic_list,
                                                      worker->nonbasic_list,
+                                                     concurrent_halt_,
                                                      j,
                                                      std::ceil(leaf_solution.x[j]),
                                                      worker->leaf_problem.upper[j],
@@ -1849,7 +1855,7 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
       score_mutex.unlock();
     }
 
-    concurrent_halt.store(1);
+    pdlp_concurrent_halt.store(1);
   }
 
   f_t dual_simplex_elapsed = toc(dual_simplex_start_time);
