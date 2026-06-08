@@ -2945,17 +2945,13 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
       }
     }
 
-    if (restart_count_ == 0) {
-      settings_.log.printf("Exploring the B&B tree using %d threads\n\n", settings_.num_threads);
-    }
-
     if (toc(exploration_stats_.start_time) > settings_.time_limit) {
       solver_status_ = mip_status_t::TIME_LIMIT;
       break;
     }
 
     if (solver_status_ == mip_status_t::RESTART) {
-      settings_.log.print_format("\n\nRestarting B&B after {:.2f}s and {} nodes\n",
+      settings_.log.print_format("\nRestarting B&B after {:.2f}s and {} nodes\n",
                                  toc(exploration_stats_.start_time),
                                  exploration_stats_.nodes_explored.load());
       search_tree_.clean();
@@ -2992,6 +2988,10 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     exploration_stats_.restart_progress_at_last_check = 0;
 
     print_table_header();
+
+    if (restart_count_ == 0) {
+      settings_.log.printf("Exploring the B&B tree using %d threads\n\n", settings_.num_threads);
+    }
 
 #pragma omp taskgroup
     {
