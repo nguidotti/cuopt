@@ -152,7 +152,6 @@ void population_t<i_t, f_t>::add_external_solution(const std::vector<f_t>& solut
     external_solution_queue_cpufj.emplace_back(solution, objective, origin);
   } else {
     external_solution_queue.emplace_back(solution, objective, origin);
-    std::cout << std::format("best = {}", best_feasible().h_obj) << std::endl;
   }
 
   // Prevent CPUFJ scratch solutions from flooding the queue

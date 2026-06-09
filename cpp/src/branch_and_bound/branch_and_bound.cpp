@@ -804,8 +804,6 @@ void branch_and_bound_t<i_t, f_t>::set_final_solution(mip_solution_t<i_t, f_t>& 
   solution.lower_bound        = lower_bound;
   solution.nodes_explored     = exploration_stats_.total_nodes_explored;
   solution.simplex_iterations = exploration_stats_.total_lp_iters;
-
-  std::cout << std::format("{}", solution.objective) << std::endl;
 }
 
 template <typename i_t, typename f_t>

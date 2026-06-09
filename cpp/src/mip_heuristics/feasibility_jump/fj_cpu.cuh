@@ -24,7 +24,7 @@ namespace cuopt::linear_programming::detail {
 // Maintaining a single source of truth for all members would be nice
 template <typename i_t, typename f_t>
 struct fj_cpu_climber_t {
-  fj_cpu_climber_t(std::atomic<bool>& preemption_flag) : preemption_flag(preemption_flag)
+  fj_cpu_climber_t(std::atomic<bool>& preemption_flag) : preemption_flag(&preemption_flag)
   {
 #define ADD_INSTRUMENTED(var) \
   std::make_pair(#var, std::ref(static_cast<memory_instrumentation_base_t&>(var)))
@@ -187,7 +187,7 @@ struct fj_cpu_climber_t {
   // Memory instrumentation aggregator
   instrumentation_aggregator_t memory_aggregator;
   // TODO atomic ref? c++20
-  std::atomic<bool>& preemption_flag;
+  std::atomic<bool>* preemption_flag;
 };
 
 template <typename i_t, typename f_t>

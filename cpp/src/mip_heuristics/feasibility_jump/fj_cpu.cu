@@ -1614,7 +1614,7 @@ void cpufj_solve(fj_cpu_climber_t<i_t, f_t>* fj_cpu, f_t in_time_limit, double w
   fj_cpu->prev_best_objective   = fj_cpu->h_best_objective;
   fj_cpu->iterations_since_best = 0;
 
-  while (!fj_cpu->halted && !fj_cpu->preemption_flag.load()) {
+  while (!fj_cpu->halted && !fj_cpu->preemption_flag->load()) {
     // Check if 5 seconds have passed
     auto now = std::chrono::high_resolution_clock::now();
     if (in_time_limit < std::numeric_limits<f_t>::infinity() &&
@@ -1823,9 +1823,9 @@ template <typename i_t, typename f_t>
 void stop_fj_cpu_task(fj_cpu_task_t<i_t, f_t>& task)
 {
   if (task.fj_cpu) {
-    auto& fj_cpu           = *task.fj_cpu;
-    fj_cpu.preemption_flag = true;
-    fj_cpu.halted          = true;
+    auto& fj_cpu = *task.fj_cpu;
+    fj_cpu.preemption_flag->store(true);
+    fj_cpu.halted = true;
   }
 }
 

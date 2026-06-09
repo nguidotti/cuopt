@@ -214,6 +214,7 @@ void rins_t<i_t, f_t>::run_rins()
   fj_solution.copy_new_assignment(cuopt::host_copy(fixed_assignment, rins_handle.get_stream()));
   std::vector<f_t> default_weights(fixed_problem.n_constraints, 1.);
 
+  std::atomic<bool> fj_halt_flag = false;
   std::unique_ptr<fj_cpu_climber_t<i_t, f_t>> fj_cpu =
     fj.create_cpu_climber(fj_solution,
                           default_weights,
@@ -222,7 +223,8 @@ void rins_t<i_t, f_t>::run_rins()
                           context.preempt_heuristic_solver_,
                           fj_settings_t{},
                           true);
-  fj_cpu->log_prefix = "[RINS] ";
+  fj_cpu->log_prefix      = "[RINS] ";
+  fj_cpu->preemption_flag = &fj_halt_flag;
 
   CUOPT_LOG_DEBUG("Launching CPUFJ (RINS) task");
 #pragma omp task shared(fj_cpu) firstprivate(time_limit) \
@@ -301,7 +303,7 @@ void rins_t<i_t, f_t>::run_rins()
                           static_cast<f_t>(context.settings.heuristic_params.rins_max_time_limit));
   }
 
-  fj_cpu->preemption_flag = 1;
+  fj_halt_flag = true;
 #pragma omp taskwait  // Wait for the CPU FJ (RINS) to finish
   CUOPT_LOG_DEBUG("CPUFJ (RINS) task was stopped");
 
