@@ -230,7 +230,7 @@ struct simplex_solver_settings_t {
   f_t restart_threshold_grow_per_restart = 1.5;
   i_t restart_tree_size_factor           = 50;
   i_t restart_check_freq                 = 100;
-  i_t max_restarts                       = 50;
+  i_t max_restarts                       = 0;
 
   // Settings for the reliability branching.
   // - -1: automatic

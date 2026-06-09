@@ -195,12 +195,22 @@ f_t user_relative_gap(const lp_problem_t<i_t, f_t>& lp, f_t obj_value, f_t lower
   return user_mip_gap;
 }
 
-template <typename f_t>
-std::string to_percentage(f_t value)
+template <typename i_t, typename f_t>
+std::string user_mip_gap(const lp_problem_t<i_t, f_t>& lp, f_t obj_value, f_t lower_bound)
 {
-  if (value == std::numeric_limits<f_t>::infinity()) return "---";
-  if (value > 1e-3) { return std::format("{:5.1f}%", value * 100); }
-  return std::format("{:5.2f}%", value * 100);
+  const f_t user_mip_gap = user_relative_gap(lp, obj_value, lower_bound);
+  if (user_mip_gap == std::numeric_limits<f_t>::infinity()) {
+    return "   -  ";
+  } else {
+    constexpr int BUFFER_LEN = 32;
+    char buffer[BUFFER_LEN];
+    if (user_mip_gap > 1e-3) {
+      snprintf(buffer, BUFFER_LEN - 1, "%5.1f%%", user_mip_gap * 100);
+    } else {
+      snprintf(buffer, BUFFER_LEN - 1, "%5.2f%%", user_mip_gap * 100);
+    }
+    return std::string(buffer);
+  }
 }
 
 #ifdef SHOW_DIVING_TYPE
@@ -320,56 +330,28 @@ void branch_and_bound_t<i_t, f_t>::set_initial_upper_bound(f_t bound)
 }
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::print_table_header()
-{
-  std::string header = std::format("{:^1}|{:^12}|{:^12}|{:^19}|{:^15}|{:^8}|{:^7}|{:^11}|{:^11}|",
-                                   "",
-                                   "Explored",
-                                   "Unexplored",
-                                   "Objective",
-                                   "Bound",
-                                   "IntInf",
-                                   "Depth",
-                                   "Iter/Node",
-                                   "Gap");
-  if (settings_.deterministic) { header += std::format("{:^8}|", "Work"); }
-  header += std::format("{:^8}|", "Time");
-  settings_.log.printf("%s\n", header.c_str());
-}
-
-template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::report_heuristic(f_t obj)
 {
   if (is_running_) {
-    f_t lower_bound           = get_lower_bound();
-    f_t user_obj              = compute_user_objective(original_lp_, obj);
-    f_t user_lower            = compute_user_objective(original_lp_, lower_bound);
-    f_t user_gap              = user_relative_gap(original_lp_, obj, lower_bound);
-    std::string user_gap_text = to_percentage(user_gap);
+    f_t user_obj         = compute_user_objective(original_lp_, obj);
+    f_t user_lower       = compute_user_objective(original_lp_, get_lower_bound());
+    std::string user_gap = user_mip_gap<i_t, f_t>(original_lp_, obj, get_lower_bound());
 
-    std::string log_line =
-      std::format("H {:>12} {:>12} {:^+19.6e} {:^+15.6e} {:>8} {:>7} {:^11} {:^11}",
-                  "",  // nodes explored
-                  "",  // nodes unexplored
-                  user_obj,
-                  user_lower,
-                  "",  // integer infeasible
-                  "",  // depth
-                  "",  // iter/node
-                  user_gap_text);
-
-    if (settings_.deterministic) { log_line += std::format("{:^8}", ""); }
-    log_line += std::format(" {:>8.2f}", toc(exploration_stats_.start_time));
-    settings_.log.printf("%s\n", log_line.c_str());
+    settings_.log.printf(
+      "H                            %+13.6e    %+10.6e                               %s %9.2f\n",
+      user_obj,
+      user_lower,
+      user_gap.c_str(),
+      toc(exploration_stats_.start_time));
   } else {
     if (solving_root_relaxation_.load()) {
       f_t user_obj = compute_user_objective(original_lp_, obj);
-      f_t user_gap = user_relative_gap(original_lp_, obj, root_lp_current_lower_bound_.load());
-      std::string user_gap_text = to_percentage(user_gap);
-      settings_.log.print_format(
-        "New solution from primal heuristics. Objective {:+.6e}. Gap {}. Time {:.2f}\n",
+      std::string user_gap =
+        user_mip_gap<i_t, f_t>(original_lp_, obj, root_lp_current_lower_bound_.load());
+      settings_.log.printf(
+        "New solution from primal heuristics. Objective %+.6e. Gap %s. Time %.2f\n",
         user_obj,
-        user_gap_text,
+        user_gap.c_str(),
         toc(exploration_stats_.start_time));
     } else {
       settings_.log.printf("New solution from primal heuristics. Objective %+.6e. Time %.2f\n",
@@ -390,23 +372,34 @@ void branch_and_bound_t<i_t, f_t>::report(
   const f_t user_lower       = compute_user_objective(original_lp_, lower_bound);
   const f_t iters            = static_cast<f_t>(exploration_stats_.total_lp_iters);
   const f_t iter_node        = nodes_explored > 0 ? iters / nodes_explored : iters;
-  f_t user_gap               = user_relative_gap(original_lp_, obj, lower_bound);
-  std::string user_gap_text  = to_percentage(user_gap);
-
-  std::string log_line =
-    std::format("{:^1} {:>12} {:>12} {:^+19.6e} {:^+15.6e} {:>8} {:>7} {:^11.1e} {:^11}",
-                symbol,
-                nodes_explored,
-                nodes_unexplored,
-                user_obj,
-                user_lower,
-                node_int_infeas,
-                node_depth,
-                iter_node,
-                user_gap_text);
-  if (work_time >= 0) { log_line += std::format(" {:>8.2f}", work_time); }
-  log_line += std::format(" {:>8.2f}", toc(exploration_stats_.start_time));
-  settings_.log.printf("%s\n", log_line.c_str());
+  const std::string user_gap = user_mip_gap<i_t, f_t>(original_lp_, obj, lower_bound);
+  if (work_time >= 0) {
+    settings_.log.printf(
+      "%c %10d   %10lu    %+13.6e    %+10.6e   %6d %6d   %7.1e     %s %9.2f %9.2f\n",
+      symbol,
+      nodes_explored,
+      nodes_unexplored,
+      user_obj,
+      user_lower,
+      node_int_infeas,
+      node_depth,
+      iter_node,
+      user_gap.c_str(),
+      work_time,
+      toc(exploration_stats_.start_time));
+  } else {
+    settings_.log.printf("%c %10d   %10lu    %+13.6e    %+10.6e   %6d %6d   %7.1e     %s %9.2f\n",
+                         symbol,
+                         nodes_explored,
+                         nodes_unexplored,
+                         user_obj,
+                         user_lower,
+                         node_int_infeas,
+                         node_depth,
+                         iter_node,
+                         user_gap.c_str(),
+                         toc(exploration_stats_.start_time));
+  }
 }
 
 template <typename i_t, typename f_t>
@@ -811,6 +804,8 @@ void branch_and_bound_t<i_t, f_t>::set_final_solution(mip_solution_t<i_t, f_t>& 
   solution.lower_bound        = lower_bound;
   solution.nodes_explored     = exploration_stats_.total_nodes_explored;
   solution.simplex_iterations = exploration_stats_.total_lp_iters;
+
+  std::cout << std::format("{}", solution.objective) << std::endl;
 }
 
 template <typename i_t, typename f_t>
@@ -1567,9 +1562,9 @@ bool branch_and_bound_t<i_t, f_t>::should_restart(f_t current_abs_gap)
 
   f_t gap_reduction = exploration_stats_.restart_gap_at_last_check / current_abs_gap;
 
-  settings_.log.debug_format(
-    "[Restart] Current: explored={}, progress={:.4g}, gap={:.4g}. Since last: explored={}, "
-    "progress={:.4g}, gap={:.4g}. Tree size estimate={}",
+  settings_.log.debug(
+    "[Restart] Current: explored=%d, progress=%.4f, gap=%.4f. Since last: explored={}, "
+    "progress=%.4f, gap=%.4f. Tree size estimate=%d",
     num_nodes,
     current_progress,
     current_abs_gap,
@@ -2691,7 +2686,11 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   is_running_            = true;
   lower_bound_numerical_ = inf;
 
-  if (num_fractional != 0 && settings_.max_cut_passes > 0) { print_table_header(); }
+  if (num_fractional != 0 && settings_.max_cut_passes > 0) {
+    settings_.log.printf(
+      " | Explored | Unexplored |    Objective    |     Bound     | IntInf | Depth | Iter/Node | "
+      "Gap    |  Time  |\n");
+  }
 
   cut_pool_t<i_t, f_t> cut_pool(original_lp_.num_cols, settings_);
   cut_generation_t<i_t, f_t> cut_generation(cut_pool,
@@ -2951,9 +2950,9 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     }
 
     if (solver_status_ == mip_status_t::RESTART) {
-      settings_.log.print_format("\nRestarting B&B after {:.2f}s and {} nodes\n",
-                                 toc(exploration_stats_.start_time),
-                                 exploration_stats_.nodes_explored.load());
+      settings_.log.printf("\nRestarting B&B after %.2fs and %d nodes\n",
+                           toc(exploration_stats_.start_time),
+                           exploration_stats_.nodes_explored.load());
       search_tree_.clean();
       bfs_worker_pool_.reset();
       diving_worker_pool_.reset();
@@ -2987,7 +2986,15 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     exploration_stats_.restart_nodes_at_last_check    = 0;
     exploration_stats_.restart_progress_at_last_check = 0;
 
-    print_table_header();
+    if (settings_.deterministic) {
+      settings_.log.printf(
+        " | Explored | Unexplored |    Objective    |     Bound     | IntInf | Depth | Iter/Node "
+        "|   Gap    |  Work |  Time  |\n");
+    } else {
+      settings_.log.printf(
+        " | Explored | Unexplored |    Objective    |     Bound     | IntInf | Depth | Iter/Node "
+        "|   Gap    |  Time  |\n");
+    }
 
     if (restart_count_ == 0) {
       settings_.log.printf("Exploring the B&B tree using %d threads\n\n", settings_.num_threads);
@@ -3489,10 +3496,9 @@ void branch_and_bound_t<i_t, f_t>::deterministic_sync_callback()
     exploration_stats_.last_log = tic();
   }
 
-  f_t obj                   = compute_user_objective(original_lp_, upper_bound);
-  f_t user_lower            = compute_user_objective(original_lp_, lower_bound);
-  f_t user_gap              = user_relative_gap(original_lp_, upper_bound, lower_bound);
-  std::string user_gap_text = to_percentage(user_gap);
+  f_t obj              = compute_user_objective(original_lp_, upper_bound);
+  f_t user_lower       = compute_user_objective(original_lp_, lower_bound);
+  std::string gap_user = user_mip_gap<i_t, f_t>(original_lp_, upper_bound, lower_bound);
 
   std::string idle_workers;
   i_t idle_count = 0;
@@ -3508,7 +3514,7 @@ void branch_and_bound_t<i_t, f_t>::deterministic_sync_callback()
                        exploration_stats_.nodes_unexplored,
                        obj,
                        user_lower,
-                       user_gap_text.c_str(),
+                       gap_user.c_str(),
                        toc(exploration_stats_.start_time),
                        state_hash,
                        idle_workers.empty() ? "" : " ",

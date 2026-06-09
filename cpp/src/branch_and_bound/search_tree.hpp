@@ -98,7 +98,7 @@ class search_tree_t {
                             const f_t val)
   {
     if (write_graphviz) {
-      log.print_format("Node{} [label=\"{} {:.16e}\"]\n", node_ptr->node_id, label, val);
+      log.printf("Node%d [label=\"%s %.16e\"]\n", node_ptr->node_id, label.c_str(), val);
     }
   }
 
@@ -110,12 +110,12 @@ class search_tree_t {
                             const f_t bound)
   {
     if (write_graphviz) {
-      log.print_format("Node{} -> Node{} [label=\"x{} {} {:e}\"]\n",
-                       origin_ptr->node_id,
-                       dest_ptr->node_id,
-                       branch_var,
-                       branch_dir == branch_direction_t::DOWN ? "<=" : ">=",
-                       bound);
+      log.printf("Node%d -> Node%d [label=\"x%d %s %e\"]\n",
+                 origin_ptr->node_id,
+                 dest_ptr->node_id,
+                 branch_var,
+                 branch_dir == branch_direction_t::DOWN ? "<=" : ">=",
+                 bound);
     }
   }
 

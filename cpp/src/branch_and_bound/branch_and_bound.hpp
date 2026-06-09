@@ -269,7 +269,6 @@ class branch_and_bound_t {
 
   i_t restart_count_;
 
-  void print_table_header();
   void report_heuristic(f_t obj);
   void report(char symbol,
               f_t obj,
