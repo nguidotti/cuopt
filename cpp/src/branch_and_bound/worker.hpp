@@ -232,8 +232,9 @@ class bfs_worker_t : public branch_and_bound_worker_t<i_t, f_t> {
     node_queue.clear();
     total_max_diving_workers    = 0;
     total_active_diving_workers = 0;
-    this->is_active             = false;
-    this->lower_bound           = -std::numeric_limits<f_t>::infinity();
+    active_diving_workers.fill(0);
+    this->is_active   = false;
+    this->lower_bound = -std::numeric_limits<f_t>::infinity();
   }
 
   // The worker-local node heap.

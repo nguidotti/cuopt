@@ -1561,7 +1561,7 @@ bool branch_and_bound_t<i_t, f_t>::should_restart(f_t current_abs_gap)
   f_t gap_reduction = exploration_stats_.restart_gap_at_last_check / current_abs_gap;
 
   settings_.log.debug(
-    "[Restart] Current: explored=%d, progress=%.4f, gap=%.4f. Since last: explored={}, "
+    "[Restart] Current: explored=%d, progress=%.4f, gap=%.4f. Since last: explored=%d, "
     "progress=%.4f, gap=%.4f. Tree size estimate=%d",
     num_nodes,
     current_progress,
@@ -2975,12 +2975,13 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     if (!settings_.sub_mip) *restart_concurrent_halt_ = 0;
     node_concurrent_halt_ = 0;
 
-    exploration_stats_.nodes_explored                 = 0;
-    exploration_stats_.nodes_unexplored               = 2;
-    exploration_stats_.nodes_since_last_log           = 0;
-    exploration_stats_.last_log                       = 0;
-    exploration_stats_.restart_large_tree_count       = 0;
-    exploration_stats_.restart_gap_at_last_check      = upper_bound_ - get_lower_bound();
+    exploration_stats_.nodes_explored           = 0;
+    exploration_stats_.nodes_unexplored         = 2;
+    exploration_stats_.nodes_since_last_log     = 0;
+    exploration_stats_.last_log                 = 0;
+    exploration_stats_.restart_large_tree_count = 0;
+    exploration_stats_.restart_gap_at_last_check =
+      compute_user_abs_gap(original_lp_, upper_bound_.load(), root_relax_objective);
     exploration_stats_.restart_nodes_at_last_check    = 0;
     exploration_stats_.restart_progress_at_last_check = 0;
 
@@ -3618,6 +3619,7 @@ node_status_t branch_and_bound_t<i_t, f_t>::solve_node_deterministic(
   exploration_stats_.total_lp_solve_time += toc(lp_start_time);
   exploration_stats_.total_lp_iters += node_iter;
   ++exploration_stats_.nodes_explored;
+  ++exploration_stats_.total_nodes_explored;
   --exploration_stats_.nodes_unexplored;
 
   deterministic_bfs_policy_t<i_t, f_t> policy{*this, worker};
