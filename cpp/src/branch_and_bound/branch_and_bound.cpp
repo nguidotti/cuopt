@@ -1545,32 +1545,32 @@ bool branch_and_bound_t<i_t, f_t>::should_restart(f_t current_abs_gap)
   // HiGHs uses the square of this value (probably because fixed variables cascades
   // during presolve via bounds propagations, implications, etc.). Since we are not
   // applying presolve after each restart, keep as linear.
-  f_t active_ratio = 1 - fixed_int_var_ratio_;
-  f_t gap_reduction =
-    std::isfinite(current_abs_gap) && std::isfinite(exploration_stats_.restart_gap_at_last_check)
-      ? exploration_stats_.restart_gap_at_last_check / current_abs_gap
-      : 0;
+  f_t active_ratio  = 1 - fixed_int_var_ratio_;
+  f_t gap_reduction = exploration_stats_.restart_gap_at_last_check / current_abs_gap;
 
   if (gap_reduction < 1 + restart_settings.max_gap_improvement / active_ratio &&
       tree_size_estimate >= restart_settings.tree_size_multiple * num_nodes * active_ratio) {
     ++exploration_stats_.restart_huge_tree_count;
     exploration_stats_.restart_next_check = num_nodes + restart_settings.check_freq;
 
+    i_t min_count          = restart_settings.min_huge_tree_estimates;
+    f_t threshold_node     = num_leaves * restart_settings.threshold_grow_per_leaf;
+    f_t threshold_restarts = std::pow(restart_settings.threshold_grow_per_restart, restart_count_);
+    i_t threshold = std::ceil(active_ratio * (min_count + threshold_node) * threshold_restarts);
+
     settings_.log.debug(
-      "[Restart] Current: explored=%ld, progress=%.4f, gap=%.4f. Since last: explored=%ld, "
-      "progress=%.4f, gap=%.4f. Tree size estimate=%ld",
+      "[Restart] %d Current: explored=%ld, progress=%.4f, gap=%.4f. Since last: explored=%ld, "
+      "progress=%.4f, gap_ratio=%.4f. Tree size=%ld. Threshold=%d",
+      exploration_stats_.restart_huge_tree_count,
       num_nodes,
       current_progress,
       current_abs_gap,
       nodes_since_last_check,
       progress_since_last_check,
       gap_reduction,
-      tree_size_estimate);
+      tree_size_estimate,
+      threshold);
 
-    i_t min_count          = restart_settings.min_huge_tree_estimates;
-    f_t threshold_node     = num_leaves * restart_settings.threshold_grow_per_leaf;
-    f_t threshold_restarts = std::pow(restart_settings.threshold_grow_per_restart, restart_count_);
-    i_t threshold = std::ceil(active_ratio * (min_count + threshold_node) * threshold_restarts);
     return exploration_stats_.restart_huge_tree_count >= threshold;
   }
 

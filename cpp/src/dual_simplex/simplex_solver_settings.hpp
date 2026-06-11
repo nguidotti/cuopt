@@ -29,7 +29,7 @@ namespace cuopt::linear_programming::dual_simplex {
 template <typename i_t, typename f_t>
 struct mip_restart_settings_t {
   // Minimum number of nodes that needs to be explored before triggering a restart.
-  i_t min_nodes = 1000;
+  i_t min_nodes = 10000;
 
   // Minimum number of "huge" tree estimations before triggering a restart.
   i_t min_huge_tree_estimates = 10;
@@ -37,7 +37,7 @@ struct mip_restart_settings_t {
   // Indicates how the threshold (regarding the number of "huge" tree estimations) grows
   // with the number of nodes explored. Make it harder to restart if the tree is large
   // (nodes * restart_threshold_grow_per_node).
-  f_t threshold_grow_per_leaf = 0.01;
+  f_t threshold_grow_per_leaf = 0.0015;
 
   // Indicates how the threshold (regarding the number of "huge" tree estimations) grows
   // with the number of restarts. Each restart make it harder to trigger another restart
@@ -52,7 +52,7 @@ struct mip_restart_settings_t {
   f_t max_gap_improvement = 0.05;
 
   // The frequency in terms of the nodes for checking if we should restart
-  i_t check_freq = 1000;
+  i_t check_freq = 100;
 
   // Maximum number of restarts allowed
   i_t max_restarts = 50;
