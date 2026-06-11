@@ -268,6 +268,7 @@ class branch_and_bound_t {
   std::function<void(f_t)> user_bound_callback_;
 
   i_t restart_count_;
+  f_t fixed_int_var_ratio_;
 
   void report_heuristic(f_t obj);
   void report(char symbol,

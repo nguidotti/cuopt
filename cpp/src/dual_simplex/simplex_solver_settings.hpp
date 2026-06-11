@@ -27,6 +27,38 @@ struct benchmark_info_t;
 namespace cuopt::linear_programming::dual_simplex {
 
 template <typename i_t, typename f_t>
+struct mip_restart_settings_t {
+  // Minimum number of nodes that needs to be explored before triggering a restart.
+  i_t min_nodes = 1000;
+
+  // Minimum number of "huge" tree estimations before triggering a restart.
+  i_t min_huge_tree_estimates = 10;
+
+  // Indicates how the threshold (regarding the number of "huge" tree estimations) grows
+  // with the number of nodes explored. Make it harder to restart if the tree is large
+  // (nodes * restart_threshold_grow_per_node).
+  f_t threshold_grow_per_leaf = 0.01;
+
+  // Indicates how the threshold (regarding the number of "huge" tree estimations) grows
+  // with the number of restarts. Each restart make it harder to trigger another restart
+  // (restart_count ^ 1.5).
+  f_t threshold_grow_per_restart = 1.5;
+
+  // Indicates the multiple of the current number of explored nodes for the tree to be considered
+  // "huge".
+  i_t tree_size_multiple = 50;
+
+  // The maximum improvement in the absolute gap for the solver to be considered stagnated
+  f_t max_gap_improvement = 0.05;
+
+  // The frequency in terms of the nodes for checking if we should restart
+  i_t check_freq = 1000;
+
+  // Maximum number of restarts allowed
+  i_t max_restarts = 50;
+};
+
+template <typename i_t, typename f_t>
 struct simplex_solver_settings_t {
  public:
   simplex_solver_settings_t()
@@ -207,13 +239,7 @@ struct simplex_solver_settings_t {
   i_t bnb_nodes_per_steal;
   i_t bnb_max_steal_attempts;
 
-  i_t restart_min_nodes                  = 1000;
-  i_t restart_min_estimates              = 10;
-  f_t restart_threshold_grow_per_node    = 0.001;
-  f_t restart_threshold_grow_per_restart = 1.5;
-  i_t restart_tree_size_factor           = 50;
-  i_t restart_check_freq                 = 100;
-  i_t max_restarts                       = 50;
+  mip_restart_settings_t<i_t, f_t> restart_settings;
 
   // Settings for the reliability branching.
   // - -1: automatic

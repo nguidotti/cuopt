@@ -342,7 +342,7 @@ void branch_and_bound_t<i_t, f_t>::report(
   char symbol, f_t obj, f_t lower_bound, i_t node_depth, i_t node_int_infeas, double work_time)
 {
   update_user_bound(lower_bound);
-  const i_t nodes_explored   = exploration_stats_.nodes_explored;
+  const i_t nodes_explored   = exploration_stats_.total_nodes_explored;
   const i_t nodes_unexplored = exploration_stats_.nodes_unexplored;
   const f_t user_obj         = compute_user_objective(original_lp_, obj);
   const f_t user_lower       = compute_user_objective(original_lp_, lower_bound);
@@ -1523,48 +1523,62 @@ dual::status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(
 template <typename i_t, typename f_t>
 bool branch_and_bound_t<i_t, f_t>::should_restart(f_t current_abs_gap)
 {
-  if (settings_.sub_mip || restart_count_ >= settings_.max_restarts) return false;
+  mip_restart_settings_t<i_t, f_t> restart_settings = settings_.restart_settings;
 
-  i_t num_nodes   = exploration_stats_.nodes_explored;
-  i_t total_nodes = exploration_stats_.total_nodes_explored;
-  if (num_nodes < settings_.restart_min_nodes) return false;
+  if (settings_.sub_mip || !std::isfinite(current_abs_gap) ||
+      restart_count_ >= settings_.restart_settings.max_restarts)
+    return false;
 
-  i_t nodes_since_last_check = num_nodes - exploration_stats_.restart_nodes_at_last_check;
-  if (nodes_since_last_check < settings_.restart_check_freq) return false;
+  int64_t num_nodes = exploration_stats_.nodes_explored;
+  if (num_nodes < restart_settings.min_nodes || num_nodes < exploration_stats_.restart_next_check)
+    return false;
 
-  f_t current_progress = search_tree_.progress;
+  int64_t nodes_since_last_check = num_nodes - exploration_stats_.restart_nodes_at_last_check;
+  i_t num_leaves                 = search_tree_.num_final_nodes;
+  f_t current_progress           = search_tree_.progress;
   f_t progress_since_last_check =
     std::max(current_progress - exploration_stats_.restart_progress_at_last_check, 1E-6);
-  i_t tree_size_estimate =
+  int64_t tree_size_estimate =
     exploration_stats_.restart_nodes_at_last_check +
     nodes_since_last_check * (1.0 - current_progress) / progress_since_last_check;
 
-  f_t gap_reduction = exploration_stats_.restart_gap_at_last_check / current_abs_gap;
+  // HiGHs uses the square of this value (probably because fixed variables cascades
+  // during presolve via bounds propagations, implications, etc.). Since we are not
+  // applying presolve after each restart, keep as linear.
+  f_t active_ratio = 1 - fixed_int_var_ratio_;
+  f_t gap_reduction =
+    std::isfinite(current_abs_gap) && std::isfinite(exploration_stats_.restart_gap_at_last_check)
+      ? exploration_stats_.restart_gap_at_last_check / current_abs_gap
+      : 0;
 
-  settings_.log.debug(
-    "[Restart] Current: explored=%d, progress=%.4f, gap=%.4f. Since last: explored=%d, "
-    "progress=%.4f, gap=%.4f. Tree size estimate=%d",
-    num_nodes,
-    current_progress,
-    current_abs_gap,
-    nodes_since_last_check,
-    progress_since_last_check,
-    gap_reduction,
-    tree_size_estimate);
+  if (gap_reduction < 1 + restart_settings.max_gap_improvement / active_ratio &&
+      tree_size_estimate >= restart_settings.tree_size_multiple * num_nodes * active_ratio) {
+    ++exploration_stats_.restart_huge_tree_count;
+    exploration_stats_.restart_next_check = num_nodes + restart_settings.check_freq;
 
-  if (gap_reduction < 1.05 &&
-      tree_size_estimate >= settings_.restart_tree_size_factor * total_nodes) {
-    ++exploration_stats_.restart_large_tree_count;
-    i_t min_count =
-      settings_.restart_min_estimates + total_nodes * settings_.restart_threshold_grow_per_node;
-    return exploration_stats_.restart_large_tree_count >=
-           min_count * std::pow(settings_.restart_threshold_grow_per_restart, restart_count_);
+    settings_.log.debug(
+      "[Restart] Current: explored=%ld, progress=%.4f, gap=%.4f. Since last: explored=%ld, "
+      "progress=%.4f, gap=%.4f. Tree size estimate=%ld",
+      num_nodes,
+      current_progress,
+      current_abs_gap,
+      nodes_since_last_check,
+      progress_since_last_check,
+      gap_reduction,
+      tree_size_estimate);
+
+    i_t min_count          = restart_settings.min_huge_tree_estimates;
+    f_t threshold_node     = num_leaves * restart_settings.threshold_grow_per_leaf;
+    f_t threshold_restarts = std::pow(restart_settings.threshold_grow_per_restart, restart_count_);
+    i_t threshold = std::ceil(active_ratio * (min_count + threshold_node) * threshold_restarts);
+    return exploration_stats_.restart_huge_tree_count >= threshold;
   }
 
-  exploration_stats_.restart_large_tree_count       = 0;
+  exploration_stats_.restart_huge_tree_count        = 0;
   exploration_stats_.restart_gap_at_last_check      = current_abs_gap;
   exploration_stats_.restart_progress_at_last_check = current_progress;
   exploration_stats_.restart_nodes_at_last_check    = num_nodes;
+  exploration_stats_.restart_next_check             = num_nodes;
   return false;
 }
 
@@ -2972,6 +2986,18 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
       break;
     }
 
+    i_t num_integers       = 0;
+    i_t num_fixed_integers = 0;
+    for (i_t j = 0; j < original_lp_.num_cols; j++) {
+      if (var_types_[j] == variable_type_t::INTEGER) {
+        ++num_integers;
+        if (std::abs(original_lp_.upper[j] - original_lp_.lower[j]) < settings_.fixed_tol) {
+          ++num_fixed_integers;
+        }
+      }
+    }
+    fixed_int_var_ratio_ = (f_t)num_fixed_integers / num_integers;
+
     if (solver_status_ == mip_status_t::RESTART) {
       settings_.log.printf("\nRestarting B&B after %.2fs and %d nodes\n",
                            toc(exploration_stats_.start_time),
@@ -3000,11 +3026,11 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     if (!settings_.sub_mip) *restart_concurrent_halt_ = 0;
     node_concurrent_halt_ = 0;
 
-    exploration_stats_.nodes_explored           = 0;
-    exploration_stats_.nodes_unexplored         = 2;
-    exploration_stats_.nodes_since_last_log     = 0;
-    exploration_stats_.last_log                 = 0;
-    exploration_stats_.restart_large_tree_count = 0;
+    exploration_stats_.nodes_explored          = 0;
+    exploration_stats_.nodes_unexplored        = 2;
+    exploration_stats_.nodes_since_last_log    = 0;
+    exploration_stats_.last_log                = 0;
+    exploration_stats_.restart_huge_tree_count = 0;
     exploration_stats_.restart_gap_at_last_check =
       compute_user_abs_gap(original_lp_, upper_bound_.load(), root_relax_objective);
     exploration_stats_.restart_nodes_at_last_check    = 0;
@@ -3131,8 +3157,8 @@ Work Units:   0                              0.5                              1.
 ──────────────────────────────────────────────────────────────────────────────────────────►
                                                                         Work Unit Time
 
-Legend:  ▓▓▓ = actively working    ░░░ = waiting at barrier    [hash] = state hash for verification
-         wut = work unit timestamp    PC = pseudo-costs    snap = snapshot (local copy)
+Legend:  ▓▓▓ = actively working    ░░░ = waiting at barrier    [hash] = state hash for
+verification wut = work unit timestamp    PC = pseudo-costs    snap = snapshot (local copy)
 
 */
 
@@ -3170,23 +3196,22 @@ Producer Sync:
   Producing solutions in the past would break determinism, therefore this unidirectional sync
 ensures no such thing can occur. Instrumentation Aggregator: Collects multiple instrument vectors
 into a single aggregation point for estimating work from memory operations. Worker Context: Object
-representing the "context" (e.g.: the worker) that should register the amount of work recorded There
-is a 1context:1worker mapping. The Work Unit Scheduler registers such contexts and ensure they
-remained synchronized together. Queued Integer Solutions: New integer solutions found within
-horizons are queued with a work unit timestamp, in order to be sorted and played in order during the
-sync callback. Creation Sequence: In nondeterministic mode, a single global atomic integer is used
-to generate sequential IDs for the nodes. Since this is a global atomic, it is inherently
+representing the "context" (e.g.: the worker) that should register the amount of work recorded
+There is a 1context:1worker mapping. The Work Unit Scheduler registers such contexts and ensure
+they remained synchronized together. Queued Integer Solutions: New integer solutions found within
+horizons are queued with a work unit timestamp, in order to be sorted and played in order during
+the sync callback. Creation Sequence: In nondeterministic mode, a single global atomic integer is
+used to generate sequential IDs for the nodes. Since this is a global atomic, it is inherently
 nondeterministic. To fix this, in deterministic mode, nodes are addressed by a tuple <worker_id,
 seq_id>
-  where "worker_id" is the ID of the worker that created this node, and "seq_id" is a sequential ID
-local to the worker.\ This sequential ID is similar in principle to the global atomic ID sequence of
-the nondeterminsitic mode but since it is local to each worker, it is updated serially and thus is
-deterministic. worker IDs are unique, and sequence IDs are unique to their workers, therefor
-  <worker_id, seq_id> is a globally unique node identifier.
-Pseudocost Update:
-  Each worker updates its local pseudocosts when branching. These updates are queued within
-horizons. During the horizon sync, these updates are all played in order, and the newly updated
-global pseudocosts are broadcast to the worker's pseudocost snapshots for the coming horizon.
+  where "worker_id" is the ID of the worker that created this node, and "seq_id" is a sequential
+ID local to the worker.\ This sequential ID is similar in principle to the global atomic ID
+sequence of the nondeterminsitic mode but since it is local to each worker, it is updated serially
+and thus is deterministic. worker IDs are unique, and sequence IDs are unique to their workers,
+therefor <worker_id, seq_id> is a globally unique node identifier. Pseudocost Update: Each worker
+updates its local pseudocosts when branching. These updates are queued within horizons. During the
+horizon sync, these updates are all played in order, and the newly updated global pseudocosts are
+broadcast to the worker's pseudocost snapshots for the coming horizon.
 
 */
 
@@ -3296,7 +3321,8 @@ void branch_and_bound_t<i_t, f_t>::run_deterministic_coordinator(const csr_matri
     "Sync%% | NoWork\n");
   settings_.log.printf(
     "  "
-    "-------+---------+----------+--------+---------+--------+----------+----------+-------+-------"
+    "-------+---------+----------+--------+---------+--------+----------+----------+-------+-----"
+    "--"
     "\n");
   for (const auto& worker : *deterministic_workers_) {
     double sync_time    = worker.work_context.total_sync_time;
