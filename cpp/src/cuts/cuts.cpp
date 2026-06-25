@@ -3265,7 +3265,7 @@ void cut_generation_t<i_t, f_t>::generate_gomory_cuts(
   mixed_integer_gomory_cut_t<i_t, f_t> gomory_cut;
   complemented_mixed_integer_rounding_cut_t<i_t, f_t> complemented_mir(lp, settings, new_slacks);
   simplex_solver_settings_t<i_t, f_t> variable_settings = settings;
-  variable_settings.sub_mip                             = 1;
+  variable_settings.inside_submip                       = 1;
   variable_bounds_t<i_t, f_t> variable_bounds(lp, variable_settings, var_types, Arow, new_slacks);
   strong_cg_cut_t<i_t, f_t> cg(lp, var_types, xstar);
   std::vector<f_t> transformed_xstar;
@@ -3605,7 +3605,7 @@ variable_bounds_t<i_t, f_t>::variable_bounds_t(const lp_problem_t<i_t, f_t>& lp,
     num_pos_inf_(lp.num_rows, 0),
     num_neg_inf_(lp.num_rows, 0)
 {
-  if (settings.sub_mip) {
+  if (settings.inside_submip) {
     return;  // Don't compute the variable upper/lower bounds inside sub-MIP
   }
   f_t start_time = tic();

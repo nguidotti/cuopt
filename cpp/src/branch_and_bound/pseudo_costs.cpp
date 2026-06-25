@@ -1046,7 +1046,7 @@ void strong_branching_reduced(const lp_problem_t<i_t, f_t>& original_lp,
   i_t effective_batch_pdlp = settings.mip_batch_pdlp_strong_branching;
 
   // Disable for sub MIP
-  if (settings.sub_mip) { effective_batch_pdlp = 0; }
+  if (settings.inside_submip) { effective_batch_pdlp = 0; }
 
   // Disable if running in deterministic mode
   if (settings.deterministic && settings.mip_batch_pdlp_strong_branching == 1) {
@@ -1059,7 +1059,7 @@ void strong_branching_reduced(const lp_problem_t<i_t, f_t>& original_lp,
   }
 
   if (settings.mip_batch_pdlp_strong_branching != 0 &&
-      (settings.sub_mip || settings.deterministic)) {
+      (settings.inside_submip || settings.deterministic)) {
     settings.log.printf(
       "Batch PDLP strong branching is disabled because sub-MIP or deterministic mode is enabled\n");
   }
@@ -1573,7 +1573,7 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
   // Use the heuristic to decide if it should be used (in case it is set to automatic)
   if (!use_pdlp && rb_mode != 0) {
     // Check if it is a sub MIP or the determinism mode is on.
-    use_pdlp = !settings.sub_mip;
+    use_pdlp = !settings.inside_submip;
     use_pdlp &= !settings.deterministic;
 
     // Check if the warm cache was filled at the root
@@ -1593,7 +1593,7 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
   // Use the heuristic to decide if it should be used (in case it is set to automatic)
   if (!use_pdlp && rb_mode != 0) {
     // Check if it is a sub MIP or the determinism mode is on.
-    use_pdlp = !settings.sub_mip;
+    use_pdlp = !settings.inside_submip;
     use_pdlp &= !settings.deterministic;
 
     // Check if the warm cache was filled at the root
@@ -1609,7 +1609,7 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
 
   if (rb_mode != 0 && !pdlp_warm_cache->populated) {
     settings.log.debug("PDLP warm start data not populated, using DS only\n");
-  } else if (rb_mode != 0 && settings.sub_mip) {
+  } else if (rb_mode != 0 && settings.inside_submip) {
     settings.log.debug("Batch PDLP reliability branching is disabled because sub-MIP is enabled\n");
   } else if (rb_mode != 0 && settings.deterministic) {
     settings.log.debug(

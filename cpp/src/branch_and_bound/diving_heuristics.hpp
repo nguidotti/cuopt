@@ -23,6 +23,7 @@ namespace cuopt::mathematical_optimization::mip {
 inline char feasible_solution_symbol(search_strategy_t strategy, bool log_diving_type)
 {
   if (strategy == BEST_FIRST) return 'B';
+  if (strategy == SUBMIP) return 'S';
   if (!log_diving_type) { return 'D'; }
   switch (strategy) {
     case COEFFICIENT_DIVING: return 'C';
@@ -47,6 +48,7 @@ bool is_search_strategy_enabled(search_strategy_t strategy,
     case COEFFICIENT_DIVING: return settings.coefficient_diving != 0;
     case FARKAS_DIVING: return settings.farkas_diving != 0;
     case VECTOR_LENGTH_DIVING: return settings.vector_length_diving != 0;
+    case SUBMIP: return false;
   }
 
   return false;

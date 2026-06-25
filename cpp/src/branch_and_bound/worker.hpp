@@ -41,6 +41,8 @@ struct branch_and_bound_stats_t {
   omp_atomic_t<int64_t> lexical_reduction_nodes           = 0;
   omp_atomic_t<int64_t> lexical_reduction_fixings_applied = 0;
   omp_atomic_t<int64_t> lexical_reduction_pruned_nodes    = 0;
+
+  omp_atomic_t<int64_t> nodes_at_last_submip = 0;
 };
 
 template <typename i_t, typename f_t>
@@ -116,6 +118,9 @@ class branch_and_bound_worker_t {
   bool set_lp_variable_bounds(mip_node_t<i_t, f_t>* node_ptr,
                               const simplex::simplex_solver_settings_t<i_t, f_t>& settings)
   {
+    // In RINS/RENS, the bounds are already set in the parent method.
+    if (search_strategy == SUBMIP) return true;
+
     // Reset the bound_changed markers
     std::fill(bounds_changed.begin(), bounds_changed.end(), false);
 
