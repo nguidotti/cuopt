@@ -30,12 +30,15 @@ struct submip_settings_t {
   // Enable or disable (recursive) RINS
   int enable_rins = -1;
 
-  // Base for calculating the target fix rate for the RINS neighbourhood (adaptive according
-  // to the success and infeasible rate)
+  // Base for calculating the target fix rate for the RINS neighbourhood. Actual target value is
+  // determined automatically according to the success and infeasible rate.
   double base_target_fixrate = 0.6;
 
-  // Minimum fix rate for accepting the RINS neighbourhood
-  double min_fixrate = 0.2;
+  // Minimum fix rate for accepting the RINS neighbourhood.
+  double min_fixrate = 0.25;
+
+  // Hard cap for the minimum fix rate for solving a submip.
+  double min_fixrate_cap = 0.1;
 
   // MIP gap for the submip (unless the MIP gap from the B&B is lower)
   double target_mip_gap = 0.01;

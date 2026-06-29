@@ -267,7 +267,7 @@ class branch_and_bound_t {
   std::function<void(f_t)> user_bound_callback_;
 
   void print_table_header();
-  void report_heuristic(f_t obj);
+  void report_heuristic(f_t obj, char symbol);
   void report(char symbol,
               f_t obj,
               f_t lower_bound,
@@ -348,6 +348,7 @@ class branch_and_bound_t {
   void dive_with(diving_worker_t<i_t, f_t>* worker);
 
   void launch_submip_worker(const std::vector<f_t>& sol);
+  void solve_submip(submip_worker_t<i_t, f_t>* rins_worker, i_t num_var_fixed, i_t num_integers);
 
   void rins(submip_worker_t<i_t, f_t>* rins_worker, const std::vector<f_t>& node_solution);
 
