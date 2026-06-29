@@ -317,7 +317,7 @@ branch_and_bound_t<i_t, f_t>::branch_and_bound_t(
 
 template <typename i_t, typename f_t>
 branch_and_bound_t<i_t, f_t>::branch_and_bound_t(
-  const branch_and_bound_t& other,
+  branch_and_bound_t& other,
   const simplex_solver_settings_t<i_t, f_t>& solver_settings,
   const std::vector<f_t>& lower,
   const std::vector<f_t>& upper)
@@ -330,17 +330,23 @@ branch_and_bound_t<i_t, f_t>::branch_and_bound_t(
     Arow_(other.Arow_),
     new_slacks_(other.new_slacks_),
     var_types_(other.var_types_),
-    incumbent_(other.incumbent_),
+    incumbent_(1),
     root_vstatus_(other.root_vstatus_),
     root_relax_soln_(1, 1),
     root_crossover_soln_(1, 1),
     pc_(other.pc_),
     solver_status_(mip_status_t::UNSET)
 {
+  other.mutex_original_lp_.lock();
   assert(lower.size() == original_lp_.num_cols);
   assert(upper.size() == original_lp_.num_cols);
   original_lp_.lower = lower;
   original_lp_.upper = upper;
+  other.mutex_original_lp_.unlock();
+
+  other.mutex_upper_.lock();
+  incumbent_ = other.incumbent_;
+  other.mutex_upper_.unlock();
 
   exploration_stats_.start_time = tic();
   upper_bound_                  = other.upper_bound_;
@@ -2173,20 +2179,19 @@ void branch_and_bound_t<i_t, f_t>::launch_submip_worker(const std::vector<f_t>& 
 }
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::solve_submip(submip_worker_t<i_t, f_t>* rins_worker,
+void branch_and_bound_t<i_t, f_t>::solve_submip(submip_worker_t<i_t, f_t>* worker,
                                                 i_t num_var_fixed,
-                                                i_t num_integers)
+                                                i_t num_integers,
+                                                i_t submip_level,
+                                                std::string_view log_prefix)
 {
-  i_t submip_level       = settings_.submip_settings.level + 1;
-  std::string log_prefix = std::format("[SUBMIP {}] ", submip_level);
-
-  std::vector<f_t>& lower           = rins_worker->leaf_problem.lower;
-  std::vector<f_t>& upper           = rins_worker->leaf_problem.upper;
-  std::vector<bool>& bounds_changed = rins_worker->bounds_changed;
+  std::vector<f_t>& lower           = worker->leaf_problem.lower;
+  std::vector<f_t>& upper           = worker->leaf_problem.upper;
+  std::vector<bool>& bounds_changed = worker->bounds_changed;
   f_t fixrate                       = (f_t)num_var_fixed / num_integers;
 
   bool feasible =
-    rins_worker->node_presolver.bounds_strengthening(settings_, bounds_changed, lower, upper);
+    worker->node_presolver.bounds_strengthening(settings_, bounds_changed, lower, upper);
 
   if (!feasible) {
     // This should never happen since we are fixing bounds that are already in the incumbent.
@@ -2215,9 +2220,12 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(submip_worker_t<i_t, f_t>* rins_
   submip_settings.inside_submip                            = 1;
   submip_settings.strong_branching_simplex_iteration_limit = 50;
   submip_settings.submip_settings.level                    = submip_level;
-  submip_settings.log.log                                  = false;
+  submip_settings.log.log                                  = true;
   submip_settings.log.log_prefix                           = log_prefix;
-  submip_settings.submip_settings.enable_rins = submip_level <= settings_.submip_settings.max_level;
+
+  submip_settings.submip_settings.enable_rins = settings_.submip_settings.enable_rins != 0 &&
+                                                submip_level > settings_.submip_settings.max_level;
+
   submip_settings.solution_callback = [this, fixrate](std::vector<f_t>& solution, f_t objective) {
     this->set_solution_from_submip(solution, fixrate);
   };
@@ -2234,9 +2242,9 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(submip_worker_t<i_t, f_t>* rins_
     crush_primal_solution<i_t, f_t>(
       original_problem_, original_lp_, fixed_solution.x, new_slacks_, crushed_solution);
     f_t obj = compute_objective(original_lp_, crushed_solution);
-    settings_.log.debug("%sFound a solution with obj=%.4g\n",
-                        log_prefix.c_str(),
-                        compute_user_objective(original_lp_, obj));
+    settings_.log.debug_format("{}Found a solution with obj={:.4g}\n",
+                               log_prefix,
+                               compute_user_objective(original_lp_, obj));
 
     if (improves_incumbent(obj)) {
       add_feasible_solution(obj, crushed_solution, -1, SUBMIP);
@@ -2255,7 +2263,7 @@ void branch_and_bound_t<i_t, f_t>::rins(submip_worker_t<i_t, f_t>* rins_worker,
   log.log = false;
 
   i_t submip_level       = settings_.submip_settings.level + 1;
-  std::string log_prefix = std::format("[SUBMIP {}] ", submip_level);
+  std::string log_prefix = std::format("[RINS {}] ", submip_level);
 
   ++submip_stats_.total_calls;
 
@@ -2317,8 +2325,11 @@ void branch_and_bound_t<i_t, f_t>::rins(submip_worker_t<i_t, f_t>* rins_worker,
 
     // Enough variables has been fixed
     if (num_var_fixed >= min_var_fixed) {
-      settings_.log.debug(
-        "%sFixed %d variables (min=%d)\n", log_prefix.c_str(), num_var_fixed, min_var_fixed);
+      settings_.log.print_format("{}Fixed {} variables (max={}, min={})\n",
+                                 log_prefix,
+                                 num_var_fixed,
+                                 max_var_fixed,
+                                 min_var_fixed);
       has_submip = true;
       break;
     }
@@ -2346,8 +2357,11 @@ void branch_and_bound_t<i_t, f_t>::rins(submip_worker_t<i_t, f_t>* rins_worker,
 
       // Enough variables were fixed
       if (num_var_fixed >= min_var_fixed) {
-        settings_.log.debug(
-          "%sFixed %d variables (min=%d)\n", log_prefix.c_str(), num_var_fixed, min_var_fixed);
+        settings_.log.print_format("{}Fixed {} variables (max={}, min={})\n",
+                                   log_prefix,
+                                   num_var_fixed,
+                                   max_var_fixed,
+                                   min_var_fixed);
         has_submip = true;
         break;
       }
@@ -2355,10 +2369,11 @@ void branch_and_bound_t<i_t, f_t>::rins(submip_worker_t<i_t, f_t>* rins_worker,
       // Even considering the entire integer list, we were unable to fix a single variable in this
       // iteration. Try to solve the submip with what we got.
       if (prev_num_fixed == num_var_fixed) {
-        settings_.log.debug("%sFixed the maximum (%d) number of variables for RINS (min=%d)\n",
-                            log_prefix.c_str(),
-                            num_var_fixed,
-                            min_var_fixed);
+        settings_.log.print_format("{}Fixed {} variables, the maximum for RINS. (max={}, min={})\n",
+                                   log_prefix,
+                                   num_var_fixed,
+                                   max_var_fixed,
+                                   min_var_fixed);
         has_submip = true;
         break;
       }
@@ -2398,7 +2413,7 @@ void branch_and_bound_t<i_t, f_t>::rins(submip_worker_t<i_t, f_t>* rins_worker,
     // there is no enough variable fixing in the submip to be easier to solve than the current
     // problem
     if (fixrate >= settings_.submip_settings.min_fixrate_cap) {
-      solve_submip(rins_worker, num_var_fixed, num_integers);
+      solve_submip(rins_worker, num_var_fixed, num_integers, submip_level, log_prefix);
     }
   }
 

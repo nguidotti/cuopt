@@ -73,7 +73,7 @@ class branch_and_bound_t {
                      std::shared_ptr<mip::clique_table_t<i_t, f_t>> clique_table = nullptr,
                      mip_symmetry_t<i_t, f_t>* symmetry                          = nullptr);
 
-  branch_and_bound_t(const branch_and_bound_t& other,
+  branch_and_bound_t(branch_and_bound_t& other,
                      const simplex::simplex_solver_settings_t<i_t, f_t>& solver_settings,
                      const std::vector<f_t>& lower,
                      const std::vector<f_t>& upper);
@@ -348,7 +348,11 @@ class branch_and_bound_t {
   void dive_with(diving_worker_t<i_t, f_t>* worker);
 
   void launch_submip_worker(const std::vector<f_t>& sol);
-  void solve_submip(submip_worker_t<i_t, f_t>* rins_worker, i_t num_var_fixed, i_t num_integers);
+  void solve_submip(submip_worker_t<i_t, f_t>* worker,
+                    i_t num_var_fixed,
+                    i_t num_integers,
+                    i_t submip_level,
+                    std::string_view log_prefix);
 
   void rins(submip_worker_t<i_t, f_t>* rins_worker, const std::vector<f_t>& node_solution);
 
