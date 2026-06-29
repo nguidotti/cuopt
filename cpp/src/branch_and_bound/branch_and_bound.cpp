@@ -342,7 +342,7 @@ branch_and_bound_t<i_t, f_t>::branch_and_bound_t(
   original_lp_.lower = lower;
   original_lp_.upper = upper;
 
-  exploration_stats_.start_time = other.exploration_stats_.start_time;
+  exploration_stats_.start_time = tic();
   upper_bound_                  = other.upper_bound_;
   root_objective_               = std::numeric_limits<f_t>::quiet_NaN();
   root_lp_current_lower_bound_  = -inf;
@@ -2318,10 +2318,17 @@ void branch_and_bound_t<i_t, f_t>::rins(submip_worker_t<i_t, f_t>* rins_worker,
     f_t user_lower = compute_user_objective(original_lp_, get_lower_bound());
     f_t user_obj   = compute_user_objective(original_lp_, upper_bound_.load());
     f_t rel_gap    = user_relative_gap(user_obj, user_lower);
+    i_t explored   = exploration_stats_.nodes_explored;
 
     simplex_solver_settings_t<i_t, f_t> submip_settings;
-    submip_settings.node_limit =
-      settings_.submip_settings.node_limit_base + exploration_stats_.nodes_explored / 20;
+    submip_settings.node_limit = settings_.submip_settings.node_limit_base + explored / 20;
+
+    submip_settings.time_limit = settings_.time_limit - toc(exploration_stats_.start_time);
+    if (submip_settings.time_limit < 0) {
+      submip_worker_pool_.return_worker_to_pool(rins_worker);
+      return;
+    }
+
     submip_settings.relative_mip_gap_tol =
       std::min(settings_.submip_settings.target_mip_gap, rel_gap);
     submip_settings.print_presolve_stats                     = false;
