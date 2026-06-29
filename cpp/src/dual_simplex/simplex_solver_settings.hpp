@@ -46,9 +46,6 @@ struct submip_settings_t {
   // The base node limit for the submip
   int node_limit_base = 200;
 
-  // Frequency in terms of nodes when to launch a new RINS
-  int node_freq = 200;
-
   // The current level in the recursion
   int level = 0;
 

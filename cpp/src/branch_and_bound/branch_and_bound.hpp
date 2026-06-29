@@ -42,11 +42,9 @@
 #include <vector>
 
 namespace cuopt::mathematical_optimization::mip {
+
 template <typename i_t, typename f_t>
 struct clique_table_t;
-}
-
-namespace cuopt::mathematical_optimization::mip {
 
 template <typename i_t, typename f_t>
 struct mip_symmetry_t;

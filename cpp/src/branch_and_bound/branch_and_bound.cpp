@@ -2160,12 +2160,8 @@ template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::launch_submip_worker(const std::vector<f_t>& sol)
 {
   if (settings_.submip_settings.enable_rins == 0) return;
-  if (submip_worker_pool_.num_idle() == 0) return;
   if (!incumbent_.has_incumbent) return;
-
-  i_t nodes_since_last_submip =
-    exploration_stats_.nodes_explored - exploration_stats_.nodes_at_last_submip;
-  if (nodes_since_last_submip < settings_.submip_settings.node_freq) return;
+  if (submip_worker_pool_.num_idle() == 0) return;
 
   submip_worker_t<i_t, f_t>* submip_worker = submip_worker_pool_.pop_idle_worker();
 
@@ -2174,8 +2170,6 @@ void branch_and_bound_t<i_t, f_t>::launch_submip_worker(const std::vector<f_t>& 
 #pragma omp task priority(CUOPT_MEDIUM_TASK_PRIORITY) affinity(submip_worker) \
   firstprivate(submip_worker, sol)
   rins(submip_worker, sol);
-
-  exploration_stats_.nodes_at_last_submip = exploration_stats_.nodes_explored;
 }
 
 template <typename i_t, typename f_t>
@@ -2224,7 +2218,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(submip_worker_t<i_t, f_t>* worke
   submip_settings.log.log_prefix                           = log_prefix;
 
   submip_settings.submip_settings.enable_rins = settings_.submip_settings.enable_rins != 0 &&
-                                                submip_level > settings_.submip_settings.max_level;
+                                                submip_level <= settings_.submip_settings.max_level;
 
   submip_settings.solution_callback = [this, fixrate](std::vector<f_t>& solution, f_t objective) {
     this->set_solution_from_submip(solution, fixrate);
