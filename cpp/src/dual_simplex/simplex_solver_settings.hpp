@@ -37,13 +37,13 @@ struct submip_settings_t {
   // Minimum fix rate for accepting the RINS neighbourhood.
   double min_fixrate = 0.25;
 
-  // Hard cap for the minimum fix rate for solving a submip.
+  // Hard cap for the minimum fix rate for solving a sub-MIP.
   double min_fixrate_cap = 0.1;
 
-  // MIP gap for the submip (unless the MIP gap from the B&B is lower)
+  // MIP gap for the sub-MIP (unless the MIP gap from the B&B is lower)
   double target_mip_gap = 0.01;
 
-  // The base node limit for the submip
+  // The base node limit for the sub-MIP
   int node_limit_base = 200;
 
   // The current level in the recursion
@@ -51,6 +51,12 @@ struct submip_settings_t {
 
   // Maximum recursion level
   int max_level = 5;
+
+  // Presolve sub-MIP with Papilo before solving it
+  bool presolve = true;
+
+  // Warm start sub-MIP's B&B with the parent basis and pseudocost
+  bool warm_start = true;
 };
 
 template <typename i_t, typename f_t>

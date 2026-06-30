@@ -318,48 +318,6 @@ branch_and_bound_t<i_t, f_t>::branch_and_bound_t(
 }
 
 template <typename i_t, typename f_t>
-branch_and_bound_t<i_t, f_t>::branch_and_bound_t(
-  branch_and_bound_t& other,
-  const simplex_solver_settings_t<i_t, f_t>& solver_settings,
-  const std::vector<f_t>& lower,
-  const std::vector<f_t>& upper)
-  : original_problem_(other.original_problem_),
-    settings_(solver_settings),
-    probing_implied_bound_(other.probing_implied_bound_),
-    clique_table_(other.clique_table_),
-    symmetry_(nullptr),  // Enabling symmetry in the submip lead to crashes in some instances
-    original_lp_(other.original_lp_),
-    Arow_(other.Arow_),
-    new_slacks_(other.new_slacks_),
-    var_types_(other.var_types_),
-    incumbent_(1),
-    root_vstatus_(other.root_vstatus_),
-    root_relax_soln_(1, 1),
-    root_crossover_soln_(1, 1),
-    pc_(other.pc_),
-    solver_status_(mip_status_t::UNSET)
-{
-  other.mutex_original_lp_.lock();
-  assert(lower.size() == original_lp_.num_cols);
-  assert(upper.size() == original_lp_.num_cols);
-  original_lp_.lower = lower;
-  original_lp_.upper = upper;
-  other.mutex_original_lp_.unlock();
-
-  other.mutex_upper_.lock();
-  incumbent_ = other.incumbent_;
-  other.mutex_upper_.unlock();
-
-  exploration_stats_.start_time = tic();
-  upper_bound_                  = other.upper_bound_;
-  root_objective_               = std::numeric_limits<f_t>::quiet_NaN();
-  root_lp_current_lower_bound_  = -inf;
-  external_upper_bound_ =
-    other.external_upper_bound_ ? other.external_upper_bound_ : &other.upper_bound_;
-  root_warm_start_ = true;
-}
-
-template <typename i_t, typename f_t>
 f_t branch_and_bound_t<i_t, f_t>::get_lower_bound()
 {
   f_t lower_bound = lower_bound_numerical_.load();
@@ -2266,6 +2224,8 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(submip_worker_t<i_t, f_t>* worke
 
   // submip_bnb.set_initial_guess(current_incumbent);
   submip_bnb.set_initial_upper_bound(upper_bound_.load());
+  submip_bnb.set_external_upper_bound(external_upper_bound_ ? external_upper_bound_
+                                                            : &upper_bound_);
   submip_status = submip_bnb.solve(submip_solution);
 
   if (submip_status == mip_status_t::INFEASIBLE) {
@@ -2958,52 +2918,29 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 
   f_t root_relax_start_time = tic();
 
-  if (root_warm_start_) {
-    i_t node_iter     = 0;
-    f_t lp_start_time = tic();
+  if (!enable_concurrent_lp_root_solve()) {
+    // RINS/SUBMIP path
+    settings_.log.printf("\nSolving LP root relaxation with dual simplex\n");
+    root_status          = solve_linear_program_with_advanced_basis(original_lp_,
+                                                           exploration_stats_.start_time,
+                                                           lp_settings,
+                                                           root_relax_soln_,
+                                                           basis_update,
+                                                           basic_list,
+                                                           nonbasic_list,
+                                                           root_vstatus_,
+                                                           edge_norms_);
+    root_relax_solved_by = DualSimplex;
 
-    dual_status_t lp_status = dual_phase2_with_advanced_basis(2,
-                                                              0,
-                                                              true,
-                                                              lp_start_time,
-                                                              original_lp_,
-                                                              lp_settings,
-                                                              root_vstatus_,
-                                                              basis_update,
-                                                              basic_list,
-                                                              nonbasic_list,
-                                                              root_relax_soln_,
-                                                              node_iter,
-                                                              edge_norms_);
-
-    root_status = convert_dual_status_to_lp_status(lp_status);
-  }
-
-  if (root_status == lp_status_t::NUMERICAL_ISSUES || root_status == lp_status_t::UNSET) {
-    if (!enable_concurrent_lp_root_solve()) {
-      // RINS/SUBMIP path
-      settings_.log.printf("\nSolving LP root relaxation with dual simplex\n");
-      root_status          = solve_linear_program_with_advanced_basis(original_lp_,
-                                                             exploration_stats_.start_time,
-                                                             lp_settings,
-                                                             root_relax_soln_,
-                                                             basis_update,
-                                                             basic_list,
-                                                             nonbasic_list,
-                                                             root_vstatus_,
-                                                             edge_norms_);
-      root_relax_solved_by = DualSimplex;
-
-    } else {
-      settings_.log.printf("\nSolving LP root relaxation in concurrent mode\n");
-      root_status = solve_root_relaxation(lp_settings,
-                                          root_relax_soln_,
-                                          root_vstatus_,
-                                          basis_update,
-                                          basic_list,
-                                          nonbasic_list,
-                                          edge_norms_);
-    }
+  } else {
+    settings_.log.printf("\nSolving LP root relaxation in concurrent mode\n");
+    root_status = solve_root_relaxation(lp_settings,
+                                        root_relax_soln_,
+                                        root_vstatus_,
+                                        basis_update,
+                                        basic_list,
+                                        nonbasic_list,
+                                        edge_norms_);
   }
 
   solving_root_relaxation_               = false;

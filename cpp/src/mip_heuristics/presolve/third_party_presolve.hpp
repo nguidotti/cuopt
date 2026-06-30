@@ -60,15 +60,14 @@ class third_party_presolve_t {
   third_party_presolve_t(third_party_presolve_t&&)                 = delete;
   third_party_presolve_t& operator=(third_party_presolve_t&&)      = delete;
 
-  third_party_presolve_result_t<i_t, f_t> apply(
-    optimization_problem_t<i_t, f_t> const& op_problem,
-    problem_category_t category,
-    cuopt::mathematical_optimization::presolver_t presolver,
-    bool dual_postsolve,
-    f_t absolute_tolerance,
-    f_t relative_tolerance,
-    double time_limit,
-    i_t num_cpu_threads = 0);
+  third_party_presolve_result_t<i_t, f_t> apply(optimization_problem_t<i_t, f_t> const& op_problem,
+                                                problem_category_t category,
+                                                presolver_t presolver,
+                                                bool dual_postsolve,
+                                                f_t absolute_tolerance,
+                                                f_t relative_tolerance,
+                                                double time_limit,
+                                                i_t num_cpu_threads = 0);
 
   // Apply the presolve on an simplex::user_problem in-place. Used in sub MIP and (in the future)
   // restarts.
@@ -89,6 +88,15 @@ class third_party_presolve_t {
                                std::vector<f_t>& full_primal) const;
   const std::vector<i_t>& get_reduced_to_original_map() const { return reduced_to_original_map_; }
   const std::vector<i_t>& get_original_to_reduced_map() const { return original_to_reduced_map_; }
+  const std::vector<i_t>& get_reduced_to_original_row_map() const
+  {
+    return reduced_to_original_row_map_;
+  }
+
+  const std::vector<i_t>& get_original_to_reduced_row_map() const
+  {
+    return original_to_reduced_row_map_;
+  }
 
   ~third_party_presolve_t();
 
@@ -115,6 +123,8 @@ class third_party_presolve_t {
 
   std::vector<i_t> reduced_to_original_map_{};
   std::vector<i_t> original_to_reduced_map_{};
+  std::vector<i_t> reduced_to_original_row_map_{};
+  std::vector<i_t> original_to_reduced_row_map_{};
 };
 
 }  // namespace cuopt::mathematical_optimization::mip

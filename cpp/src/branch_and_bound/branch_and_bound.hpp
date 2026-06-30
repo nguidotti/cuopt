@@ -79,6 +79,11 @@ class branch_and_bound_t {
   // Set an initial guess based on the user_problem. This should be called before solve.
   void set_initial_guess(const std::vector<f_t>& user_guess) { guess_ = user_guess; }
 
+  void set_external_upper_bound(const omp_atomic_t<f_t>* external_upper_bound)
+  {
+    external_upper_bound_ = external_upper_bound;
+  }
+
   // Set the root solution found by PDLP
   void set_root_relaxation_solution(const std::vector<f_t>& primal,
                                     const std::vector<f_t>& dual,
