@@ -42,6 +42,12 @@ void presolver_t<i_t, f_t>::uncrush(const std::vector<f_t>& reduced_primal,
 {
   third_party_presolver_.uncrush_primal_solution(reduced_primal, full_primal);
 }
+template <typename i_t, typename f_t>
+void presolver_t<i_t, f_t>::crush(const std::vector<f_t>& full_primal,
+                                  std::vector<f_t>& reduced_primal) const
+{
+  third_party_presolver_.crush_primal_solution(full_primal, reduced_primal);
+}
 
 template <typename i_t, typename f_t>
 const std::vector<i_t>& presolver_t<i_t, f_t>::reduced_to_original_map() const

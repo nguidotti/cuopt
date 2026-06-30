@@ -32,6 +32,8 @@ class presolver_t {
   // Map a reduced-space primal solution back to the original column space.
   void uncrush(const std::vector<f_t>& reduced_primal, std::vector<f_t>& full_primal) const;
 
+  void crush(const std::vector<f_t>& full_primal, std::vector<f_t>& reduced_primal) const;
+
   const std::vector<i_t>& reduced_to_original_map() const;
   const std::vector<i_t>& original_to_reduced_map() const;
 

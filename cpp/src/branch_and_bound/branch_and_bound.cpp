@@ -2181,7 +2181,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(submip_worker_t<i_t, f_t>* worke
     worker->leaf_problem, var_types_, settings_, new_slacks_, submip_problem);
 
   presolver_t<i_t, f_t> presolver;
-  mip_status_t submip_status = presolver.apply(submip_problem, settings_);
+  mip_status_t submip_status = presolver.apply(submip_problem, submip_settings);
 
   if (submip_status == mip_status_t::INFEASIBLE) {
     submip_stats_.save_infeasible(fixrate);
@@ -2216,8 +2216,10 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(submip_worker_t<i_t, f_t>* worke
   std::vector<f_t> current_incumbent = incumbent_.x;
   mutex_upper_.unlock();
 
-  // submip_bnb.set_initial_guess(current_incumbent);
-  submip_bnb.set_initial_upper_bound(upper_bound_.load());
+  std::vector<f_t> crushed_incumbent;
+  presolver.crush(current_incumbent, crushed_incumbent);
+
+  submip_bnb.set_initial_guess(crushed_incumbent);
   submip_bnb.set_external_upper_bound(external_upper_bound_ ? external_upper_bound_
                                                             : &upper_bound_);
   submip_status = submip_bnb.solve(submip_solution);
@@ -2868,6 +2870,8 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
       incumbent_.set_incumbent_solution(computed_obj, crushed_guess);
       upper_bound_ = computed_obj;
       mutex_upper_.unlock();
+
+      settings_.log.debug_format("Warm start with incumbent, obj={:.4g}", computed_obj);
     }
   }
 
