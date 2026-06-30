@@ -126,6 +126,10 @@ class branch_and_bound_t {
   // `bound` must be in B&B's internal objective space.
   void set_initial_upper_bound(f_t bound);
 
+  void warm_start(const pseudo_costs_t<i_t, f_t>& parent_pc,
+                  const std::vector<i_t>& reduced_to_original,
+                  i_t max_samples = 1);
+
   f_t get_upper_bound() const { return upper_bound_.load(); }
   bool has_solver_space_incumbent() const { return incumbent_.has_incumbent; }
 

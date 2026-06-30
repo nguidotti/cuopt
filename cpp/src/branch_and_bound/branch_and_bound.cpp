@@ -341,6 +341,16 @@ void branch_and_bound_t<i_t, f_t>::set_initial_upper_bound(f_t bound)
 }
 
 template <typename i_t, typename f_t>
+void branch_and_bound_t<i_t, f_t>::warm_start(const pseudo_costs_t<i_t, f_t>& parent_pc,
+                                              const std::vector<i_t>& reduced_to_original,
+                                              i_t max_samples)
+{
+  pc_.resize(original_lp_.num_cols);
+  pc_.warm_start_from(parent_pc, reduced_to_original, max_samples);
+  root_warm_start_ = true;
+}
+
+template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::print_table_header()
 {
   std::string header = std::format("{:^1}|{:^12}|{:^12}|{:^19}|{:^15}|{:^8}|{:^7}|{:^11}|{:^11}|",
@@ -784,6 +794,9 @@ void branch_and_bound_t<i_t, f_t>::set_final_solution(mip_solution_t<i_t, f_t>& 
 {
   if (solver_status_ == mip_status_t::SUBMIP_HALT) {
     settings_.log.printf("Stopping submip solve...\n");
+    settings_.log.print_format("lower={}, obj={}\n",
+                               compute_user_objective(original_lp_, lower_bound),
+                               compute_user_objective(original_lp_, upper_bound_.load()));
     return;
   }
 
@@ -1884,18 +1897,18 @@ void branch_and_bound_t<i_t, f_t>::best_first_search_with(bfs_worker_t<i_t, f_t>
 
   while (solver_status_ == mip_status_t::UNSET && abs_gap > settings_.absolute_mip_gap_tol &&
          rel_gap > settings_.relative_mip_gap_tol && node_queue.best_first_queue_size() > 0) {
-    if (external_upper_bound_ && settings_.inside_submip &&
-        external_upper_bound_->load() <= lower_bound) {
-      node_concurrent_halt_ = 1;
-      solver_status_        = mip_status_t::SUBMIP_HALT;
-      settings_.log.debug(
-        "Stopping the submip since the main B&B has a better incumbent. "
-        "(upper=%.g, external_upper=%.g, lower=%.g",
-        upper_bound_.load(),
-        external_upper_bound_->load(),
-        lower_bound);
-      break;
-    }
+    // if (external_upper_bound_ && settings_.inside_submip &&
+    //     external_upper_bound_->load() <= lower_bound) {
+    //   node_concurrent_halt_ = 1;
+    //   solver_status_        = mip_status_t::SUBMIP_HALT;
+    //   settings_.log.print_format(
+    //     "Stopping the submip since the main B&B has a better incumbent. "
+    //     "(upper={:g}, external_upper={:g}, lower={:g}",
+    //     upper_bound_.load(),
+    //     external_upper_bound_->load(),
+    //     lower_bound);
+    //   break;
+    // }
 
     // If the guided diving was disabled previously due to the lack of an incumbent solution,
     // re-enable as soon as a new incumbent is found.
@@ -2222,6 +2235,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(submip_worker_t<i_t, f_t>* worke
   submip_bnb.set_initial_guess(crushed_incumbent);
   submip_bnb.set_external_upper_bound(external_upper_bound_ ? external_upper_bound_
                                                             : &upper_bound_);
+  submip_bnb.warm_start(pc_, presolver.reduced_to_original_map());
   submip_status = submip_bnb.solve(submip_solution);
 
   if (submip_status == mip_status_t::INFEASIBLE) {
