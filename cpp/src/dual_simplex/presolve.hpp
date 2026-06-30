@@ -214,7 +214,6 @@ template <typename i_t, typename f_t>
 void convert_simplex_problem(const lp_problem_t<i_t, f_t>& simplex_problem,
                              const std::vector<variable_type_t>& var_types,
                              const simplex_solver_settings_t<i_t, f_t>& settings,
-                             const dualize_info_t<i_t, f_t>& dualize_info,
                              const std::vector<i_t>& new_slacks,
                              user_problem_t<i_t, f_t>& user_problem);
 

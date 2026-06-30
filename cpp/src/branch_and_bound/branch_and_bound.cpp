@@ -44,6 +44,8 @@
 #include <string>
 #include <vector>
 
+#include "presolve.hpp"
+
 namespace cuopt::mathematical_optimization::mip {
 
 using simplex::basis_update_mpf_t;
@@ -915,7 +917,8 @@ void branch_and_bound_t<i_t, f_t>::set_final_solution(mip_solution_t<i_t, f_t>& 
 
   if (has_solver_space_incumbent()) {
     uncrush_primal_solution(original_problem_, original_lp_, incumbent_.x, solution.x);
-    solution.objective = incumbent_.objective;
+    solution.objective     = incumbent_.objective;
+    solution.has_incumbent = true;
   }
   solution.lower_bound        = lower_bound;
   solution.nodes_explored     = exploration_stats_.nodes_explored;
@@ -2168,7 +2171,7 @@ void branch_and_bound_t<i_t, f_t>::launch_submip_worker(const std::vector<f_t>& 
   submip_worker->set_active();
 
 #pragma omp task priority(CUOPT_MEDIUM_TASK_PRIORITY) affinity(submip_worker) \
-  firstprivate(submip_worker, sol)
+  firstprivate(submip_worker, sol) if (!settings_.inside_submip)
   rins(submip_worker, sol);
 }
 
@@ -2211,6 +2214,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(submip_worker_t<i_t, f_t>* worke
   submip_settings.reliability_branching                    = 0;
   submip_settings.max_cut_passes                           = 0;
   submip_settings.clique_cuts                              = 0;
+  submip_settings.zero_half_cuts                           = 0;
   submip_settings.inside_submip                            = 1;
   submip_settings.strong_branching_simplex_iteration_limit = 50;
   submip_settings.submip_settings.level                    = submip_level;
@@ -2220,30 +2224,59 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(submip_worker_t<i_t, f_t>* worke
   submip_settings.submip_settings.enable_rins = settings_.submip_settings.enable_rins != 0 &&
                                                 submip_level <= settings_.submip_settings.max_level;
 
-  submip_settings.solution_callback = [this, fixrate](std::vector<f_t>& solution, f_t objective) {
-    this->set_solution_from_submip(solution, fixrate);
-  };
+  user_problem_t<i_t, f_t> submip_problem(original_problem_.handle_ptr);
+  simplex::convert_simplex_problem(
+    worker->leaf_problem, var_types_, settings_, new_slacks_, submip_problem);
 
-  branch_and_bound_t submip_bnb(*this, submip_settings, lower, upper);
-  mip_solution_t<i_t, f_t> fixed_solution(original_problem_.num_cols);
-  mip_status_t submip_status = submip_bnb.solve(fixed_solution);
+  presolver_t<i_t, f_t> presolver;
+  mip_status_t submip_status = presolver.apply(submip_problem, settings_);
 
   if (submip_status == mip_status_t::INFEASIBLE) {
     submip_stats_.save_infeasible(fixrate);
+    return;
+  }
 
-  } else if (submip_status == mip_status_t::OPTIMAL) {
-    std::vector<f_t> crushed_solution;
-    crush_primal_solution<i_t, f_t>(
-      original_problem_, original_lp_, fixed_solution.x, new_slacks_, crushed_solution);
-    f_t obj = compute_objective(original_lp_, crushed_solution);
-    settings_.log.debug_format("{}Found a solution with obj={:.4g}\n",
-                               log_prefix,
-                               compute_user_objective(original_lp_, obj));
+  if (submip_status == mip_status_t::OPTIMAL) {
+    std::vector<f_t> fixed_sol(original_problem_.num_cols);
+    std::vector<f_t> reduced_sol(submip_problem.num_cols);
+    presolver.uncrush(reduced_sol, fixed_sol);
+    set_solution_from_submip(fixed_sol, fixrate);
+    return;
+  }
 
-    if (improves_incumbent(obj)) {
-      add_feasible_solution(obj, crushed_solution, -1, SUBMIP);
-      submip_stats_.save_success(fixrate);
-    }
+  submip_settings.solution_callback = [this, fixrate, &presolver](std::vector<f_t>& solution,
+                                                                  f_t obj) {
+    std::vector<f_t> fixed_sol;
+    presolver.uncrush(solution, fixed_sol);
+    this->set_solution_from_submip(fixed_sol, fixrate);
+  };
+
+  submip_settings.log.print_format("Sub-MIP: {} constraints, {} variables, {} nonzeros\n",
+                                   submip_problem.num_rows,
+                                   submip_problem.num_cols,
+                                   submip_problem.A.nnz());
+
+  probing_implied_bound_t<i_t, f_t> empty_probing(submip_problem.num_cols);
+  branch_and_bound_t submip_bnb(submip_problem, submip_settings, tic(), empty_probing);
+  mip_solution_t<i_t, f_t> submip_solution(submip_problem.num_cols);
+
+  mutex_upper_.lock();
+  std::vector<f_t> current_incumbent = incumbent_.x;
+  mutex_upper_.unlock();
+
+  // submip_bnb.set_initial_guess(current_incumbent);
+  submip_bnb.set_initial_upper_bound(upper_bound_.load());
+  submip_status = submip_bnb.solve(submip_solution);
+
+  if (submip_status == mip_status_t::INFEASIBLE) {
+    submip_stats_.save_infeasible(fixrate);
+    return;
+  }
+
+  if (submip_solution.has_incumbent) {
+    std::vector<f_t> fixed_sol(original_problem_.num_cols);
+    presolver.uncrush(submip_solution.x, fixed_sol);
+    set_solution_from_submip(fixed_sol, fixrate);
   }
 }
 
@@ -2950,7 +2983,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     if (!enable_concurrent_lp_root_solve()) {
       // RINS/SUBMIP path
       settings_.log.printf("\nSolving LP root relaxation with dual simplex\n");
-      root_status = solve_linear_program_with_advanced_basis(original_lp_,
+      root_status          = solve_linear_program_with_advanced_basis(original_lp_,
                                                              exploration_stats_.start_time,
                                                              lp_settings,
                                                              root_relax_soln_,
@@ -2959,6 +2992,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                                                              nonbasic_list,
                                                              root_vstatus_,
                                                              edge_norms_);
+      root_relax_solved_by = DualSimplex;
 
     } else {
       settings_.log.printf("\nSolving LP root relaxation in concurrent mode\n");

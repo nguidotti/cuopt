@@ -14,6 +14,8 @@
 #include <mip_heuristics/mip_constants.hpp>
 #include <mip_heuristics/presolve/third_party_presolve.hpp>
 
+#include "constants.hpp"
+
 namespace cuopt::mathematical_optimization::mip {
 
 // Thin owner of a PaPILO presolver scoped to a single sub-MIP solve. apply() reduces the
@@ -24,8 +26,8 @@ class presolver_t {
  public:
   // Presolve `problem` in place using PaPILO. Returns the presolve status; on
   // INFEASIBLE/UNBOUNDED the problem is left untouched.
-  third_party_presolve_status_t apply(simplex::user_problem_t<i_t, f_t>& problem,
-                                      const simplex::simplex_solver_settings_t<i_t, f_t>& settings);
+  mip_status_t apply(simplex::user_problem_t<i_t, f_t>& problem,
+                     const simplex::simplex_solver_settings_t<i_t, f_t>& settings);
 
   // Map a reduced-space primal solution back to the original column space.
   void uncrush(const std::vector<f_t>& reduced_primal, std::vector<f_t>& full_primal) const;

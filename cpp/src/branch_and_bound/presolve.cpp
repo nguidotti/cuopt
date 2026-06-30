@@ -12,13 +12,28 @@
 
 namespace cuopt::mathematical_optimization::mip {
 
+mip_status_t presolve_status_to_mip_status(third_party_presolve_status_t status)
+{
+  switch (status) {
+    case third_party_presolve_status_t::OPTIMAL: return mip_status_t::OPTIMAL;
+    case third_party_presolve_status_t::INFEASIBLE: return mip_status_t::INFEASIBLE;
+    case third_party_presolve_status_t::UNBOUNDED: return mip_status_t::UNBOUNDED;
+    case third_party_presolve_status_t::UNBNDORINFEAS: return mip_status_t::INFEASIBLE;
+    case third_party_presolve_status_t::REDUCED: return mip_status_t::UNSET;
+    case third_party_presolve_status_t::UNCHANGED: return mip_status_t::UNSET;
+  }
+  return mip_status_t::UNSET;
+}
+
 template <typename i_t, typename f_t>
-third_party_presolve_status_t presolver_t<i_t, f_t>::apply(
+mip_status_t presolver_t<i_t, f_t>::apply(
   simplex::user_problem_t<i_t, f_t>& problem,
   const simplex::simplex_solver_settings_t<i_t, f_t>& settings)
 {
   f_t presolve_time_limit = std::min(0.1 * settings.time_limit, 60.0);
-  return third_party_presolver_.apply(problem, settings, presolve_time_limit, 1);
+  third_party_presolve_status_t status =
+    third_party_presolver_.apply(problem, settings, presolve_time_limit, 1);
+  return presolve_status_to_mip_status(status);
 }
 
 template <typename i_t, typename f_t>

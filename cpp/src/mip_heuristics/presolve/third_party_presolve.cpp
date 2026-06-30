@@ -1032,7 +1032,6 @@ third_party_presolve_status_t third_party_presolve_t<i_t, f_t>::apply(
   papilo_presolver.setVerbosityLevel(papilo::VerbosityLevel::kQuiet);
 
   auto result = papilo_presolver.apply(papilo_problem);
-  check_presolve_status(result.status);
   auto status = convert_papilo_presolve_status_to_third_party_presolve_status(result.status);
 
   // Infeasible / unbounded: leave `problem` untouched; the caller branches on the status.

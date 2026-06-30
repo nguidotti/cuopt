@@ -689,7 +689,6 @@ template <typename i_t, typename f_t>
 void convert_simplex_problem(const lp_problem_t<i_t, f_t>& simplex_problem,
                              const std::vector<variable_type_t>& var_types,
                              const simplex_solver_settings_t<i_t, f_t>& settings,
-                             const dualize_info_t<i_t, f_t>& dualize_info,
                              const std::vector<i_t>& new_slacks,
                              user_problem_t<i_t, f_t>& user_problem)
 {
@@ -700,14 +699,6 @@ void convert_simplex_problem(const lp_problem_t<i_t, f_t>& simplex_problem,
                         simplex_problem.num_cols,
                         simplex_problem.A.col_start[simplex_problem.num_cols]);
   }
-
-  // The simplex_problem is expected to be the primal in standard form. The
-  // dualize path of convert_user_problem hands the dual to the solver and
-  // stashes the primal in dualize_info.primal_problem, so a faithful inverse
-  // of a dualized problem must start from that primal instead.
-  assert(!dualize_info.solving_dual &&
-         "convert_simplex_problem expects the primal problem; reconstruct the primal from "
-         "dualize_info.primal_problem before calling");
 
   const i_t m                             = simplex_problem.num_rows;
   const i_t n                             = simplex_problem.num_cols;
@@ -2037,7 +2028,6 @@ template void convert_simplex_problem<int, double>(
   const lp_problem_t<int, double>& simplex_problem,
   const std::vector<variable_type_t>& var_types,
   const simplex_solver_settings_t<int, double>& settings,
-  const dualize_info_t<int, double>& dualize_info,
   const std::vector<int>& new_slacks,
   user_problem_t<int, double>& user_problem);
 
