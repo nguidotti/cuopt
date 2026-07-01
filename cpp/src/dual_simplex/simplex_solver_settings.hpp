@@ -55,8 +55,9 @@ struct submip_settings_t {
   // Presolve sub-MIP with Papilo before solving it
   bool presolve = true;
 
-  // Warm start sub-MIP's B&B with the parent basis and pseudocost
-  bool warm_start = true;
+  // Limit the number of simplex iterations spent in the submip. Set as a factor of the total
+  // number of simplex iteration from the parent B&B.
+  double iteration_limit_ratio = 0.8;
 };
 
 template <typename i_t, typename f_t>
@@ -67,6 +68,7 @@ struct simplex_solver_settings_t {
       node_limit(std::numeric_limits<i_t>::max()),
       time_limit(std::numeric_limits<f_t>::infinity()),
       work_limit(std::numeric_limits<f_t>::infinity()),
+      bnb_iteration_limit(std::numeric_limits<i_t>::max()),
       absolute_mip_gap_tol(0.0),
       relative_mip_gap_tol(1e-3),
       integer_tol(1e-5),
@@ -152,6 +154,7 @@ struct simplex_solver_settings_t {
   i_t node_limit;
   f_t time_limit;
   f_t work_limit;
+  i_t bnb_iteration_limit;   // Limit of the total number of simplex iterations in B&B
   f_t absolute_mip_gap_tol;  // Tolerance on mip gap to declare optimal
   f_t relative_mip_gap_tol;  // Tolerance on mip gap to declare optimal
   f_t integer_tol;           // Tolerance on integralitiy violation

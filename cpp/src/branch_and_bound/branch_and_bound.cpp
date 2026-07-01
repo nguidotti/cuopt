@@ -342,11 +342,10 @@ void branch_and_bound_t<i_t, f_t>::set_initial_upper_bound(f_t bound)
 
 template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::warm_start(const pseudo_costs_t<i_t, f_t>& parent_pc,
-                                              const std::vector<i_t>& reduced_to_original,
-                                              i_t max_samples)
+                                              const std::vector<i_t>& reduced_to_original)
 {
   pc_.resize(original_lp_.num_cols);
-  pc_.warm_start_from(parent_pc, reduced_to_original, max_samples);
+  pc_.warm_start_from(parent_pc, reduced_to_original);
   root_warm_start_ = true;
 }
 
@@ -585,11 +584,11 @@ void branch_and_bound_t<i_t, f_t>::set_solution_from_submip(const std::vector<f_
   f_t obj = compute_objective(original_lp_, crushed_solution);
   mutex_original_lp_.unlock();
 
+  settings_.log.printf("Recursive subMIP found solution with obj=%g",
+                       compute_user_objective(original_lp_, obj));
+
   mutex_upper_.lock();
   if (improves_incumbent(obj)) {
-    settings_.log.debug("Recursive subMIP found solution with obj=%g",
-                        compute_user_objective(original_lp_, obj));
-
     f_t current_upper_bound = upper_bound_.load();
     upper_bound_            = std::min(current_upper_bound, obj);
     incumbent_.set_incumbent_solution(obj, crushed_solution);
@@ -815,6 +814,10 @@ void branch_and_bound_t<i_t, f_t>::set_final_solution(mip_solution_t<i_t, f_t>& 
 
   if (solver_status_ == mip_status_t::NODE_LIMIT) {
     settings_.log.printf("Node limit reached. Stopping the solver...\n");
+  }
+
+  if (solver_status_ == mip_status_t::ITERATION_LIMIT) {
+    settings_.log.printf("Simplex iteration limit reached. Stopping the solver...\n");
   }
 
   if (settings_.heuristic_preemption_callback != nullptr) {
@@ -1732,6 +1735,12 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
       break;
     }
 
+    if (exploration_stats_.total_lp_iters > settings_.bnb_iteration_limit) {
+      solver_status_ = mip_status_t::ITERATION_LIMIT;
+      stack.push_front(node_ptr);
+      break;
+    }
+
     dual_status_t lp_status = solve_node_lp(node_ptr, worker, exploration_stats_, settings_.log);
     ++exploration_stats_.nodes_since_last_log;
     ++exploration_stats_.nodes_explored;
@@ -2168,6 +2177,8 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(submip_worker_t<i_t, f_t>* worke
 
   simplex_solver_settings_t<i_t, f_t> submip_settings;
   submip_settings.node_limit = settings_.submip_settings.node_limit_base + explored / 20;
+  submip_settings.bnb_iteration_limit =
+    exploration_stats_.total_lp_iters * submip_settings.submip_settings.iteration_limit_ratio;
 
   submip_settings.time_limit = settings_.time_limit - toc(exploration_stats_.start_time);
   if (submip_settings.time_limit < 0) { return; }
@@ -2237,6 +2248,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(submip_worker_t<i_t, f_t>* worke
                                                             : &upper_bound_);
   submip_bnb.warm_start(pc_, presolver.reduced_to_original_map());
   submip_status = submip_bnb.solve(submip_solution);
+  exploration_stats_.total_lp_iters += submip_solution.simplex_iterations;
 
   if (submip_status == mip_status_t::INFEASIBLE) {
     submip_stats_.save_infeasible(fixrate);
@@ -2932,7 +2944,8 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 
   if (!enable_concurrent_lp_root_solve()) {
     // RINS/SUBMIP path
-    settings_.log.printf("\nSolving LP root relaxation with dual simplex\n");
+    settings_.log.printf("\n");
+    settings_.log.printf("Solving LP root relaxation with dual simplex\n");
     root_status          = solve_linear_program_with_advanced_basis(original_lp_,
                                                            exploration_stats_.start_time,
                                                            lp_settings,
@@ -2945,7 +2958,8 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     root_relax_solved_by = DualSimplex;
 
   } else {
-    settings_.log.printf("\nSolving LP root relaxation in concurrent mode\n");
+    settings_.log.printf("\n");
+    settings_.log.printf("Solving LP root relaxation in concurrent mode\n");
     root_status = solve_root_relaxation(lp_settings,
                                         root_relax_soln_,
                                         root_vstatus_,
@@ -3007,11 +3021,11 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   }
 
   assert(root_status == lp_status_t::OPTIMAL);
-  settings_.log.print_format(
-    "\nRoot relaxation solution found in {} iterations and {:.2f}s by {}\n",
-    root_relax_soln_.iterations,
-    root_relax_elapsed_time,
-    method_to_string(root_relax_solved_by));
+  settings_.log.printf("\n");
+  settings_.log.print_format("Root relaxation solution found in {} iterations and {:.2f}s by {}\n",
+                             root_relax_soln_.iterations,
+                             root_relax_elapsed_time,
+                             method_to_string(root_relax_solved_by));
   settings_.log.printf("Root relaxation objective %+.8e\n\n", root_relax_soln_.user_objective);
 
   assert(root_vstatus_.size() == original_lp_.num_cols);

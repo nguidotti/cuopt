@@ -44,15 +44,16 @@ enum class branch_direction_t { NONE = -1, DOWN = 0, UP = 1 };
 enum class branch_and_bound_mode_t { PARALLEL = 0, DETERMINISTIC = 1 };
 
 enum class mip_status_t {
-  OPTIMAL     = 0,  // The optimal integer solution was found
-  UNBOUNDED   = 1,  // The problem is unbounded
-  INFEASIBLE  = 2,  // The problem is infeasible
-  TIME_LIMIT  = 3,  // The solver reached a time limit
-  NODE_LIMIT  = 4,  // The maximum number of nodes was reached (not implemented)
-  NUMERICAL   = 5,  // The solver encountered a numerical error
-  UNSET       = 6,  // The status is not set
-  WORK_LIMIT  = 7,  // The solver reached a deterministic work limit
-  SUBMIP_HALT = 8   // Stop submip solve since it no longer valid
+  OPTIMAL         = 0,  // The optimal integer solution was found
+  UNBOUNDED       = 1,  // The problem is unbounded
+  INFEASIBLE      = 2,  // The problem is infeasible
+  TIME_LIMIT      = 3,  // The solver reached a time limit
+  NODE_LIMIT      = 4,  // The maximum number of nodes was reached
+  ITERATION_LIMIT = 5,  // The maximum number of simplex iterations was reached
+  NUMERICAL       = 6,  // The solver encountered a numerical error
+  UNSET           = 7,  // The status is not set
+  WORK_LIMIT      = 8,  // The solver reached a deterministic work limit
+  SUBMIP_HALT     = 9   // Stop submip solve since it no longer valid
 };
 
 }  // namespace cuopt::mathematical_optimization::mip
