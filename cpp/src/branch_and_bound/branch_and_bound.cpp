@@ -796,12 +796,10 @@ void branch_and_bound_t<i_t, f_t>::set_final_solution(mip_solution_t<i_t, f_t>& 
     settings_.log.print_format("lower={}, obj={}\n",
                                compute_user_objective(original_lp_, lower_bound),
                                compute_user_objective(original_lp_, upper_bound_.load()));
-    return;
   }
 
   if (solver_status_ == mip_status_t::NUMERICAL) {
     settings_.log.printf("Numerical issue encountered. Stopping the solver...\n");
-    return;
   }
 
   if (solver_status_ == mip_status_t::TIME_LIMIT) {
@@ -1668,6 +1666,8 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
   f_t rel_gap     = user_relative_gap(user_obj, user_lower);
   f_t abs_gap     = compute_user_abs_gap(original_lp_, upper_bound, lower_bound);
 
+  bool can_launch_rins = true;
+
   while (stack.size() > 0 && (solver_status_ == mip_status_t::UNSET && is_running_) &&
          rel_gap > settings_.relative_mip_gap_tol && abs_gap > settings_.absolute_mip_gap_tol) {
     if (worker->worker_id == 0) { repair_heuristic_solutions(); }
@@ -1770,7 +1770,7 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
     worker->recompute_bounds = node_status != node_status_t::HAS_CHILDREN;
 
     if (node_status == node_status_t::HAS_CHILDREN) {
-      launch_submip_worker(worker->leaf_solution.x);
+      if (can_launch_rins) { can_launch_rins = !launch_submip_worker(worker->leaf_solution.x); }
 
       // The stack should only contain the children of the current parent.
       // If the stack size is greater than 0,
@@ -1915,7 +1915,7 @@ void branch_and_bound_t<i_t, f_t>::best_first_search_with(bfs_worker_t<i_t, f_t>
         solver_status_        = mip_status_t::SUBMIP_HALT;
         settings_.log.print_format(
           "Stopping the submip since the main B&B has a better incumbent. "
-          "(upper={:g}, external_upper={:g}, lower={:g}",
+          "upper={:g}, external_upper={:g}, lower={:g}\n",
           user_obj,
           external_upper_bound,
           user_lower);
@@ -2138,20 +2138,22 @@ bool branch_and_bound_t<i_t, f_t>::launch_diving_worker(bfs_worker_t<i_t, f_t>* 
 }
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::launch_submip_worker(const std::vector<f_t>& sol)
+bool branch_and_bound_t<i_t, f_t>::launch_submip_worker(const std::vector<f_t>& sol)
 {
-  if (settings_.submip_settings.enable_rins == 0) return;
-  if (!incumbent_.has_incumbent) return;
-  if (submip_worker_pool_.num_idle() == 0) return;
+  if (settings_.submip_settings.enable_rins == 0) return false;
+  if (!incumbent_.has_incumbent) return false;
+  if (submip_worker_pool_.num_idle() == 0) return false;
 
   submip_worker_t<i_t, f_t>* submip_worker = submip_worker_pool_.pop_idle_worker();
-  if (!submip_worker) return;
+  if (!submip_worker) return false;
 
   submip_worker->set_active();
 
 #pragma omp task priority(CUOPT_MEDIUM_TASK_PRIORITY) affinity(submip_worker) \
-  firstprivate(submip_worker, sol)
+  firstprivate(submip_worker, sol) if (!settings_.inside_submip)
   rins(submip_worker, sol);
+
+  return true;
 }
 
 template <typename i_t, typename f_t>
@@ -2191,7 +2193,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(submip_worker_t<i_t, f_t>* worke
   submip_settings.inside_submip                            = 1;
   submip_settings.strong_branching_simplex_iteration_limit = 50;
   submip_settings.submip_settings.level                    = submip_level;
-  submip_settings.log.log                                  = true;
+  submip_settings.log.log                                  = false;
   submip_settings.log.log_prefix                           = log_prefix;
 
   submip_settings.node_limit = settings_.submip_settings.node_limit_base + explored / 20;
@@ -2395,8 +2397,8 @@ void branch_and_bound_t<i_t, f_t>::rins(submip_worker_t<i_t, f_t>* rins_worker,
       }
 
       // Even considering the entire integer list, we were unable to fix a single variable in this
-      // iteration. Iterate over the fractional variables again and fixing those that closest to an
-      // integer solution first in order to reach the fixing threshold.
+      // iteration. Iterate over the fractional variables again and fixing those that closest to
+      // an integer solution first in order to reach the fixing threshold.
       if (prev_num_fixed == num_var_fixed) {
         std::vector<std::tuple<f_t, i_t, f_t>> candidates;
         for (i_t j : fractional) {
@@ -3573,8 +3575,8 @@ Work Units:   0                              0.5                              1.
 ──────────────────────────────────────────────────────────────────────────────────────────►
                                                                         Work Unit Time
 
-Legend:  ▓▓▓ = actively working    ░░░ = waiting at barrier    [hash] = state hash for verification
-         wut = work unit timestamp    PC = pseudo-costs    snap = snapshot (local copy)
+Legend:  ▓▓▓ = actively working    ░░░ = waiting at barrier    [hash] = state hash for
+verification wut = work unit timestamp    PC = pseudo-costs    snap = snapshot (local copy)
 
 */
 
@@ -3612,23 +3614,22 @@ Producer Sync:
   Producing solutions in the past would break determinism, therefore this unidirectional sync
 ensures no such thing can occur. Instrumentation Aggregator: Collects multiple instrument vectors
 into a single aggregation point for estimating work from memory operations. Worker Context: Object
-representing the "context" (e.g.: the worker) that should register the amount of work recorded There
-is a 1context:1worker mapping. The Work Unit Scheduler registers such contexts and ensure they
-remained synchronized together. Queued Integer Solutions: New integer solutions found within
-horizons are queued with a work unit timestamp, in order to be sorted and played in order during the
-sync callback. Creation Sequence: In nondeterministic mode, a single global atomic integer is used
-to generate sequential IDs for the nodes. Since this is a global atomic, it is inherently
+representing the "context" (e.g.: the worker) that should register the amount of work recorded
+There is a 1context:1worker mapping. The Work Unit Scheduler registers such contexts and ensure
+they remained synchronized together. Queued Integer Solutions: New integer solutions found within
+horizons are queued with a work unit timestamp, in order to be sorted and played in order during
+the sync callback. Creation Sequence: In nondeterministic mode, a single global atomic integer is
+used to generate sequential IDs for the nodes. Since this is a global atomic, it is inherently
 nondeterministic. To fix this, in deterministic mode, nodes are addressed by a tuple <worker_id,
 seq_id>
-  where "worker_id" is the ID of the worker that created this node, and "seq_id" is a sequential ID
-local to the worker.\ This sequential ID is similar in principle to the global atomic ID sequence of
-the nondeterminsitic mode but since it is local to each worker, it is updated serially and thus is
-deterministic. worker IDs are unique, and sequence IDs are unique to their workers, therefor
-  <worker_id, seq_id> is a globally unique node identifier.
-Pseudocost Update:
-  Each worker updates its local pseudocosts when branching. These updates are queued within
-horizons. During the horizon sync, these updates are all played in order, and the newly updated
-global pseudocosts are broadcast to the worker's pseudocost snapshots for the coming horizon.
+  where "worker_id" is the ID of the worker that created this node, and "seq_id" is a sequential
+ID local to the worker.\ This sequential ID is similar in principle to the global atomic ID
+sequence of the nondeterminsitic mode but since it is local to each worker, it is updated serially
+and thus is deterministic. worker IDs are unique, and sequence IDs are unique to their workers,
+therefor <worker_id, seq_id> is a globally unique node identifier. Pseudocost Update: Each worker
+updates its local pseudocosts when branching. These updates are queued within horizons. During the
+horizon sync, these updates are all played in order, and the newly updated global pseudocosts are
+broadcast to the worker's pseudocost snapshots for the coming horizon.
 
 */
 
@@ -3738,7 +3739,8 @@ void branch_and_bound_t<i_t, f_t>::run_deterministic_coordinator(const csr_matri
     "Sync%% | NoWork\n");
   settings_.log.printf(
     "  "
-    "-------+---------+----------+--------+---------+--------+----------+----------+-------+-------"
+    "-------+---------+----------+--------+---------+--------+----------+----------+-------+-----"
+    "--"
     "\n");
   for (const auto& worker : *deterministic_workers_) {
     double sync_time    = worker.work_context.total_sync_time;

@@ -50,7 +50,7 @@ struct submip_settings_t {
   int level = 0;
 
   // Maximum recursion level
-  int max_level = 5;
+  int max_level = 10;
 
   // Presolve sub-MIP with Papilo before solving it
   bool presolve = true;

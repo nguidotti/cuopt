@@ -12,7 +12,6 @@
 #include <branch_and_bound/mip_node.hpp>
 #include <branch_and_bound/node_queue.hpp>
 #include <branch_and_bound/pseudo_costs.hpp>
-#include <branch_and_bound/submip.hpp>
 #include <branch_and_bound/worker.hpp>
 #include <branch_and_bound/worker_pool.hpp>
 
@@ -355,7 +354,7 @@ class branch_and_bound_t {
   // to find integer feasible solutions.
   void dive_with(diving_worker_t<i_t, f_t>* worker);
 
-  void launch_submip_worker(const std::vector<f_t>& sol);
+  bool launch_submip_worker(const std::vector<f_t>& sol);
   void solve_submip(submip_worker_t<i_t, f_t>* worker,
                     const std::vector<f_t>& current_incumbent,
                     i_t num_var_fixed,

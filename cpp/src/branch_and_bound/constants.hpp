@@ -53,7 +53,7 @@ enum class mip_status_t {
   NUMERICAL       = 6,  // The solver encountered a numerical error
   UNSET           = 7,  // The status is not set
   WORK_LIMIT      = 8,  // The solver reached a deterministic work limit
-  SUBMIP_HALT     = 9   // Stop submip solve since it no longer valid
+  SUBMIP_HALT     = 9   // Halt the search on a suboptimal sub-MIP
 };
 
 }  // namespace cuopt::mathematical_optimization::mip
