@@ -2193,7 +2193,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(submip_worker_t<i_t, f_t>* worke
   submip_settings.inside_submip                            = 1;
   submip_settings.strong_branching_simplex_iteration_limit = 50;
   submip_settings.submip_settings.level                    = submip_level;
-  submip_settings.log.log                                  = true;
+  submip_settings.log.log                                  = false;
   submip_settings.log.log_prefix                           = log_prefix;
 
   submip_settings.node_limit = settings_.submip_settings.node_limit_base + explored / 20;
