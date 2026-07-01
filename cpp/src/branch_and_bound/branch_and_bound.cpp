@@ -2193,7 +2193,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(submip_worker_t<i_t, f_t>* worke
   submip_settings.inside_submip                            = 1;
   submip_settings.strong_branching_simplex_iteration_limit = 50;
   submip_settings.submip_settings.level                    = submip_level;
-  submip_settings.log.log                                  = false;
+  submip_settings.log.log                                  = true;
   submip_settings.log.log_prefix                           = log_prefix;
 
   submip_settings.node_limit = settings_.submip_settings.node_limit_base + explored / 20;
@@ -2255,9 +2255,14 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(submip_worker_t<i_t, f_t>* worke
   branch_and_bound_t submip_bnb(submip_problem, submip_settings, tic(), empty_probing);
   mip_solution_t<i_t, f_t> submip_solution(submip_problem.num_cols);
 
-  std::vector<f_t> crushed_incumbent;
-  presolver.crush(current_incumbent, crushed_incumbent);
+  // Map the current incumbent to the user space, removing the variables related to the slacks/cuts
+  // added.
+  std::vector<f_t> uncrushed_incumbent;
+  uncrush_primal_solution(original_problem_, original_lp_, current_incumbent, uncrushed_incumbent);
 
+  // Crush the incumbent to presolve space.
+  std::vector<f_t> crushed_incumbent;
+  presolver.crush(uncrushed_incumbent, crushed_incumbent);
   submip_bnb.set_initial_guess(crushed_incumbent);
 
   if (external_upper_bound_callback_) {
@@ -2270,6 +2275,9 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(submip_worker_t<i_t, f_t>* worke
   submip_bnb.warm_start(pc_, presolver.reduced_to_original_map());
   submip_status = submip_bnb.solve(submip_solution);
   exploration_stats_.total_simplex_iters += submip_solution.simplex_iterations;
+
+  submip_settings.log.print_format(
+    "Sub-MIP: status={}, iterations={} \n", (int)submip_status, submip_solution.simplex_iterations);
 
   if (submip_status == mip_status_t::INFEASIBLE) {
     submip_stats_.save_infeasible(fixrate);
@@ -3457,9 +3465,10 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     if (settings_.deterministic) {
       run_deterministic_coordinator(Arow_);
     } else {
-      const i_t num_workers        = settings_.num_threads;
-      const i_t num_bfs_workers    = std::max(settings_.num_threads / 2, 1);
-      const i_t num_diving_workers = num_workers - num_bfs_workers;
+      const i_t num_workers     = settings_.num_threads;
+      const i_t num_bfs_workers = std::max(settings_.num_threads / 2, 1);
+      const i_t num_diving_workers =
+        settings_.inside_mip ? num_search_strategies - 2 : num_workers - num_bfs_workers;
       bfs_worker_pool_.init(num_bfs_workers, original_lp_, Arow_, var_types_, symmetry_, settings_);
       submip_worker_pool_.init(1, original_lp_, Arow_, var_types_, symmetry_, settings_);
 
