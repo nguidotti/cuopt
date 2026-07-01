@@ -1489,7 +1489,7 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
   f_t avg_up{0};
   lp_solution_t<i_t, f_t>& leaf_solution = worker->leaf_solution;
 
-  const int64_t branch_and_bound_lp_iters = bnb_stats.total_lp_iters;
+  const int64_t branch_and_bound_lp_iters = bnb_stats.total_simplex_iters;
   const i_t branch_and_bound_lp_iter_per_node =
     bnb_stats.nodes_explored > 0 ? branch_and_bound_lp_iters / bnb_stats.nodes_explored : 0;
   const i_t iter_limit_per_trial = std::clamp(2 * branch_and_bound_lp_iter_per_node,

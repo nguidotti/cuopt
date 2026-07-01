@@ -154,16 +154,16 @@ struct simplex_solver_settings_t {
   i_t node_limit;
   f_t time_limit;
   f_t work_limit;
-  i_t bnb_iteration_limit;   // Limit of the total number of simplex iterations in B&B
-  f_t absolute_mip_gap_tol;  // Tolerance on mip gap to declare optimal
-  f_t relative_mip_gap_tol;  // Tolerance on mip gap to declare optimal
-  f_t integer_tol;           // Tolerance on integralitiy violation
-  f_t primal_tol;            // Absolute primal infeasibility tolerance
-  f_t dual_tol;              // Absolute dual infeasibility tolerance
-  f_t pivot_tol;             // Simplex pivot tolerance
-  f_t tight_tol;             // A tight tolerance used to check for infeasibility
-  f_t fixed_tol;             // If l <= x <= u with u - l < fixed_tol a variable is consider fixed
-  f_t zero_tol;              // Values below this tolerance are considered numerically zero
+  int64_t bnb_iteration_limit;  // Limit of the total number of simplex iterations in B&B
+  f_t absolute_mip_gap_tol;     // Tolerance on mip gap to declare optimal
+  f_t relative_mip_gap_tol;     // Tolerance on mip gap to declare optimal
+  f_t integer_tol;              // Tolerance on integralitiy violation
+  f_t primal_tol;               // Absolute primal infeasibility tolerance
+  f_t dual_tol;                 // Absolute dual infeasibility tolerance
+  f_t pivot_tol;                // Simplex pivot tolerance
+  f_t tight_tol;                // A tight tolerance used to check for infeasibility
+  f_t fixed_tol;  // If l <= x <= u with u - l < fixed_tol a variable is consider fixed
+  f_t zero_tol;   // Values below this tolerance are considered numerically zero
   f_t barrier_relative_feasibility_tol;  // Relative feasibility tolerance for barrier method
   f_t barrier_relative_optimality_tol;   // Relative optimality tolerance for barrier method
   f_t

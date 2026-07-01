@@ -31,9 +31,9 @@ struct branch_and_bound_stats_t {
   // Tracks the number of nodes being solved by the workers at a given time
   omp_atomic_t<i_t> nodes_being_solved = 0;
 
-  omp_atomic_t<int64_t> total_lp_iters   = 0;
-  omp_atomic_t<i_t> nodes_since_last_log = 0;
-  omp_atomic_t<f_t> last_log             = 0.0;
+  omp_atomic_t<int64_t> total_simplex_iters = 0;
+  omp_atomic_t<i_t> nodes_since_last_log    = 0;
+  omp_atomic_t<f_t> last_log                = 0.0;
 
   omp_atomic_t<int64_t> orbital_fixing_nodes              = 0;
   omp_atomic_t<int64_t> orbital_fixings_applied           = 0;
