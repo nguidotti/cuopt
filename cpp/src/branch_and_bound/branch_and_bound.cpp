@@ -1708,10 +1708,10 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
 
     if (worker->worker_id == 0) {
       f_t time_since_last_log =
-        exploration_stats_.last_log == 0 ? 1.0 : toc(exploration_stats_.last_log);
+        exploration_stats_.last_log == 0 ? 50.0 : toc(exploration_stats_.last_log);
       i_t nodes_since_last_log = exploration_stats_.nodes_since_last_log;
 
-      if (((nodes_since_last_log >= 1000 || abs_gap < 10 * settings_.absolute_mip_gap_tol) &&
+      if (((nodes_since_last_log >= 100 || abs_gap < 10 * settings_.absolute_mip_gap_tol) &&
            time_since_last_log >= 1) ||
           (time_since_last_log > 30) || now > settings_.time_limit) {
         report(' ', upper_bound_, lower_bound, node_ptr->depth, node_ptr->integer_infeasible);
@@ -2194,7 +2194,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(submip_worker_t<i_t, f_t>* worke
   submip_settings.inside_submip                            = 1;
   submip_settings.strong_branching_simplex_iteration_limit = 50;
   submip_settings.submip_settings.level                    = submip_level;
-  submip_settings.log.log                                  = true;
+  submip_settings.log.log                                  = false;
   submip_settings.log.log_prefix                           = log_prefix;
 
   submip_settings.submip_settings.enable_rins = settings_.submip_settings.enable_rins != 0 &&
@@ -2376,15 +2376,68 @@ void branch_and_bound_t<i_t, f_t>::rins(submip_worker_t<i_t, f_t>* rins_worker,
       }
 
       // Even considering the entire integer list, we were unable to fix a single variable in this
-      // iteration. Try to solve the submip with what we got.
+      // iteration. Iterate over the fractional variables again and fixing those that closest to an
+      // integer solution first in order to reach the fixing threshold.
       if (prev_num_fixed == num_var_fixed) {
-        settings_.log.print_format("{}Fixed {} variables, the maximum for RINS. (max={}, min={})\n",
-                                   log_prefix,
-                                   num_var_fixed,
-                                   max_var_fixed,
-                                   min_var_fixed);
-        has_submip = true;
-        break;
+        std::vector<std::tuple<f_t, i_t, f_t>> candidates;
+        for (i_t j : fractional) {
+          if (std::abs(lower[j] - upper[j]) <= settings_.fixed_tol) { continue; }
+
+          f_t root_change = current_sol[j] - root_relax_soln_.x[j];
+          f_t obj_coeff   = rins_worker->leaf_problem.objective[j];
+          f_t fixed_val   = 0;
+
+          if (root_change >= 0.4) {
+            fixed_val = std::ceil(current_sol[j]);
+          } else if (root_change <= -0.4) {
+            fixed_val = std::floor(current_sol[j]);
+          } else if (obj_coeff > settings_.zero_tol) {
+            fixed_val = std::ceil(current_sol[j]);
+          } else if (obj_coeff < -settings_.zero_tol) {
+            fixed_val = std::floor(current_sol[j]);
+          } else {
+            fixed_val = std::round(current_sol[j]);
+          }
+
+          candidates.push_back(std::make_tuple(std::abs(fixed_val - current_sol[j]), j, fixed_val));
+        }
+
+        std::sort(candidates.begin(), candidates.end(), [](auto a, auto b) {
+          return std::get<0>(a) < std::get<0>(b);
+        });
+
+        f_t change = 0;
+        for (auto [dist, j, fixed_val] : candidates) {
+          fixed_val         = std::clamp(fixed_val, lower[j], upper[j]);
+          lower[j]          = fixed_val;
+          upper[j]          = fixed_val;
+          bounds_changed[j] = true;
+          ++num_var_fixed;
+          if (num_var_fixed >= max_var_fixed) break;
+
+          // Limit the amount of fixing to the current LP.
+          change += dist;
+          if (change >= 0.5) { break; }
+        }
+
+        if (num_var_fixed >= min_var_fixed) {
+          settings_.log.print_format("{}Fixed {} variables (max={}, min={})\n",
+                                     log_prefix,
+                                     num_var_fixed,
+                                     max_var_fixed,
+                                     min_var_fixed);
+          has_submip = true;
+          break;
+        }
+
+        if (prev_num_fixed == num_var_fixed) {
+          settings_.log.print_format("{} Could not fix more variables\n",
+                                     log_prefix,
+                                     num_var_fixed,
+                                     max_var_fixed,
+                                     min_var_fixed);
+          break;
+        }
       }
     }
 
