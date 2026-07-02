@@ -298,14 +298,20 @@ papilo::Problem<f_t> build_papilo_problem(const simplex::user_problem_t<i_t, f_t
     builder.setRowLhsAll(h_constr_lb);
     builder.setRowRhsAll(h_constr_ub);
   }
+  // Per-row inf flags (mirrors the optimization_problem_t overload). The zeroed lhs/rhs and the
+  // flags are handed to setConstraintMatrix below.
+  std::vector<papilo::RowFlags> h_row_flags(num_rows);
   for (i_t i = 0; i < num_rows; ++i) {
     const bool lhs_inf = h_constr_lb[i] == -std::numeric_limits<f_t>::infinity();
     const bool rhs_inf = h_constr_ub[i] == std::numeric_limits<f_t>::infinity();
-    builder.setRowLhsInf(i, lhs_inf);
-    builder.setRowRhsInf(i, rhs_inf);
-    // Zero the placeholder value papilo stores for an infinite side.
-    if (lhs_inf) { builder.setRowLhs(i, 0); }
-    if (rhs_inf) { builder.setRowRhs(i, 0); }
+    if (lhs_inf) {
+      h_row_flags[i].set(papilo::RowFlag::kLhsInf);
+      h_constr_lb[i] = 0;
+    }
+    if (rhs_inf) {
+      h_row_flags[i].set(papilo::RowFlag::kRhsInf);
+      h_constr_ub[i] = 0;
+    }
   }
 
   for (i_t j = 0; j < num_cols; ++j) {
@@ -315,20 +321,42 @@ papilo::Problem<f_t> build_papilo_problem(const simplex::user_problem_t<i_t, f_t
     if (var_ub[j] == std::numeric_limits<f_t>::infinity()) { builder.setColUb(j, 0); }
   }
 
-  // Feed the constraint matrix column-by-column straight from the CSC storage -- no COO
-  // triplet list and no CSC->CSR conversion. addColEntries copies into the builder's matrix
-  // buffer, so nothing aliases op_problem's arrays. The matrix is assumed free of explicitly
-  // stored zeros (matrix_buffer.addEntry asserts a nonzero value in debug builds).
+  // Assemble COO entries (row, col, value) from the CSC storage and hand the matrix to papilo via
+  // SparseStorage with the MIP fill-in headroom, exactly like the optimization_problem_t overload.
+  // The default ProblemBuilder path (addColEntries) omits that headroom, which leaves papilo's
+  // in-place presolve in a state where DualInfer can assert on a row it reduced.
+  std::vector<std::tuple<i_t, i_t, f_t>> h_entries;
+  h_entries.reserve(nnz);
   const std::vector<i_t>& col_start = problem.A.col_start;
   const std::vector<i_t>& row_index = problem.A.i;
   const std::vector<f_t>& values    = problem.A.x;
   for (i_t j = 0; j < num_cols; ++j) {
-    const i_t start = col_start[j];
-    const i_t len   = col_start[j + 1] - start;
-    if (len > 0) { builder.addColEntries(j, len, &row_index[start], &values[start]); }
+    for (i_t p = col_start[j]; p < col_start[j + 1]; ++p) {
+      h_entries.push_back(std::make_tuple(row_index[p], j, values[p]));
+    }
   }
 
-  return builder.build();
+  auto papilo_problem = builder.build();
+  if (!h_entries.empty()) {
+    // CSC iteration is column-major, so entries are not row-sorted; let papilo sort them.
+    constexpr bool sorted_entries = false;
+    // MIP reductions like clique merging and substitution require more fillin.
+    const double spare_ratio      = 4.0;
+    const int min_inter_row_space = 30;
+    auto csr_storage              = papilo::SparseStorage<f_t>(
+      h_entries, num_rows, num_cols, sorted_entries, spare_ratio, min_inter_row_space);
+    papilo_problem.setConstraintMatrix(csr_storage, h_constr_lb, h_constr_ub, h_row_flags);
+
+    papilo::ConstraintMatrix<f_t>& matrix = papilo_problem.getConstraintMatrix();
+    for (i_t i = 0; i < papilo_problem.getNRows(); ++i) {
+      papilo::RowFlags rowFlag = matrix.getRowFlags()[i];
+      if (!rowFlag.test(papilo::RowFlag::kRhsInf) && !rowFlag.test(papilo::RowFlag::kLhsInf) &&
+          matrix.getLeftHandSides()[i] == matrix.getRightHandSides()[i])
+        matrix.getRowFlags()[i].set(papilo::RowFlag::kEquation);
+    }
+  }
+
+  return papilo_problem;
 }
 
 struct PSLPContext {
@@ -667,9 +695,12 @@ void build_user_problem(papilo::Problem<f_t> const& papilo_problem,
       problem.row_sense[r] = 'G';
       problem.rhs[r]       = lhs[r];
     } else if (!lhs_inf && !rhs_inf) {
-      // lhs <= a^T x <= rhs : store as 'L' with a positive range width.
-      problem.row_sense[r] = 'L';
-      problem.rhs[r]       = rhs_v[r];
+      // lhs <= a^T x <= rhs : a range row. Match the convention used by get_host_user_problem and
+      // convert_simplex_problem (row_sense 'E' anchored at the lower bound, width in range_value).
+      // Storing it as 'L' left range rows out of convert_user_problem's equality_rows, which broke
+      // add_artifical_variables' `range_rows subset of equality_rows` invariant (j != num_cols).
+      problem.row_sense[r] = 'E';
+      problem.rhs[r]       = lhs[r];
       problem.range_rows.push_back(r);
       problem.range_value.push_back(rhs_v[r] - lhs[r]);
     } else {

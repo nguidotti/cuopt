@@ -2258,7 +2258,9 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(submip_worker_t<i_t, f_t>* worke
   // Map the current incumbent to the user space, removing the variables related to the slacks/cuts
   // added.
   std::vector<f_t> uncrushed_incumbent;
+  mutex_original_lp_.lock();
   uncrush_primal_solution(original_problem_, original_lp_, current_incumbent, uncrushed_incumbent);
+  mutex_original_lp_.unlock();
 
   // Crush the incumbent to presolve space.
   std::vector<f_t> crushed_incumbent;
@@ -3465,12 +3467,14 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     if (settings_.deterministic) {
       run_deterministic_coordinator(Arow_);
     } else {
-      const i_t num_workers     = settings_.num_threads;
-      const i_t num_bfs_workers = std::max(settings_.num_threads / 2, 1);
+      const i_t num_workers        = settings_.num_threads;
+      const i_t num_bfs_workers    = std::max(settings_.num_threads / 2, 1);
+      const i_t num_submip_workers = std::max(num_workers / 8, 1);
       const i_t num_diving_workers =
-        settings_.inside_mip ? num_search_strategies - 2 : num_workers - num_bfs_workers;
+        std::max(num_workers - num_bfs_workers - num_submip_workers, 0);
       bfs_worker_pool_.init(num_bfs_workers, original_lp_, Arow_, var_types_, symmetry_, settings_);
-      submip_worker_pool_.init(1, original_lp_, Arow_, var_types_, symmetry_, settings_);
+      submip_worker_pool_.init(
+        num_submip_workers, original_lp_, Arow_, var_types_, symmetry_, settings_);
 
       if (num_diving_workers > 0) {
         diving_worker_pool_.init(num_diving_workers,
