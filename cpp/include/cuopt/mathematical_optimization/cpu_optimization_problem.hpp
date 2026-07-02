@@ -137,7 +137,8 @@ class cpu_optimization_problem_t : public optimization_problem_interface_t<i_t, 
                                 std::span<const f_t> linear_values,
                                 std::span<const i_t> linear_indices) override;
   bool has_quadratic_constraints() const override;
-  const std::vector<quadratic_constraint_t>& get_quadratic_constraints() const override;
+  const std::vector<typename optimization_problem_interface_t<i_t, f_t>::quadratic_constraint_t>&
+  get_quadratic_constraints() const override;
 
   // Host getters - these are the only supported getters for CPU implementation
   std::vector<f_t> get_constraint_matrix_values_host() const override;

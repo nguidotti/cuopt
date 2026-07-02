@@ -106,7 +106,4 @@ using bfs_worker_pool_t = worker_pool_t<bfs_worker_t<i_t, f_t>>;
 template <typename i_t, typename f_t>
 using diving_worker_pool_t = worker_pool_t<diving_worker_t<i_t, f_t>>;
 
-template <typename i_t, typename f_t>
-using submip_worker_pool_t = worker_pool_t<submip_worker_t<i_t, f_t>>;
-
 }  // namespace cuopt::mathematical_optimization::mip

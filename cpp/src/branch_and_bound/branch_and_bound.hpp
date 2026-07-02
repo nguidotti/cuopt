@@ -255,7 +255,7 @@ class branch_and_bound_t {
   // Worker pool dedicated to diving
   diving_worker_pool_t<i_t, f_t> diving_worker_pool_;
 
-  submip_worker_pool_t<i_t, f_t> submip_worker_pool_;
+  diving_worker_pool_t<i_t, f_t> submip_worker_pool_;
   submip_stats_t submip_stats_;
 
   // Global status of the solver.
@@ -352,17 +352,17 @@ class branch_and_bound_t {
 
   // Perform a deep dive in the subtree determined by the `start_node` in order
   // to find integer feasible solutions.
-  void dive_with(diving_worker_t<i_t, f_t>* worker);
+  void dive_with(diving_worker_t<i_t, f_t>* worker, i_t backtrack_limit);
 
   bool launch_submip_worker(const std::vector<f_t>& sol);
-  void solve_submip(submip_worker_t<i_t, f_t>* worker,
+  void solve_submip(diving_worker_t<i_t, f_t>* worker,
                     const std::vector<f_t>& current_incumbent,
                     i_t num_var_fixed,
                     i_t num_integers,
                     i_t submip_level,
                     std::string_view log_prefix);
 
-  void rins(submip_worker_t<i_t, f_t>* rins_worker, const std::vector<f_t>& node_solution);
+  void rins(diving_worker_t<i_t, f_t>* rins_worker, const std::vector<f_t>& node_solution);
 
   // Solve the LP relaxation of a leaf node
   simplex::dual_status_t solve_node_lp(mip_node_t<i_t, f_t>* node_ptr,

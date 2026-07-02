@@ -1003,10 +1003,14 @@ branch_variable_t<i_t> branch_and_bound_t<i_t, f_t>::variable_selection(
     case VECTOR_LENGTH_DIVING:
       return vector_length_diving(worker->leaf_problem, fractional, solution, log);
 
-    default:
-      log.debug("Unknown variable selection method: %d\n", worker->search_strategy);
-      return {-1, branch_direction_t::NONE};
+    case SUBMIP:  // This is used for solving the DFS of the sub-MIP.
+      branch_var = pc_.variable_selection(fractional, solution);
+      round_dir  = martin_criteria(solution[branch_var], root_relax_soln_.x[branch_var]);
+      return {branch_var, round_dir};
   }
+
+  log.debug("Unknown variable selection method: %d\n", worker->search_strategy);
+  return {-1, branch_direction_t::NONE};
 }
 
 // ============================================================================
@@ -1983,26 +1987,23 @@ void branch_and_bound_t<i_t, f_t>::best_first_search_with(bfs_worker_t<i_t, f_t>
 }
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::dive_with(diving_worker_t<i_t, f_t>* worker)
+void branch_and_bound_t<i_t, f_t>::dive_with(diving_worker_t<i_t, f_t>* worker, i_t backtrack_limit)
 {
   raft::common::nvtx::range scope("BB::diving_thread");
   if (worker->orbital_fixing) { worker->orbital_fixing->disable(); }
   logger_t log;
   log.log = false;
 
-  search_strategy_t search_strategy = worker->search_strategy;
-  const i_t diving_node_limit       = settings_.diving_settings.node_limit;
-  const i_t diving_backtrack_limit  = settings_.diving_settings.backtrack_limit;
-
-  worker->recompute_basis  = true;
-  worker->recompute_bounds = true;
+  const i_t diving_node_limit = settings_.diving_settings.node_limit;
+  worker->recompute_basis     = true;
+  worker->recompute_bounds    = true;
 
   search_tree_t<i_t, f_t> dive_tree(std::move(worker->start_node));
 
   // Since we are perform a DFS with a limit amount of backtracking, the
-  // stack can hold at most `diving_backtrack_limit` + 2 siblings nodes of the
+  // stack can hold at most `backtrack_limit` + 2 siblings nodes of the
   // current level
-  circular_deque_t<mip_node_t<i_t, f_t>*> stack(diving_backtrack_limit + 4);
+  circular_deque_t<mip_node_t<i_t, f_t>*> stack(backtrack_limit + 4);
   stack.push_front(&dive_tree.root);
 
   branch_and_bound_stats_t<i_t, f_t> dive_stats;
@@ -2059,8 +2060,7 @@ void branch_and_bound_t<i_t, f_t>::dive_with(diving_worker_t<i_t, f_t>* worker)
 
     // Remove nodes that we can no longer backtrack to (i.e., from the current node, we can only
     // backtrack to a node that is has a depth of at most 5 levels lower than the current node).
-    while (stack.size() > 1 &&
-           stack.front()->depth - stack.back()->depth > diving_backtrack_limit) {
+    while (stack.size() > 1 && stack.front()->depth - stack.back()->depth > backtrack_limit) {
       stack.pop_back();
     }
 
@@ -2072,7 +2072,9 @@ void branch_and_bound_t<i_t, f_t>::dive_with(diving_worker_t<i_t, f_t>* worker)
     abs_gap     = compute_user_abs_gap(original_lp_, upper_bound, lower_bound);
   }
 
-  diving_worker_pool_.return_worker_to_pool(worker);
+  // This is called from the rins method which already handle the return to the
+  // pool part. Besides, they do not share the same pool.
+  if (worker->search_strategy != SUBMIP) { diving_worker_pool_.return_worker_to_pool(worker); }
 }
 
 template <typename i_t, typename f_t>
@@ -2120,7 +2122,7 @@ bool branch_and_bound_t<i_t, f_t>::launch_diving_worker(bfs_worker_t<i_t, f_t>* 
 
 #pragma omp task affinity(*diving_worker) priority(CUOPT_DEFAULT_TASK_PRIORITY) default(none) \
   firstprivate(diving_worker)
-  dive_with(diving_worker);
+  dive_with(diving_worker, settings_.diving_settings.backtrack_limit);
 
   return true;
 }
@@ -2132,10 +2134,11 @@ bool branch_and_bound_t<i_t, f_t>::launch_submip_worker(const std::vector<f_t>& 
   if (!incumbent_.has_incumbent) return false;
   if (submip_worker_pool_.num_idle() == 0) return false;
 
-  submip_worker_t<i_t, f_t>* submip_worker = submip_worker_pool_.pop_idle_worker();
+  diving_worker_t<i_t, f_t>* submip_worker = submip_worker_pool_.pop_idle_worker();
   if (!submip_worker) return false;
 
   submip_worker->set_active();
+  submip_worker->search_strategy = SUBMIP;
 
 #pragma omp task priority(CUOPT_DEFAULT_TASK_PRIORITY) affinity(submip_worker) \
   firstprivate(submip_worker, sol) if (!settings_.inside_submip)
@@ -2145,7 +2148,7 @@ bool branch_and_bound_t<i_t, f_t>::launch_submip_worker(const std::vector<f_t>& 
 }
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::solve_submip(submip_worker_t<i_t, f_t>* worker,
+void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worker,
                                                 const std::vector<f_t>& current_incumbent,
                                                 i_t num_var_fixed,
                                                 i_t num_integers,
@@ -2296,9 +2299,9 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(submip_worker_t<i_t, f_t>* worke
     f_t work_limit = 0.5;
 
     submip_cpufj = mip::make_fj_cpu_task_from_host_lp<i_t, f_t>(submip_bnb.original_lp_,
-                                                                var_types_,
+                                                                submip_bnb.var_types_,
                                                                 crushed_incumbent,
-                                                                settings_,
+                                                                submip_bnb.settings_,
                                                                 cpufj_improvement_callback,
                                                                 "[SUBMIP CPUFJ] ",
                                                                 worker->rng.next_i64());
@@ -2326,8 +2329,32 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(submip_worker_t<i_t, f_t>* worke
   }
 }
 
+inline double submip_get_max_fixrate(const submip_stats_t& stats,
+                                     const simplex::submip_settings_t& submip_settings,
+                                     pcgenerator_t& rng)
+{
+  // Adaptive fix rate based on previous successes and failures.
+  double low  = submip_settings.base_target_fixrate;
+  double high = submip_settings.base_target_fixrate;
+
+  if (stats.total_infeasible > 0) {
+    double infeasible_avg_fixrate = stats.average_infeasible_fixrate();
+    high                          = 0.9 * infeasible_avg_fixrate;
+    low                           = std::min(low, high);
+  }
+
+  if (stats.total_success > 0) {
+    double success_avg_fixrate = stats.average_success_fixrate();
+    low                        = std::min(low, 0.9 * success_avg_fixrate);
+    high                       = std::max(high, 1.1 * success_avg_fixrate);
+  }
+
+  double fixrate = high > low ? rng.uniform(low, high) : low;
+  return fixrate;
+}
+
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::rins(submip_worker_t<i_t, f_t>* rins_worker,
+void branch_and_bound_t<i_t, f_t>::rins(diving_worker_t<i_t, f_t>* rins_worker,
                                         const std::vector<f_t>& node_solution)
 {
   raft::common::nvtx::range scope("BB::rins_thread");
@@ -2351,6 +2378,7 @@ void branch_and_bound_t<i_t, f_t>::rins(submip_worker_t<i_t, f_t>* rins_worker,
   rins_worker->leaf_problem.lower = original_lp_.lower;
   rins_worker->leaf_problem.upper = original_lp_.upper;
   rins_worker->leaf_solution.x    = node_solution;
+  rins_worker->skip_set_bounds    = true;
 
   std::vector<f_t>& lower           = rins_worker->leaf_problem.lower;
   std::vector<f_t>& upper           = rins_worker->leaf_problem.upper;
@@ -2535,10 +2563,19 @@ void branch_and_bound_t<i_t, f_t>::rins(submip_worker_t<i_t, f_t>* rins_worker,
   f_t fixrate = (f_t)num_var_fixed / num_integers;
 
   if (has_submip) {
-    // Only solve the submip if the fix rate is greater than a hard cap (0.1). Less than that
-    // there is no enough variable fixing in the submip to be easier to solve than the current
-    // problem
-    if (fixrate >= settings_.submip_settings.min_fixrate_cap) {
+    // If no enough variables was fixed (the neighbourhood is too loose) or the sub-MIP already
+    // found a solution that improved the incumbent, then do a DFS with a backtrack_limit of 5
+    // levels up to try to find a feasible solution quickly from the neighbourhood.
+    if (fixrate < settings_.submip_settings.min_fixrate_cap ||
+        (settings_.inside_submip && submip_stats_.total_success != 0)) {
+      rins_worker->skip_set_bounds = false;
+      rins_worker->start_node      = std::move(node);
+      rins_worker->start_lower     = std::move(lower);
+      rins_worker->start_upper     = std::move(upper);
+      bool is_feasible             = rins_worker->presolve_start_bounds(settings_);
+      if (is_feasible) dive_with(rins_worker, 5);
+
+    } else {
       solve_submip(
         rins_worker, current_incumbent, num_var_fixed, num_integers, submip_level, log_prefix);
     }
@@ -3508,7 +3545,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
         std::max(num_workers - num_bfs_workers - num_submip_workers, 1);
       bfs_worker_pool_.init(num_bfs_workers, original_lp_, Arow_, var_types_, symmetry_, settings_);
       submip_worker_pool_.init(
-        num_submip_workers, original_lp_, Arow_, var_types_, symmetry_, settings_);
+        num_submip_workers, original_lp_, Arow_, var_types_, symmetry_, settings_, num_bfs_workers);
 
       if (num_diving_workers > 0) {
         diving_worker_pool_.init(num_diving_workers,
@@ -3517,7 +3554,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                                  var_types_,
                                  symmetry_,
                                  settings_,
-                                 num_bfs_workers);
+                                 num_bfs_workers + num_submip_workers);
       }
 
       bfs_worker_t<i_t, f_t>* initial_worker = bfs_worker_pool_.pop_idle_worker();

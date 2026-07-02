@@ -75,6 +75,10 @@ class branch_and_bound_worker_t {
   std::unique_ptr<lexical_reduction_t<i_t, f_t>> lexical_reduction;
   mip_symmetry_t<i_t, f_t>* symmetry_ptr = nullptr;
 
+  bool skip_set_bounds  = false;
+  bool recompute_basis  = true;
+  bool recompute_bounds = true;
+
   void ensure_orbital_fixing()
   {
     if (orbital_fixing == nullptr && symmetry_ptr != nullptr) {
@@ -85,9 +89,6 @@ class branch_and_bound_worker_t {
         std::make_unique<lexical_reduction_t<i_t, f_t>>(symmetry_ptr->num_original_vars);
     }
   }
-
-  bool recompute_basis  = true;
-  bool recompute_bounds = true;
 
   branch_and_bound_worker_t(i_t worker_id,
                             const simplex::lp_problem_t<i_t, f_t>& original_lp,
@@ -117,7 +118,7 @@ class branch_and_bound_worker_t {
                               const simplex::simplex_solver_settings_t<i_t, f_t>& settings)
   {
     // In RINS/RENS, the bounds are already set in the parent method.
-    if (search_strategy == SUBMIP) return true;
+    if (skip_set_bounds) return true;
 
     // Reset the bound_changed markers
     std::fill(bounds_changed.begin(), bounds_changed.end(), false);
@@ -228,11 +229,12 @@ class diving_worker_t : public branch_and_bound_worker_t<i_t, f_t> {
   void set_inactive()
   {
     if (!this->is_active.load()) { return; }
-    assert(bfs_worker != nullptr);
-    assert(bfs_worker->active_diving_workers.load() > 0);
-
     this->is_active = false;
-    --bfs_worker->active_diving_workers;
+
+    if (bfs_worker) {
+      assert(bfs_worker->active_diving_workers.load() > 0);
+      --bfs_worker->active_diving_workers;
+    }
   }
 
   f_t get_lower_bound() { return this->lower_bound; }
@@ -265,56 +267,6 @@ struct submip_stats_t {
 
   double average_infeasible_fixrate() const { return infeasible_fixrate_sum / total_infeasible; }
   double average_success_fixrate() const { return success_fixrate_sum / total_success; }
-};
-
-inline double submip_get_max_fixrate(const submip_stats_t& stats,
-                                     const simplex::submip_settings_t& submip_settings,
-                                     pcgenerator_t& rng)
-{
-  // Adaptive fix rate based on previous successes and failures.
-  double low  = submip_settings.base_target_fixrate;
-  double high = submip_settings.base_target_fixrate;
-
-  if (stats.total_infeasible > 0) {
-    double infeasible_avg_fixrate = stats.average_infeasible_fixrate();
-    high                          = 0.9 * infeasible_avg_fixrate;
-    low                           = std::min(low, high);
-  }
-
-  if (stats.total_success > 0) {
-    double success_avg_fixrate = stats.average_success_fixrate();
-    low                        = std::min(low, 0.9 * success_avg_fixrate);
-    high                       = std::max(high, 1.1 * success_avg_fixrate);
-  }
-
-  double fixrate = high > low ? rng.uniform(low, high) : low;
-  return fixrate;
-}
-
-template <typename i_t, typename f_t>
-class submip_worker_t : public branch_and_bound_worker_t<i_t, f_t> {
- public:
-  using Base = branch_and_bound_worker_t<i_t, f_t>;
-
-  submip_worker_t(i_t worker_id,
-                  const simplex::lp_problem_t<i_t, f_t>& original_lp,
-                  const csr_matrix_t<i_t, f_t>& Arow,
-                  const std::vector<simplex::variable_type_t>& var_type,
-                  const simplex::simplex_solver_settings_t<i_t, f_t>& settings,
-                  uint64_t rng_offset = 0)
-    : Base(worker_id, original_lp, Arow, var_type, settings, rng_offset)
-  {
-    this->search_strategy = SUBMIP;
-  }
-
-  // Set this node inactive
-  void set_inactive()
-  {
-    if (!this->is_active.load()) { return; }
-    this->is_active = false;
-  }
-
-  f_t get_lower_bound() { return this->lower_bound; }
 };
 
 }  // namespace cuopt::mathematical_optimization::mip
