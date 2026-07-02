@@ -37,21 +37,17 @@ inline char feasible_solution_symbol(search_strategy_t strategy, bool log_diving
 }
 
 template <typename i_t, typename f_t>
-bool is_search_strategy_enabled(search_strategy_t strategy,
-                                const mip_diving_hyper_params_t<i_t, f_t>& settings)
+void get_diving_heuristic_list(const mip_diving_hyper_params_t<i_t, f_t>& settings,
+                               std::vector<search_strategy_t>& heuristic_list)
 {
-  switch (strategy) {
-    case BEST_FIRST: return true;
-    case PSEUDOCOST_DIVING: return settings.pseudocost_diving != 0;
-    case LINE_SEARCH_DIVING: return settings.line_search_diving != 0;
-    case GUIDED_DIVING: return settings.guided_diving != 0;
-    case COEFFICIENT_DIVING: return settings.coefficient_diving != 0;
-    case FARKAS_DIVING: return settings.farkas_diving != 0;
-    case VECTOR_LENGTH_DIVING: return settings.vector_length_diving != 0;
-    case SUBMIP: return false;
-  }
-
-  return false;
+  heuristic_list.clear();
+  heuristic_list.reserve(num_search_strategies - 1);
+  if (settings.pseudocost_diving != 0) heuristic_list.push_back(PSEUDOCOST_DIVING);
+  if (settings.line_search_diving != 0) heuristic_list.push_back(LINE_SEARCH_DIVING);
+  if (settings.guided_diving != 0) heuristic_list.push_back(GUIDED_DIVING);
+  if (settings.coefficient_diving != 0) heuristic_list.push_back(COEFFICIENT_DIVING);
+  if (settings.farkas_diving != 0) heuristic_list.push_back(FARKAS_DIVING);
+  if (settings.vector_length_diving != 0) heuristic_list.push_back(VECTOR_LENGTH_DIVING);
 }
 
 template <typename i_t, typename f_t>

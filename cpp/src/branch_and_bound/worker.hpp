@@ -155,10 +155,9 @@ class bfs_worker_t : public branch_and_bound_worker_t<i_t, f_t> {
     this->start_lower     = original_lp.lower;
     this->start_upper     = original_lp.upper;
     this->search_strategy = BEST_FIRST;
-
-    max_diving_workers.fill(0);
-    active_diving_workers.fill(0);
-    total_active_diving_workers = 0;
+    max_diving_workers    = 0;
+    active_diving_workers = 0;
+    next_heuristic        = worker_id;
   }
 
   void set_inactive() { this->is_active = false; }
@@ -175,53 +174,41 @@ class bfs_worker_t : public branch_and_bound_worker_t<i_t, f_t> {
     return node_queue.steal_from(victim->node_queue, nodes_to_steal);
   }
 
-  // Calculate the number of diving workers that this worker can launch. Having a fixed number
-  // of workers allows the solver to be more deterministic.
-  void calculate_num_diving_workers(i_t num_bfs_workers,
-                                    i_t total_diving_workers,
-                                    const mip_diving_hyper_params_t<i_t, f_t>& settings)
+  void calculate_max_diving_workers(i_t num_bfs_workers, i_t total_diving_workers)
   {
-    i_t num_active = 0;
-    for (i_t i = 1; i < num_search_strategies; ++i) {
-      num_active += is_search_strategy_enabled(search_strategies[i], settings);
-    }
+    auto [start, end] =
+      calculate_index_range(this->worker_id, total_diving_workers, num_bfs_workers);
+    max_diving_workers = end - start;
+  }
 
-    total_max_diving_workers = 0;
-    max_diving_workers.fill(0);
-    if (num_active == 0) { return; }
+  // Calculate the number of diving workers that this worker can launch. And update the list
+  // with all active diving heuristics.
+  void update_diving_heuristic_list(const mip_diving_hyper_params_t<i_t, f_t>& settings)
+  {
+    get_diving_heuristic_list(settings, diving_heuristics);
+  }
 
-    for (size_t i = 1, k = 0; i < num_search_strategies; ++i) {
-      if (is_search_strategy_enabled(search_strategies[i], settings)) {
-        // Calculate the number of workers for a given diving heuristic
-        auto [type_start, type_end] = calculate_index_range(k, total_diving_workers, num_active);
-        i_t workers_per_type        = type_end - type_start;
-
-        // Calculate the number of diving workers allocated to this (best-first) worker
-        auto [start, end] =
-          calculate_index_range(this->worker_id, workers_per_type, num_bfs_workers);
-        max_diving_workers[i] = end - start;
-        total_max_diving_workers += max_diving_workers[i];
-        ++k;
-      }
-    }
+  // Get the next diving heuristic from the list
+  search_strategy_t next_diving_heuristic()
+  {
+    next_heuristic = next_heuristic % diving_heuristics.size();
+    return diving_heuristics[next_heuristic++];
   }
 
   // The worker-local node heap.
   node_queue_t<i_t, f_t> node_queue;
 
-  // The number of diving workers of each type that this (best-first) worker can launch.
-  std::array<i_t, num_search_strategies> max_diving_workers;
-
-  // The number of active diving workers of each type associated with this (best-first) worker.
-  std::array<omp_atomic_t<i_t>, num_search_strategies> active_diving_workers;
-
-  // Keep track of the total number of active diving worker that are associated with this
+  // Keep track of the number of active diving worker that are associated with this
   // (best-first) worker
-  omp_atomic_t<i_t> total_active_diving_workers{0};
+  omp_atomic_t<i_t> active_diving_workers;
 
   // The maximum number of diving worker that are associated with this
   // (best-first) worker
-  i_t total_max_diving_workers{0};
+  i_t max_diving_workers;
+
+ private:
+  std::vector<search_strategy_t> diving_heuristics;
+  i_t next_heuristic;
 };
 
 template <typename i_t, typename f_t>
@@ -242,12 +229,10 @@ class diving_worker_t : public branch_and_bound_worker_t<i_t, f_t> {
   {
     if (!this->is_active.load()) { return; }
     assert(bfs_worker != nullptr);
-    assert(bfs_worker->active_diving_workers[this->search_strategy].load() > 0);
-    assert(bfs_worker->total_active_diving_workers.load() > 0);
+    assert(bfs_worker->active_diving_workers.load() > 0);
 
     this->is_active = false;
-    --bfs_worker->active_diving_workers[this->search_strategy];
-    --bfs_worker->total_active_diving_workers;
+    --bfs_worker->active_diving_workers;
   }
 
   f_t get_lower_bound() { return this->lower_bound; }

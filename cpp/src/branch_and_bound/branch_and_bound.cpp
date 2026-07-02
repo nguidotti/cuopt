@@ -1672,7 +1672,7 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
          rel_gap > settings_.relative_mip_gap_tol && abs_gap > settings_.absolute_mip_gap_tol) {
     if (worker->worker_id == 0) { repair_heuristic_solutions(); }
 
-    if (worker->total_active_diving_workers < worker->total_max_diving_workers &&
+    if (worker->active_diving_workers < worker->max_diving_workers &&
         worker->node_queue.diving_queue_size() > 0) {
       launch_diving_worker(worker);
     }
@@ -1901,8 +1901,8 @@ void branch_and_bound_t<i_t, f_t>::best_first_search_with(bfs_worker_t<i_t, f_t>
     if (obj_dyn < diving_settings.farkas_obj_dynamism_tol) { diving_settings.farkas_diving = 0; }
   }
 
-  worker->calculate_num_diving_workers(
-    bfs_worker_pool_.size(), diving_worker_pool_.size(), diving_settings);
+  worker->calculate_max_diving_workers(bfs_worker_pool_.size(), diving_worker_pool_.size());
+  worker->update_diving_heuristic_list(diving_settings);
 
   while (solver_status_ == mip_status_t::UNSET && abs_gap > settings_.absolute_mip_gap_tol &&
          rel_gap > settings_.relative_mip_gap_tol && node_queue.best_first_queue_size() > 0) {
@@ -1913,7 +1913,7 @@ void branch_and_bound_t<i_t, f_t>::best_first_search_with(bfs_worker_t<i_t, f_t>
       if (stop) {
         node_concurrent_halt_ = 1;
         solver_status_        = mip_status_t::SUBMIP_HALT;
-        settings_.log.print_format(
+        settings_.log.debug_format(
           "Stopping the submip since the main B&B has a better incumbent. "
           "upper={:g}, external_upper={:g}, lower={:g}\n",
           user_obj,
@@ -1929,8 +1929,7 @@ void branch_and_bound_t<i_t, f_t>::best_first_search_with(bfs_worker_t<i_t, f_t>
         diving_settings.guided_diving == 0) {
       if (has_solver_space_incumbent()) {
         diving_settings.guided_diving = 1;
-        worker->calculate_num_diving_workers(
-          bfs_worker_pool_.size(), diving_worker_pool_.size(), diving_settings);
+        worker->update_diving_heuristic_list(diving_settings);
       }
     }
 
@@ -2110,31 +2109,19 @@ bool branch_and_bound_t<i_t, f_t>::launch_diving_worker(bfs_worker_t<i_t, f_t>* 
     return false;
   }
 
-  for (int i = 1; i < num_search_strategies; ++i) {
-    auto strategy = search_strategies[i];
+  auto strategy                  = bfs_worker->next_diving_heuristic();
+  diving_worker->search_strategy = strategy;
+  diving_worker->bfs_worker      = bfs_worker;
+  diving_worker->set_active();
+  ++bfs_worker->active_diving_workers;
 
-    if (bfs_worker->active_diving_workers[strategy] < bfs_worker->max_diving_workers[strategy]) {
-      diving_worker->search_strategy = strategy;
-      diving_worker->bfs_worker      = bfs_worker;
-      diving_worker->set_active();
-      bfs_worker->active_diving_workers[strategy]++;
-      bfs_worker->total_active_diving_workers++;
-
-      assert(bfs_worker->active_diving_workers[strategy].load() <=
-             bfs_worker->max_diving_workers[strategy]);
-      assert(bfs_worker->total_active_diving_workers.load() <=
-             bfs_worker->total_max_diving_workers);
+  assert(bfs_worker->active_diving_workers.load() <= bfs_worker->max_diving_workers);
 
 #pragma omp task affinity(*diving_worker) priority(CUOPT_DEFAULT_TASK_PRIORITY) default(none) \
   firstprivate(diving_worker)
-      dive_with(diving_worker);
+  dive_with(diving_worker);
 
-      return true;
-    }
-  }
-
-  diving_worker_pool_.return_worker_to_pool(diving_worker);
-  return false;
+  return true;
 }
 
 template <typename i_t, typename f_t>
@@ -3471,7 +3458,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
       const i_t num_bfs_workers    = std::max(settings_.num_threads / 2, 1);
       const i_t num_submip_workers = std::max(num_workers / 8, 1);
       const i_t num_diving_workers =
-        std::max(num_workers - num_bfs_workers - num_submip_workers, 0);
+        std::max(num_workers - num_bfs_workers - num_submip_workers, 1);
       bfs_worker_pool_.init(num_bfs_workers, original_lp_, Arow_, var_types_, symmetry_, settings_);
       submip_worker_pool_.init(
         num_submip_workers, original_lp_, Arow_, var_types_, symmetry_, settings_);
@@ -3668,8 +3655,8 @@ void branch_and_bound_t<i_t, f_t>::run_deterministic_coordinator(const csr_matri
 
   if (num_diving_workers > 0) {
     // Extract diving types from search_strategies (skip BEST_FIRST at index 0)
-    std::vector<search_strategy_t> diving_types(search_strategies + 1,
-                                                search_strategies + num_search_strategies);
+    std::vector<search_strategy_t> diving_types;
+    get_diving_heuristic_list(settings_.diving_settings, diving_types);
 
     if (settings_.diving_settings.coefficient_diving != 0) {
       calculate_variable_locks(original_lp_, var_up_locks_, var_down_locks_);
