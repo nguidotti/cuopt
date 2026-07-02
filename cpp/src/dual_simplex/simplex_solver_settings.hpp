@@ -58,6 +58,8 @@ struct submip_settings_t {
   // Limit the number of simplex iterations spent in the submip. Set as a factor of the total
   // number of simplex iteration from the parent B&B.
   double iteration_limit_ratio = 0.8;
+
+  bool enable_cpufj = true;
 };
 
 template <typename i_t, typename f_t>

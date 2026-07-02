@@ -521,6 +521,7 @@ void branch_and_bound_t<i_t, f_t>::set_solution_from_heuristics(const std::vecto
   crush_primal_solution<i_t, f_t>(
     original_problem_, original_lp_, solution, new_slacks_, crushed_solution);
   f_t obj = compute_objective(original_lp_, crushed_solution);
+
   mutex_original_lp_.unlock();
   bool is_feasible    = false;
   bool attempt_repair = false;
@@ -2136,7 +2137,7 @@ bool branch_and_bound_t<i_t, f_t>::launch_submip_worker(const std::vector<f_t>& 
 
   submip_worker->set_active();
 
-#pragma omp task priority(CUOPT_MEDIUM_TASK_PRIORITY) affinity(submip_worker) \
+#pragma omp task priority(CUOPT_DEFAULT_TASK_PRIORITY) affinity(submip_worker) \
   firstprivate(submip_worker, sol) if (!settings_.inside_submip)
   rins(submip_worker, sol);
 
@@ -2254,6 +2255,8 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(submip_worker_t<i_t, f_t>* worke
   presolver.crush(uncrushed_incumbent, crushed_incumbent);
   submip_bnb.set_initial_guess(crushed_incumbent);
 
+  submip_bnb.warm_start(pc_, presolver.reduced_to_original_map());
+
   if (external_upper_bound_callback_) {
     submip_bnb.set_external_upper_bound_callback(external_upper_bound_callback_);
   } else {
@@ -2261,7 +2264,50 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(submip_worker_t<i_t, f_t>* worke
       [this]() { return compute_user_objective(this->original_lp_, this->upper_bound_.load()); });
   }
 
-  submip_bnb.warm_start(pc_, presolver.reduced_to_original_map());
+  std::unique_ptr<fj_cpu_task_t<i_t, f_t>> submip_cpufj;
+  scope_guard cpufj_guard([&]() {
+    if (!submip_cpufj) { return; }
+    mip::stop_fj_cpu_task(*submip_cpufj);
+#pragma omp taskwait depend(in : *submip_cpufj)
+    submip_cpufj.reset();
+  });
+
+  if (settings_.submip_settings.enable_cpufj) {
+    auto cpufj_improvement_callback =
+      [&submip_bnb](f_t obj, const std::vector<f_t>& assignment, double work_units) {
+        std::vector<f_t> user_assignment;
+        submip_bnb.mutex_original_lp_.lock();
+        uncrush_primal_solution(
+          submip_bnb.original_problem_, submip_bnb.original_lp_, assignment, user_assignment);
+        submip_bnb.mutex_original_lp_.unlock();
+        submip_bnb.settings_.log.printf("%sSub MIP CPUFJ found solution with objective %.4g\n",
+                                        submip_bnb.settings_.log.log_prefix.c_str(),
+                                        obj);
+        // In deterministic mode the solution must be ordered by its work-unit timestamp so
+        // B&B sees incumbents in a reproducible sequence; otherwise apply it immediately.
+        if (submip_bnb.settings_.deterministic) {
+          submip_bnb.queue_external_solution_deterministic(user_assignment, work_units);
+        } else {
+          submip_bnb.set_solution_from_heuristics(user_assignment);
+        }
+      };
+
+    f_t time_limit = submip_settings.time_limit;
+    f_t work_limit = 0.5;
+
+    submip_cpufj = mip::make_fj_cpu_task_from_host_lp<i_t, f_t>(submip_bnb.original_lp_,
+                                                                var_types_,
+                                                                crushed_incumbent,
+                                                                settings_,
+                                                                cpufj_improvement_callback,
+                                                                "[SUBMIP CPUFJ] ",
+                                                                worker->rng.next_i64());
+
+#pragma omp task shared(submip_cpufj) firstprivate(time_limit, work_limit) \
+  priority(CUOPT_DEFAULT_TASK_PRIORITY) default(none) depend(out : *submip_cpufj)
+    mip::run_fj_cpu_task(*submip_cpufj, time_limit, work_limit);
+  }
+
   submip_status = submip_bnb.solve(submip_solution);
   exploration_stats_.total_simplex_iters += submip_solution.simplex_iterations;
 
@@ -2502,9 +2548,9 @@ void branch_and_bound_t<i_t, f_t>::rins(submip_worker_t<i_t, f_t>* rins_worker,
     "%ssuccess=%d, infeasible=%d, calls=%d, fixrate=%.4g (%d), max_fixrate=%.4g (%d), "
     "min_fixrate=%.4g (%d)\n",
     log_prefix.c_str(),
-    submip_stats_.total_success,
-    submip_stats_.total_infeasible,
-    submip_stats_.total_calls,
+    submip_stats_.total_success.load(),
+    submip_stats_.total_infeasible.load(),
+    submip_stats_.total_calls.load(),
     fixrate,
     num_var_fixed,
     max_fixrate,
@@ -3201,6 +3247,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   auto stop_root_cut_cpufj = [&]() {
     if (!root_cut_cpufj_task) { return; }
     mip::stop_fj_cpu_task(*root_cut_cpufj_task);
+#pragma omp taskwait depend(in : *root_cut_cpufj_task)
     root_cut_cpufj_task.reset();
   };
   cuopt::scope_guard root_cut_cpufj_guard([&]() { stop_root_cut_cpufj(); });
