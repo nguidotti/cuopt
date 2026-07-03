@@ -2314,7 +2314,6 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
   }
 
   submip_status = submip_bnb.solve(submip_solution);
-  exploration_stats_.total_simplex_iters += submip_solution.simplex_iterations;
 
   settings_.log.print_format("Sub-MIP: status={}, iterations={} ({}) \n",
                              (int)submip_status,
@@ -2330,6 +2329,12 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
     std::vector<f_t> fixed_sol(original_problem_.num_cols);
     presolver.uncrush(submip_solution.x, fixed_sol);
     set_solution_from_submip(fixed_sol, fixrate);
+
+    // Accumulate simplex iteration when running the sub-MIP, so
+    // it also account for the recursion solves
+    if (settings_.inside_submip) {
+      exploration_stats_.total_simplex_iters += submip_solution.simplex_iterations;
+    }
   }
 }
 
@@ -2583,6 +2588,11 @@ void branch_and_bound_t<i_t, f_t>::rins(diving_worker_t<i_t, f_t>* rins_worker,
       solve_submip(
         rins_worker, current_incumbent, num_var_fixed, num_integers, submip_level, log_prefix);
     }
+  }
+
+  // Accumulate the iterations for sub-MIP so it stops when it reaches the allocated budget.
+  if (settings_.inside_submip) {
+    exploration_stats_.total_simplex_iters += rins_stats.total_simplex_iters;
   }
 
   settings_.log.debug(
