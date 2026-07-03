@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <string>
+
 namespace cuopt::mathematical_optimization::mip {
 
 constexpr int num_search_strategies = 8;
@@ -46,5 +48,22 @@ enum class mip_status_t {
   WORK_LIMIT      = 8,  // The solver reached a deterministic work limit
   SUBMIP_HALT     = 9   // Halt the search on a suboptimal sub-MIP
 };
+
+inline std::string mip_status_to_string(mip_status_t status)
+{
+  switch (status) {
+    case mip_status_t::OPTIMAL: return "OPTIMAL";
+    case mip_status_t::UNBOUNDED: return "UNBOUNDED";
+    case mip_status_t::INFEASIBLE: return "INFEASIBLE";
+    case mip_status_t::TIME_LIMIT: return "TIME_LIMIT";
+    case mip_status_t::NODE_LIMIT: return "NODE_LIMIT";
+    case mip_status_t::ITERATION_LIMIT: return "ITERATION_LIMIT";
+    case mip_status_t::NUMERICAL: return "NUMERICAL";
+    case mip_status_t::UNSET: return "UNSET";
+    case mip_status_t::WORK_LIMIT: return "WORK_LIMIT";
+    case mip_status_t::SUBMIP_HALT: return "SUBMIP_HALT";
+  }
+  return "UNKNOWN";
+}
 
 }  // namespace cuopt::mathematical_optimization::mip

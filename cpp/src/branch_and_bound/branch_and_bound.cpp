@@ -1562,7 +1562,7 @@ dual_status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(
   lp_settings.time_limit    = settings_.time_limit - toc(exploration_stats_.start_time);
   lp_settings.scale_columns = false;
 
-  if (worker->search_strategy != search_strategy_t::BEST_FIRST) {
+  if (worker->search_strategy != BEST_FIRST && worker->search_strategy != SUBMIP) {
     int64_t bnb_lp_iters        = exploration_stats_.total_simplex_iters;
     f_t factor                  = settings_.diving_settings.iteration_limit_factor;
     int64_t max_iter            = factor * bnb_lp_iters;
@@ -2157,6 +2157,8 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
                                                 i_t submip_level,
                                                 std::string_view log_prefix)
 {
+  double start_time = tic();
+
   std::vector<f_t>& lower           = worker->leaf_problem.lower;
   std::vector<f_t>& upper           = worker->leaf_problem.upper;
   std::vector<bool>& bounds_changed = worker->bounds_changed;
@@ -2180,7 +2182,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
   submip_settings.print_presolve_stats                     = false;
   submip_settings.num_threads                              = 1;
   submip_settings.reliability_branching                    = 0;
-  submip_settings.max_cut_passes                           = 0;
+  submip_settings.max_cut_passes                           = settings_.max_cut_passes;
   submip_settings.clique_cuts                              = 0;
   submip_settings.zero_half_cuts                           = 0;
   submip_settings.inside_submip                            = 1;
@@ -2218,6 +2220,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
 
   presolver_t<i_t, f_t> presolver;
   mip_status_t submip_status = presolver.apply(submip_problem, submip_settings);
+  double presolve_time       = toc(start_time);
 
   if (submip_status == mip_status_t::INFEASIBLE) {
     submip_stats_.save_infeasible(fixrate);
@@ -2285,9 +2288,9 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
         uncrush_primal_solution(
           submip_bnb.original_problem_, submip_bnb.original_lp_, assignment, user_assignment);
         submip_bnb.mutex_original_lp_.unlock();
-        submip_bnb.settings_.log.printf("%sSub MIP CPUFJ found solution with objective %.4g\n",
-                                        submip_bnb.settings_.log.log_prefix.c_str(),
-                                        obj);
+        submip_bnb.settings_.log.debug("%sSub MIP CPUFJ found solution with objective %.4g\n",
+                                       submip_bnb.settings_.log.log_prefix.c_str(),
+                                       obj);
         // In deterministic mode the solution must be ordered by its work-unit timestamp so
         // B&B sees incumbents in a reproducible sequence; otherwise apply it immediately.
         if (submip_bnb.settings_.deterministic) {
@@ -2313,12 +2316,16 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
     mip::run_fj_cpu_task(*submip_cpufj, time_limit, work_limit);
   }
 
-  submip_status = submip_bnb.solve(submip_solution);
+  submip_status      = submip_bnb.solve(submip_solution);
+  double submip_time = toc(start_time);
 
-  submip_settings.log.debug_format("Sub-MIP: status={}, iterations={} ({}) \n",
-                                   (int)submip_status,
-                                   submip_solution.simplex_iterations,
-                                   exploration_stats_.total_simplex_iters.load());
+  submip_settings.log.print_format(
+    "Sub-MIP: status={}, iterations={} (total={}), presolve_time={:.2f}, total_time={:.2f} \n",
+    mip_status_to_string(submip_status),
+    submip_solution.simplex_iterations,
+    exploration_stats_.total_simplex_iters.load(),
+    presolve_time,
+    submip_time);
 
   if (submip_status == mip_status_t::INFEASIBLE) {
     submip_stats_.save_infeasible(fixrate);
@@ -2537,6 +2544,7 @@ void branch_and_bound_t<i_t, f_t>::rins(diving_worker_t<i_t, f_t>* rins_worker,
                                      num_var_fixed,
                                      max_var_fixed,
                                      min_var_fixed);
+          has_submip = true;
           break;
         }
       }
@@ -2550,22 +2558,19 @@ void branch_and_bound_t<i_t, f_t>::rins(diving_worker_t<i_t, f_t>* rins_worker,
     dual_status_t lp_status = solve_node_lp(&node, rins_worker, rins_stats, log);
     if (lp_status != dual_status_t::OPTIMAL) { break; }
 
-    if (lp_status == dual_status_t::OPTIMAL) {
-      fractional.clear();
-      num_frac = fractional_variables(settings_, current_sol, var_types_, fractional);
+    fractional.clear();
+    num_frac = fractional_variables(settings_, current_sol, var_types_, fractional);
 
-      f_t leaf_obj     = compute_objective(rins_worker->leaf_problem, current_sol);
-      node.lower_bound = leaf_obj;
+    f_t leaf_obj     = compute_objective(rins_worker->leaf_problem, current_sol);
+    node.lower_bound = leaf_obj;
 
-      apply_objective_step(&node, leaf_obj);
+    apply_objective_step(&node, leaf_obj);
+    if (leaf_obj > upper_bound_.load()) { break; }
 
-      if (num_frac == 0) {
-        // We found a feasible solution when fixing the variables in RINS.
-        add_feasible_solution(leaf_obj, current_sol, node.depth, SUBMIP);
-        break;
-      }
-
-      if (leaf_obj > upper_bound_.load()) { break; }
+    if (num_frac == 0) {
+      // We found a feasible solution when fixing the variables in RINS.
+      add_feasible_solution(leaf_obj, current_sol, node.depth, SUBMIP);
+      break;
     }
   }
 
@@ -2595,10 +2600,10 @@ void branch_and_bound_t<i_t, f_t>::rins(diving_worker_t<i_t, f_t>* rins_worker,
     exploration_stats_.total_simplex_iters += rins_stats.total_simplex_iters;
   }
 
-  settings_.log.debug(
-    "%ssuccess=%d, infeasible=%d, calls=%d, fixrate=%.4g (%d), max_fixrate=%.4g (%d), "
-    "min_fixrate=%.4g (%d)\n",
-    log_prefix.c_str(),
+  settings_.log.debug_format(
+    "{}success={}, infeasible={}, calls={}, fixrate={:.4g} ({}), max_fixrate={:.4g} ({}), "
+    "min_fixrate={:.4g} ({})\n",
+    log_prefix,
     submip_stats_.total_success.load(),
     submip_stats_.total_infeasible.load(),
     submip_stats_.total_calls.load(),
@@ -3554,7 +3559,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     } else {
       const i_t num_workers        = settings_.num_threads;
       const i_t num_bfs_workers    = std::max(settings_.num_threads / 2, 1);
-      const i_t num_submip_workers = 1;  // std::max(num_workers / 8, 1);
+      const i_t num_submip_workers = std::max(num_workers / 8, 1);
       const i_t num_diving_workers =
         std::max(num_workers - num_bfs_workers - num_submip_workers, 1);
       bfs_worker_pool_.init(num_bfs_workers, original_lp_, Arow_, var_types_, symmetry_, settings_);
