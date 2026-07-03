@@ -2315,10 +2315,10 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
 
   submip_status = submip_bnb.solve(submip_solution);
 
-  settings_.log.print_format("Sub-MIP: status={}, iterations={} ({}) \n",
-                             (int)submip_status,
-                             submip_solution.simplex_iterations,
-                             exploration_stats_.total_simplex_iters.load());
+  submip_settings.log.debug_format("Sub-MIP: status={}, iterations={} ({}) \n",
+                                   (int)submip_status,
+                                   submip_solution.simplex_iterations,
+                                   exploration_stats_.total_simplex_iters.load());
 
   if (submip_status == mip_status_t::INFEASIBLE) {
     submip_stats_.save_infeasible(fixrate);
@@ -3554,7 +3554,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     } else {
       const i_t num_workers        = settings_.num_threads;
       const i_t num_bfs_workers    = std::max(settings_.num_threads / 2, 1);
-      const i_t num_submip_workers = std::max(num_workers / 8, 1);
+      const i_t num_submip_workers = 1;  // std::max(num_workers / 8, 1);
       const i_t num_diving_workers =
         std::max(num_workers - num_bfs_workers - num_submip_workers, 1);
       bfs_worker_pool_.init(num_bfs_workers, original_lp_, Arow_, var_types_, symmetry_, settings_);

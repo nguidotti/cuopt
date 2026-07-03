@@ -341,7 +341,7 @@ papilo::Problem<f_t> build_papilo_problem(const simplex::user_problem_t<i_t, f_t
     // CSC iteration is column-major, so entries are not row-sorted; let papilo sort them.
     constexpr bool sorted_entries = false;
     // MIP reductions like clique merging and substitution require more fillin.
-    const double spare_ratio      = 4.0;
+    const double spare_ratio      = 6.0;
     const int min_inter_row_space = 30;
     auto csr_storage              = papilo::SparseStorage<f_t>(
       h_entries, num_rows, num_cols, sorted_entries, spare_ratio, min_inter_row_space);

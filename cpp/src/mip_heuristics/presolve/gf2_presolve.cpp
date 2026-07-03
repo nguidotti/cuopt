@@ -203,11 +203,19 @@ papilo::PresolveStatus GF2Presolve<f_t>::execute(const papilo::Problem<f_t>& pro
   std::vector<std::vector<int>> A(gf2_constraints.size(),
                                   std::vector<int>(gf2_constraints.size(), 0));
   std::vector<int> b(gf2_constraints.size());
-  for (const auto& cons : gf2_constraints) {
+  // A/b are sized to the compacted GF2 constraint count N, and the solve below
+  // works entirely in compacted space (columns via gf2_bin_vars, solution via
+  // gf2_bin_vars_invmap). Index the rows by the compacted ordinal `c`, NOT by
+  // cons.cstr_idx: cstr_idx is the RAW matrix row index, which can be >= N (e.g.
+  // on the variable-fixed sub-MIP problems fed back through presolve), and using
+  // it here wrote past the end of A/b -> SIGSEGV. cstr_idx stays raw only where
+  // it legitimately indexes the full problem (lhs_values[cons.cstr_idx] below).
+  for (size_t c = 0; c < gf2_constraints.size(); ++c) {
+    const auto& cons = gf2_constraints[c];
     for (auto [bin_var, _] : cons.bin_vars) {
-      A[cons.cstr_idx][gf2_bin_vars[bin_var]] = 1;
+      A[c][gf2_bin_vars[bin_var]] = 1;
     }
-    b[cons.cstr_idx] = cons.rhs;
+    b[c] = cons.rhs;
   }
 
   std::vector<int> solution(gf2_constraints.size());
