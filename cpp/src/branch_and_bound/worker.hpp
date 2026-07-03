@@ -196,6 +196,8 @@ class bfs_worker_t : public branch_and_bound_worker_t<i_t, f_t> {
     return diving_heuristics[next_heuristic++];
   }
 
+  bool is_diving_enabled() { return !diving_heuristics.empty(); }
+
   // The worker-local node heap.
   node_queue_t<i_t, f_t> node_queue;
 

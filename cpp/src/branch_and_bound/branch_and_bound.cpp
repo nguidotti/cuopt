@@ -2080,6 +2080,8 @@ void branch_and_bound_t<i_t, f_t>::dive_with(diving_worker_t<i_t, f_t>* worker, 
 template <typename i_t, typename f_t>
 bool branch_and_bound_t<i_t, f_t>::launch_diving_worker(bfs_worker_t<i_t, f_t>* bfs_worker)
 {
+  if (!bfs_worker->is_diving_enabled()) return false;
+
   // Get an idle worker.
   diving_worker_t<i_t, f_t>* diving_worker = diving_worker_pool_.pop_idle_worker();
   if (diving_worker == nullptr) { return false; }
@@ -2190,7 +2192,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
   submip_settings.node_limit = settings_.submip_settings.node_limit_base + explored / 20;
 
   submip_settings.bnb_iteration_limit =
-    exploration_stats_.total_simplex_iters * submip_settings.submip_settings.iteration_limit_ratio;
+    exploration_stats_.total_simplex_iters * settings_.submip_settings.iteration_limit_ratio;
 
   submip_settings.time_limit = settings_.time_limit - toc(exploration_stats_.start_time);
   if (submip_settings.time_limit < 0) { return; }
@@ -2314,8 +2316,10 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
   submip_status = submip_bnb.solve(submip_solution);
   exploration_stats_.total_simplex_iters += submip_solution.simplex_iterations;
 
-  submip_settings.log.print_format(
-    "Sub-MIP: status={}, iterations={} \n", (int)submip_status, submip_solution.simplex_iterations);
+  settings_.log.print_format("Sub-MIP: status={}, iterations={} ({}) \n",
+                             (int)submip_status,
+                             submip_solution.simplex_iterations,
+                             exploration_stats_.total_simplex_iters.load());
 
   if (submip_status == mip_status_t::INFEASIBLE) {
     submip_stats_.save_infeasible(fixrate);

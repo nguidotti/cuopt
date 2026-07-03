@@ -411,8 +411,7 @@ TEST(dual_simplex, convert_simplex_problem_mip_round_trip)
 
   // Inverse: simplex standard form -> range form.
   simplex::user_problem_t<int, double> recovered(&handle);
-  simplex::convert_simplex_problem(
-    simplex_problem, var_types, settings, dualize_info, new_slacks, recovered);
+  simplex::convert_simplex_problem(simplex_problem, var_types, settings, new_slacks, recovered);
 
   // (1) Directly-predictable recovered fields.
   EXPECT_EQ(recovered.num_rows, m);

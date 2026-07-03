@@ -180,6 +180,7 @@ class pseudo_costs_t {
     for (i_t k = 0; k < reduced_to_original.size(); ++k) {
       const i_t orig = reduced_to_original[k];
       assert(orig >= 0);
+      assert(orig < parent.pseudo_cost_num_up.size());
 
       const i_t parent_num_up = parent.pseudo_cost_num_up[orig];
       if (parent_num_up > 0) {
