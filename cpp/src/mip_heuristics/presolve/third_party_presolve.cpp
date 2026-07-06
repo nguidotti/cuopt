@@ -1295,9 +1295,9 @@ void third_party_presolve_t<i_t, f_t>::crush_primal_dual_solution(
 
   const i_t n_cols_original = (i_t)storage.nColsOriginal;
 
-  auto coeff_key = [&](i_t row, i_t col) -> i_t { return (i_t)row * n_cols_original + (i_t)col; };
+  auto coeff_key = [&](int row, int col) -> i_t { return (i_t)row * n_cols_original + (i_t)col; };
 
-  auto get_coeff = [&](i_t row, i_t col) -> f_t {
+  auto get_coeff = [&](int row, int col) -> f_t {
     auto it = coeff_current.find(coeff_key(row, col));
     if (it != coeff_current.end()) return it->second;
     for (i_t p = A_offsets[row]; p < A_offsets[row + 1]; ++p) {

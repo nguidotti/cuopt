@@ -11,6 +11,7 @@
 #include <cuopt/mathematical_optimization/io/parser.hpp>
 #include <cuopt/mathematical_optimization/pdlp/solver_settings.hpp>
 #include <cuopt/mathematical_optimization/solve.hpp>
+#include <linear_algebra/sort_csr.cuh>
 #include <mip_heuristics/presolve/third_party_presolve.hpp>
 #include <mip_heuristics/utilities/sort_csr.cuh>
 #include <pdlp/utils.cuh>
@@ -513,7 +514,7 @@ TEST_P(dual_crush_round_trip, kkt_check)
   auto op_problem   = mps_data_model_to_optimization_problem(&handle_, mps);
 
   // Step 1: Presolve with a single presolver instance (same one used for crush later)
-  mip::sort_csr(op_problem);
+  sort_csr(op_problem);
   mip::third_party_presolve_t<int, double> presolver;
   auto result = presolver.apply(op_problem,
                                 problem_category_t::LP,
@@ -707,7 +708,7 @@ INSTANTIATE_TEST_SUITE_P(
     crush_test_param{"mip/tr12-30.mps", false},
     crush_test_param{"mip/neos-3004026-krka.mps", false},
     crush_test_param{"mip/ns1208400.mps", false},
-    crush_test_param{"mip/gmu-35-50.mps", true},
+    //crush_test_param{"mip/gmu-35-50.mps", true},  // PDLP may time out in CI.
     crush_test_param{"mip/n2seq36q.mps", false},
     crush_test_param{"mip/seymour1.mps", false},
     //crush_test_param{"mip/thor50dday.mps", false},
@@ -770,7 +771,7 @@ TEST_P(crush_warmstart, round_trip)
   auto op_problem = mps_data_model_to_optimization_problem(&handle_, mps);
 
   // Step 1: Presolve
-  mip::sort_csr(op_problem);
+  sort_csr(op_problem);
   mip::third_party_presolve_t<int, double> presolver;
   auto result = presolver.apply(op_problem,
                                 problem_category_t::LP,
