@@ -359,7 +359,7 @@ TEST(dual_simplex, convert_simplex_problem_mip_round_trip)
   //            x0 integer in [0, 10]
   //            x1 continuous in [0, inf)
   //            x2 integer in [0, 5]
-  simplex::user_problem_t<int, double> original(&handle);
+  user_problem_t<int, double> original(&handle);
   constexpr int m  = 4;
   constexpr int n  = 3;
   constexpr int nz = 8;
@@ -380,24 +380,23 @@ TEST(dual_simplex, convert_simplex_problem_mip_round_trip)
   original.rhs.assign({8.0, 4.0, 3.0, 1.0});
   original.row_sense.assign({'L', 'E', 'G', 'E'});
   original.lower.assign({0.0, 0.0, 0.0});
-  original.upper.assign({10.0, dual_simplex::inf, 5.0});
+  original.upper.assign({10.0, std::numeric_limits<double>::infinity(), 5.0});
   // row 3 is the range row 1 <= a^T x <= 7: stored as an 'E' range row, which
   // convert_range_rows reads as [rhs, rhs + range] = [1, 7].
   original.range_rows.assign({3});
   original.range_value.assign({6.0});
   original.num_range_rows = 1;
   original.obj_constant   = 0.0;
-  original.var_types      = {dual_simplex::variable_type_t::INTEGER,
-                             dual_simplex::variable_type_t::CONTINUOUS,
-                             dual_simplex::variable_type_t::INTEGER};
+  original.var_types      = {
+    variable_type_t::INTEGER, variable_type_t::CONTINUOUS, variable_type_t::INTEGER};
 
   // Forward: range form -> simplex standard form.
-  simplex::simplex_solver_settings_t<int, double> settings;
-  simplex::lp_problem_t<int, double> simplex_problem(
+  simplex_solver_settings_t<int, double> settings;
+  lp_problem_t<int, double> simplex_problem(
     &handle, original.num_rows, original.num_cols, original.A.col_start[original.A.n]);
   std::vector<int> new_slacks;
-  simplex::dualize_info_t<int, double> dualize_info;
-  simplex::convert_user_problem(original, settings, simplex_problem, new_slacks, dualize_info);
+  dualize_info_t<int, double> dualize_info;
+  convert_user_problem(original, settings, simplex_problem, new_slacks, dualize_info);
 
   // Each row gets exactly one slack/artificial column, appended after the
   // structural columns.
@@ -410,8 +409,8 @@ TEST(dual_simplex, convert_simplex_problem_mip_round_trip)
   var_types.resize(simplex_problem.num_cols, simplex::variable_type_t::CONTINUOUS);
 
   // Inverse: simplex standard form -> range form.
-  simplex::user_problem_t<int, double> recovered(&handle);
-  simplex::convert_simplex_problem(simplex_problem, var_types, settings, new_slacks, recovered);
+  user_problem_t<int, double> recovered(&handle);
+  convert_simplex_problem(simplex_problem, var_types, settings, new_slacks, recovered);
 
   // (1) Directly-predictable recovered fields.
   EXPECT_EQ(recovered.num_rows, m);
@@ -432,12 +431,11 @@ TEST(dual_simplex, convert_simplex_problem_mip_round_trip)
 
   // (2) Round-trip invariant: converting the recovered problem forward again
   // must reproduce the original standard-form problem exactly.
-  simplex::lp_problem_t<int, double> simplex_again(
+  lp_problem_t<int, double> simplex_again(
     &handle, recovered.num_rows, recovered.num_cols, recovered.A.col_start[recovered.A.n]);
   std::vector<int> new_slacks_again;
-  simplex::dualize_info_t<int, double> dualize_info_again;
-  simplex::convert_user_problem(
-    recovered, settings, simplex_again, new_slacks_again, dualize_info_again);
+  dualize_info_t<int, double> dualize_info_again;
+  convert_user_problem(recovered, settings, simplex_again, new_slacks_again, dualize_info_again);
 
   EXPECT_EQ(simplex_again.num_rows, simplex_problem.num_rows);
   EXPECT_EQ(simplex_again.num_cols, simplex_problem.num_cols);

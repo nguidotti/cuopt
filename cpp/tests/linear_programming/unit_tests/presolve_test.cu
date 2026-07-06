@@ -13,7 +13,6 @@
 #include <cuopt/mathematical_optimization/solve.hpp>
 #include <linear_algebra/sort_csr.cuh>
 #include <mip_heuristics/presolve/third_party_presolve.hpp>
-#include <mip_heuristics/utilities/sort_csr.cuh>
 #include <pdlp/utils.cuh>
 #include <utilities/base_fixture.hpp>
 #include <utilities/common_utils.hpp>

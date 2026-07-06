@@ -59,6 +59,7 @@ struct submip_settings_t {
   // number of simplex iteration from the parent B&B.
   double iteration_limit_ratio = 0.8;
 
+  // Run CPU FJ over the sub-MIP
   bool enable_cpufj = true;
 };
 

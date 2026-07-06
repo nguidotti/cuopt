@@ -7,7 +7,6 @@
 
 #include "../linear_programming/utilities/pdlp_test_utilities.cuh"
 
-#include <branch_and_bound/presolve.hpp>
 #include <cuopt/mathematical_optimization/io/mps_data_model.hpp>
 #include <cuopt/mathematical_optimization/io/parser.hpp>
 #include <cuopt/mathematical_optimization/solve.hpp>
@@ -176,11 +175,11 @@ TEST(submip_presolve, ex9_fully_reduced)
 
   simplex::simplex_solver_settings_t<int, double> settings;
 
-  mip::presolver_t<int, double> presolver;
-  auto status = presolver.apply(user_problem, settings);
+  mip::third_party_presolve_t<int, double> presolver;
+  auto status = presolver.apply(user_problem, settings, 60, 1);
 
   // PaPILO solves ex9 entirely during presolve -> empty reduced problem.
-  EXPECT_EQ(status, mip::mip_status_t::OPTIMAL);
+  EXPECT_EQ(status, mip::third_party_presolve_status_t::OPTIMAL);
   EXPECT_EQ(user_problem.num_rows, 0);
   EXPECT_EQ(user_problem.num_cols, 0);
   EXPECT_EQ(user_problem.A.nnz(), 0);
@@ -188,7 +187,7 @@ TEST(submip_presolve, ex9_fully_reduced)
   // Postsolve reconstructs the full original assignment from the (empty) reduced solution.
   std::vector<double> reduced_solution;  // no reduced columns remain
   std::vector<double> full_solution;
-  presolver.uncrush(reduced_solution, full_solution);
+  presolver.uncrush_primal_solution(reduced_solution, full_solution);
   ASSERT_EQ(static_cast<int>(full_solution.size()), orig_cols);
 
   double objective = 0.0;

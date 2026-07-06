@@ -41,10 +41,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <mip_heuristics/presolve/third_party_presolve.hpp>
 #include <string>
 #include <vector>
-
-#include "presolve.hpp"
 
 namespace cuopt::mathematical_optimization::mip {
 
@@ -190,31 +189,6 @@ dual_status_t convert_lp_status_to_dual_status(lp_status_t status)
     return dual_status_t::UNSET;
   } else {
     return dual_status_t::NUMERICAL;
-  }
-}
-
-lp_status_t convert_dual_status_to_lp_status(dual_status_t status)
-{
-  if (status == dual_status_t::OPTIMAL) {
-    return lp_status_t::OPTIMAL;
-  } else if (status == dual_status_t::DUAL_UNBOUNDED) {
-    return lp_status_t::INFEASIBLE;
-  } else if (status == dual_status_t::ITERATION_LIMIT) {
-    return lp_status_t::ITERATION_LIMIT;
-  } else if (status == dual_status_t::TIME_LIMIT) {
-    return lp_status_t::TIME_LIMIT;
-  } else if (status == dual_status_t::WORK_LIMIT) {
-    return lp_status_t::WORK_LIMIT;
-  } else if (status == dual_status_t::NUMERICAL) {
-    return lp_status_t::NUMERICAL_ISSUES;
-  } else if (status == dual_status_t::CUTOFF) {
-    return lp_status_t::CUTOFF;
-  } else if (status == dual_status_t::CONCURRENT_LIMIT) {
-    return lp_status_t::CONCURRENT_LIMIT;
-  } else if (status == dual_status_t::UNSET) {
-    return lp_status_t::UNSET;
-  } else {
-    return lp_status_t::NUMERICAL_ISSUES;
   }
 }
 
@@ -794,9 +768,6 @@ void branch_and_bound_t<i_t, f_t>::set_final_solution(mip_solution_t<i_t, f_t>& 
 {
   if (solver_status_ == mip_status_t::SUBMIP_HALT) {
     settings_.log.printf("Stopping submip solve...\n");
-    settings_.log.print_format("lower={}, obj={}\n",
-                               compute_user_objective(original_lp_, lower_bound),
-                               compute_user_objective(original_lp_, upper_bound_.load()));
   }
 
   if (solver_status_ == mip_status_t::NUMERICAL) {
@@ -2218,19 +2189,24 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
   simplex::convert_simplex_problem(
     worker->leaf_problem, var_types_, settings_, new_slacks_, submip_problem);
 
-  presolver_t<i_t, f_t> presolver;
-  mip_status_t submip_status = presolver.apply(submip_problem, submip_settings);
-  double presolve_time       = toc(start_time);
+  third_party_presolve_t<i_t, f_t> presolver;
+  f_t presolve_time_limit = std::min(0.1 * submip_settings.time_limit, 60.0);
+  third_party_presolve_status_t presolver_status =
+    presolver.apply(submip_problem, submip_settings, presolve_time_limit, 1);
 
-  if (submip_status == mip_status_t::INFEASIBLE) {
+  double presolve_time = toc(start_time);
+
+  if (presolver_status == third_party_presolve_status_t::INFEASIBLE ||
+      presolver_status == third_party_presolve_status_t::UNBNDORINFEAS ||
+      presolver_status == third_party_presolve_status_t::UNBOUNDED) {
     submip_stats_.save_infeasible(fixrate);
     return;
   }
 
-  if (submip_status == mip_status_t::OPTIMAL) {
+  if (presolver_status == third_party_presolve_status_t::OPTIMAL) {
     std::vector<f_t> fixed_sol(original_problem_.num_cols);
     std::vector<f_t> reduced_sol(submip_problem.num_cols);
-    presolver.uncrush(reduced_sol, fixed_sol);
+    presolver.uncrush_primal_solution(reduced_sol, fixed_sol);
     set_solution_from_submip(fixed_sol, fixrate);
     return;
   }
@@ -2238,7 +2214,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
   submip_settings.solution_callback = [this, fixrate, &presolver](std::vector<f_t>& solution,
                                                                   f_t obj) {
     std::vector<f_t> fixed_sol;
-    presolver.uncrush(solution, fixed_sol);
+    presolver.uncrush_primal_solution(solution, fixed_sol);
     this->set_solution_from_submip(fixed_sol, fixrate);
   };
 
@@ -2260,10 +2236,10 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
 
   // Crush the incumbent to presolve space.
   std::vector<f_t> crushed_incumbent;
-  presolver.crush(uncrushed_incumbent, crushed_incumbent);
+  presolver.crush_primal_solution(uncrushed_incumbent, crushed_incumbent);
   submip_bnb.set_initial_guess(crushed_incumbent);
 
-  submip_bnb.warm_start(pc_, presolver.reduced_to_original_map());
+  submip_bnb.warm_start(pc_, presolver.get_reduced_to_original_map());
 
   if (external_upper_bound_callback_) {
     submip_bnb.set_external_upper_bound_callback(external_upper_bound_callback_);
@@ -2316,8 +2292,8 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
     mip::run_fj_cpu_task(*submip_cpufj, time_limit, work_limit);
   }
 
-  submip_status      = submip_bnb.solve(submip_solution);
-  double submip_time = toc(start_time);
+  mip_status_t submip_status = submip_bnb.solve(submip_solution);
+  double submip_time         = toc(start_time);
 
   submip_settings.log.print_format(
     "Sub-MIP: status={}, iterations={} (total={}), presolve_time={:.2f}, total_time={:.2f} \n",
@@ -2334,7 +2310,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
 
   if (submip_solution.has_incumbent) {
     std::vector<f_t> fixed_sol(original_problem_.num_cols);
-    presolver.uncrush(submip_solution.x, fixed_sol);
+    presolver.uncrush_primal_solution(submip_solution.x, fixed_sol);
     set_solution_from_submip(fixed_sol, fixrate);
 
     // Accumulate simplex iteration when running the sub-MIP, so

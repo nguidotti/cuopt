@@ -354,7 +354,10 @@ class branch_and_bound_t {
   // to find integer feasible solutions.
   void dive_with(diving_worker_t<i_t, f_t>* worker, i_t backtrack_limit);
 
+  // Launch a new RINS/RENS worker
   bool launch_submip_worker(const std::vector<f_t>& sol);
+
+  // Solve the RINS/RENS sub-MIP
   void solve_submip(diving_worker_t<i_t, f_t>* worker,
                     const std::vector<f_t>& current_incumbent,
                     i_t num_var_fixed,
@@ -362,6 +365,7 @@ class branch_and_bound_t {
                     i_t submip_level,
                     std::string_view log_prefix);
 
+  // Creates and solves the RINS sub-MIP
   void rins(diving_worker_t<i_t, f_t>* rins_worker, const std::vector<f_t>& node_solution);
 
   // Solve the LP relaxation of a leaf node
