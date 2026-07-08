@@ -1485,11 +1485,19 @@ bool flow_cover_is_zero_one_integer_variable(const flow_cover_context_t<i_t, f_t
          std::abs(context.lp.upper[j] - 1.0) <= bound_tol;
 }
 
+// Per-arc feasibility tolerances shared by the arc-acceptance gate and the assertion in
+// build_single_node_flow_relaxation, so the two sites cannot drift apart.
 template <typename i_t, typename f_t>
-f_t flow_cover_arc_tol(const flow_cover_context_t<i_t, f_t>& context,
-                       const single_node_flow_arc_t<i_t, f_t>& arc)
+f_t flow_cover_arc_lower_tol(const flow_cover_context_t<i_t, f_t>& context)
 {
-  return flow_cover_scaled_primal_tol(context, arc.u);
+  return std::max<f_t>(10 * context.settings.primal_tol, static_cast<f_t>(1e-5));
+}
+
+template <typename i_t, typename f_t>
+f_t flow_cover_arc_upper_tol(const flow_cover_context_t<i_t, f_t>& context, f_t u)
+{
+  return std::max<f_t>(100 * context.settings.primal_tol, static_cast<f_t>(1e-4)) *
+         std::max<f_t>(1.0, u);
 }
 
 template <typename i_t, typename f_t>
@@ -1878,11 +1886,8 @@ bool flow_cover_generation_t<i_t, f_t>::build_single_node_flow_relaxation(
       scratch.candidates.end(),
       [](const single_node_flow_candidate_t<i_t, f_t>& a,
          const single_node_flow_candidate_t<i_t, f_t>& b) { return a.distance < b.distance; });
-    const f_t arc_lower_tol =
-      std::max<f_t>(10 * context.settings.primal_tol, static_cast<f_t>(1e-5));
-    const f_t arc_upper_tol =
-      std::max<f_t>(100 * context.settings.primal_tol, static_cast<f_t>(1e-4)) *
-      std::max<f_t>(1.0, best->arc.u);
+    const f_t arc_lower_tol = flow_cover_arc_lower_tol(context);
+    const f_t arc_upper_tol = flow_cover_arc_upper_tol(context, best->arc.u);
     if (best->arc.y_value < -arc_lower_tol ||
         best->arc.y_value > best->arc.u * best->arc.x_value + arc_upper_tol) {
       return false;
@@ -1910,9 +1915,10 @@ bool flow_cover_generation_t<i_t, f_t>::build_single_node_flow_relaxation(
       f_t single_node_flow_activity = 0.0;
       f_t single_node_flow_scale    = std::max<f_t>(1.0, std::abs(single_node_flow_b));
       for (const auto& arc : scratch.arcs) {
-        const f_t arc_tol = flow_cover_arc_tol(context, arc);
-        if (arc.y_value < -arc_tol) { return false; }
-        if (arc.y_value > arc.u * arc.x_value + arc_tol) { return false; }
+        const f_t arc_lower_tol = flow_cover_arc_lower_tol(context);
+        const f_t arc_upper_tol = flow_cover_arc_upper_tol(context, arc.u);
+        if (arc.y_value < -arc_lower_tol) { return false; }
+        if (arc.y_value > arc.u * arc.x_value + arc_upper_tol) { return false; }
         const f_t signed_y = arc.in_n2 ? -arc.y_value : arc.y_value;
         single_node_flow_activity += signed_y;
         single_node_flow_scale += std::abs(signed_y);
