@@ -260,7 +260,6 @@ struct simplex_solver_settings_t {
   submip_settings_t submip_settings;
 
   std::function<void(std::vector<f_t>&, f_t)> solution_callback;
-  std::function<void(const std::vector<f_t>&, f_t)> node_processed_callback;
   std::function<void()> heuristic_preemption_callback;
   std::function<void(std::vector<f_t>&, std::vector<f_t>&, f_t)> set_simplex_solution_callback;
   std::function<void(f_t)> dual_simplex_objective_callback;  // Called with current dual obj

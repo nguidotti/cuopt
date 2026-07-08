@@ -70,7 +70,6 @@ struct branch_and_bound_solution_helper_t {
   void solution_callback(std::vector<f_t>& solution, f_t objective)
   {
     dm->population.add_external_solution(solution, objective, solution_origin_t::BRANCH_AND_BOUND);
-    dm->rins.new_best_incumbent_callback(solution);
   }
 
   void set_simplex_solution(std::vector<f_t>& solution,
@@ -78,11 +77,6 @@ struct branch_and_bound_solution_helper_t {
                             f_t objective)
   {
     dm->set_simplex_solution(solution, dual_solution, objective);
-  }
-
-  void node_processed_callback(const std::vector<f_t>& solution, f_t objective)
-  {
-    dm->rins.node_callback(solution, objective);
   }
 
   void preempt_heuristic_solver() { dm->population.preempt_heuristic_solver(); }
@@ -420,12 +414,6 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
                   std::placeholders::_1,
                   std::placeholders::_2,
                   std::placeholders::_3);
-
-      branch_and_bound_settings.node_processed_callback =
-        std::bind(&branch_and_bound_solution_helper_t<i_t, f_t>::node_processed_callback,
-                  &solution_helper,
-                  std::placeholders::_1,
-                  std::placeholders::_2);
     }
 
     // Create the branch and bound object

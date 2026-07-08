@@ -1010,7 +1010,6 @@ struct tree_update_policy_t {
                                  branch_direction_t dir)                           = 0;
   virtual void on_numerical_issue(mip_node_t<i_t, f_t>*)                           = 0;
   virtual void graphviz(search_tree_t<i_t, f_t>&, mip_node_t<i_t, f_t>*, const char*, f_t) = 0;
-  virtual void on_optimal_callback(const std::vector<f_t>&, f_t)                           = 0;
 };
 
 template <typename i_t, typename f_t>
@@ -1074,16 +1073,6 @@ struct nondeterministic_policy_t : tree_update_policy_t<i_t, f_t> {
     tree.graphviz_node(log, node, label, value);
   }
 
-  void on_optimal_callback(const std::vector<f_t>& x, f_t objective) override
-  {
-    if (worker->search_strategy == search_strategy_t::BEST_FIRST &&
-        bnb.settings_.node_processed_callback != nullptr) {
-      std::vector<f_t> original_x;
-      uncrush_primal_solution(bnb.original_problem_, bnb.original_lp_, x, original_x);
-      bnb.settings_.node_processed_callback(original_x, objective);
-    }
-  }
-
   void on_node_completed(mip_node_t<i_t, f_t>*, node_status_t, branch_direction_t) override {}
 };
 
@@ -1114,7 +1103,6 @@ struct deterministic_policy_base_t : tree_update_policy_t<i_t, f_t> {
 
   void on_numerical_issue(mip_node_t<i_t, f_t>*) override {}
   void graphviz(search_tree_t<i_t, f_t>&, mip_node_t<i_t, f_t>*, const char*, f_t) override {}
-  void on_optimal_callback(const std::vector<f_t>&, f_t) override {}
 };
 
 template <typename i_t, typename f_t>
@@ -1356,7 +1344,6 @@ std::pair<node_status_t, branch_direction_t> branch_and_bound_t<i_t, f_t>::updat
     policy.update_pseudo_costs(node_ptr, leaf_obj);
     node_ptr->lower_bound = leaf_obj;
     apply_objective_step(node_ptr, leaf_obj);
-    policy.on_optimal_callback(leaf_solution.x, leaf_obj);
 
     if (num_frac == 0) {
       policy.handle_integer_solution(node_ptr, leaf_obj, leaf_solution.x);
