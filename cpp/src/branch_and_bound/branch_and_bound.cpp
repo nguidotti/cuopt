@@ -2190,14 +2190,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
     return;
   }
 
-  if (presolver_status == third_party_presolve_status_t::OPTIMAL) {
-    std::vector<f_t> fixed_sol(original_problem_.num_cols);
-    std::vector<f_t> reduced_sol(submip_problem.num_cols);
-    presolver.uncrush_primal_solution(reduced_sol, fixed_sol);
-    set_solution_from_submip(fixed_sol, fixrate);
-    return;
-  }
-
+  // Also handle optimal
   if (submip_problem.num_rows == 0 || submip_problem.num_cols == 0) {
     settings_.log.debug_format(
       "Sub-MIP presolved to a trivial {} x {} problem; solving by bound pushing",
@@ -2218,17 +2211,17 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
       }
     }
 
-    std::vector<f_t> fixed_sol;
-    presolver.uncrush_primal_solution(reduced_sol, fixed_sol);
-    set_solution_from_submip(fixed_sol, fixrate);
+    std::vector<f_t> full_sol(original_problem_.num_cols);
+    presolver.uncrush_primal_solution(reduced_sol, full_sol);
+    set_solution_from_submip(full_sol, fixrate);
     return;
   }
 
   submip_settings.solution_callback = [this, fixrate, &presolver](std::vector<f_t>& solution,
                                                                   f_t obj) {
-    std::vector<f_t> fixed_sol;
-    presolver.uncrush_primal_solution(solution, fixed_sol);
-    this->set_solution_from_submip(fixed_sol, fixrate);
+    std::vector<f_t> full_sol(original_problem_.num_cols);
+    presolver.uncrush_primal_solution(solution, full_sol);
+    this->set_solution_from_submip(full_sol, fixrate);
   };
 
   submip_settings.log.print_format("Sub-MIP: {} constraints, {} variables, {} nonzeros\n",
@@ -2322,12 +2315,12 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
   }
 
   if (submip_solution.has_incumbent) {
-    std::vector<f_t> fixed_sol(original_problem_.num_cols);
-    presolver.uncrush_primal_solution(submip_solution.x, fixed_sol);
-    set_solution_from_submip(fixed_sol, fixrate);
+    std::vector<f_t> full_sol(original_problem_.num_cols);
+    ;
+    presolver.uncrush_primal_solution(submip_solution.x, full_sol);
+    set_solution_from_submip(full_sol, fixrate);
 
-    // Accumulate simplex iteration when running the sub-MIP, so
-    // it also account for the recursion solves
+    // Accumulate simplex iterations to determine when to stop exploring the sub-MIP
     if (settings_.inside_submip) {
       exploration_stats_.total_simplex_iters += submip_solution.simplex_iterations;
     }
