@@ -2211,6 +2211,32 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
     return;
   }
 
+  if (submip_problem.num_rows == 0 || submip_problem.num_cols == 0) {
+    settings_.log.debug_format(
+      "Sub-MIP presolved to a trivial {} x {} problem; solving by bound pushing",
+      submip_problem.num_rows,
+      submip_problem.num_cols);
+
+    std::vector<f_t> reduced_sol(submip_problem.num_cols);
+
+    for (i_t j = 0; j < submip_problem.num_cols; ++j) {
+      const f_t c = submip_problem.objective[j];
+      const f_t l = submip_problem.lower[j];
+      const f_t u = submip_problem.upper[j];
+      // Minimize c_j x_j over [l, u]; fall back to any finite bound (0 if both are infinite).
+      if (c < -settings_.zero_tol) {
+        reduced_sol[j] = std::isfinite(u) ? u : (std::isfinite(l) ? l : 0);
+      } else {
+        reduced_sol[j] = std::isfinite(l) ? l : (std::isfinite(u) ? u : 0);
+      }
+    }
+
+    std::vector<f_t> fixed_sol;
+    presolver.uncrush_primal_solution(reduced_sol, fixed_sol);
+    set_solution_from_submip(fixed_sol, fixrate);
+    return;
+  }
+
   submip_settings.solution_callback = [this, fixrate, &presolver](std::vector<f_t>& solution,
                                                                   f_t obj) {
     std::vector<f_t> fixed_sol;

@@ -176,7 +176,7 @@ TEST(submip_presolve, ex9_fully_reduced)
   simplex::simplex_solver_settings_t<int, double> settings;
 
   mip::third_party_presolve_t<int, double> presolver;
-  auto status = presolver.apply(user_problem, settings, 60, 1);
+  auto status = presolver.apply(user_problem, settings, 200, 8);
 
   // PaPILO solves ex9 entirely during presolve -> empty reduced problem.
   EXPECT_EQ(status, mip::third_party_presolve_status_t::OPTIMAL);
