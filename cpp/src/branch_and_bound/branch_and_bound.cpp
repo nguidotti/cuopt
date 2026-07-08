@@ -2146,7 +2146,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
   submip_settings.inside_submip                            = 1;
   submip_settings.strong_branching_simplex_iteration_limit = 50;
   submip_settings.submip_settings.level                    = submip_level;
-  submip_settings.log.log                                  = true;
+  submip_settings.log.log                                  = false;
   submip_settings.log.log_prefix                           = log_prefix;
 
   submip_settings.node_limit = settings_.submip_settings.node_limit_base + explored / 20;
@@ -2192,7 +2192,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
 
   // Also handle optimal
   if (submip_problem.num_rows == 0 || submip_problem.num_cols == 0) {
-    settings_.log.print_format(
+    submip_settings.log.print_format(
       "Sub-MIP presolved to a trivial {} x {} problem; solving by bound pushing",
       submip_problem.num_rows,
       submip_problem.num_cols);
