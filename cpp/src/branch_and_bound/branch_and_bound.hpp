@@ -24,6 +24,8 @@
 #include <dual_simplex/solve.hpp>
 #include <math_optimization/types.hpp>
 
+#include <mip_heuristics/feasibility_jump/fj_cpu_worker.cuh>
+
 #include <utilities/macros.cuh>
 #include <utilities/omp_helpers.hpp>
 #include <utilities/producer_sync.hpp>
@@ -99,6 +101,9 @@ class branch_and_bound_t {
 
   // Set a solution based on the user problem during the course of the solve
   bool set_solution_from_heuristics(const std::vector<f_t>& solution, worker_type_t heuristic_type);
+
+  // Apply a solution found by a CPU FJ worker.
+  void set_solution_from_cpu_fj(f_t obj, const std::vector<f_t>& assignment, double work_units);
 
   // This queues the solution to be processed at the correct work unit timestamp
   void queue_external_solution_deterministic(const std::vector<f_t>& solution, double work_unit_ts);

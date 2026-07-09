@@ -14,7 +14,7 @@
 #include <cuopt/mathematical_optimization/mip/solver_settings.hpp>  // benchmark_info_t
 
 #include <cuts/cuts.hpp>
-#include <mip_heuristics/feasibility_jump/cpu_fj_thread.cuh>
+#include <mip_heuristics/feasibility_jump/fj_cpu_worker.cuh>
 #include <mip_heuristics/mip_constants.hpp>
 #include <mip_heuristics/presolve/conflict_graph/clique_table.cuh>
 
@@ -616,6 +616,28 @@ void branch_and_bound_t<i_t, f_t>::queue_external_solution_deterministic(
   mutex_heuristic_queue_.lock();
   heuristic_solution_queue_.push_back({obj, std::move(crushed_solution), 0, -1, 0, work_unit_ts});
   mutex_heuristic_queue_.unlock();
+}
+
+template <typename i_t, typename f_t>
+void branch_and_bound_t<i_t, f_t>::set_solution_from_cpu_fj(f_t obj,
+                                                            const std::vector<f_t>& assignment,
+                                                            double work_units)
+{
+  std::vector<f_t> user_assignment;
+  mutex_original_lp_.lock();
+  uncrush_primal_solution(original_problem_, original_lp_, assignment, user_assignment);
+  mutex_original_lp_.unlock();
+  settings_.log.debug_format("CPUFJ found solution with objective {:.16e}\n", obj);
+  // In deterministic mode the solution must be ordered by its work-unit timestamp so
+  // B&B sees incumbents in a reproducible sequence; otherwise apply it immediately.
+  if (settings_.deterministic) {
+    queue_external_solution_deterministic(user_assignment, work_units);
+  } else {
+    if (settings_.solution_callback != nullptr) {
+      settings_.solution_callback(user_assignment, obj);
+    }
+    set_solution_from_heuristics(user_assignment, HEURISTICS);
+  }
 }
 
 template <typename i_t, typename f_t>
@@ -2243,10 +2265,31 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
   uncrush_primal_solution(original_problem_, original_lp_, current_incumbent, uncrushed_incumbent);
   mutex_original_lp_.unlock();
 
-  // Crush the incumbent to presolve space.
+  // Crush the incumbent to presolve space. It may not be valid for the sub-MIP since we
+  // may fix integer variables that does not match the current incumbent to reach the target
+  // fix rate.
+  f_t guess_primal_error, guess_dual_error;
+  i_t guess_num_fractional;
   std::vector<f_t> crushed_incumbent;
   presolver.crush_primal_solution(uncrushed_incumbent, crushed_incumbent);
-  submip_bnb.set_initial_guess(crushed_incumbent);
+  bool is_incumbent_valid = check_guess(submip_bnb.original_lp_,
+                                        submip_settings,
+                                        submip_bnb.var_types_,
+                                        crushed_incumbent,
+                                        guess_primal_error,
+                                        guess_dual_error,
+                                        guess_num_fractional);
+  if (is_incumbent_valid)
+    submip_bnb.set_initial_guess(crushed_incumbent);
+  else
+    submip_bnb.set_initial_upper_bound(upper_bound_.load());
+
+  submip_settings.log.print_format(
+    "Set initial incumbent with obj={:.4g}, primal_error={:.4g}, bound_error={:.4g}, feasible={}",
+    upper_bound_.load(),
+    guess_primal_error,
+    guess_dual_error,
+    is_incumbent_valid);
 
   submip_bnb.warm_start(pc_, presolver.get_reduced_to_original_map());
 
@@ -2257,48 +2300,24 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
       [this]() { return compute_user_objective(this->original_lp_, this->upper_bound_.load()); });
   }
 
-  std::unique_ptr<fj_cpu_task_t<i_t, f_t>> submip_cpufj;
-  scope_guard cpufj_guard([&]() {
-    if (!submip_cpufj) { return; }
-    mip::stop_fj_cpu_task(*submip_cpufj);
-#pragma omp taskwait depend(in : *submip_cpufj)
-    submip_cpufj.reset();
-  });
+  fj_cpu_worker_t<i_t, f_t> submip_fj_cpu_worker;
+  scope_guard cpufj_guard([&]() { submip_fj_cpu_worker.stop(); });
 
-  if (settings_.submip_settings.enable_cpufj) {
-    auto cpufj_improvement_callback =
+  if (settings_.submip_settings.enable_cpufj && is_incumbent_valid) {
+    submip_fj_cpu_worker.improvement_callback =
       [&submip_bnb](f_t obj, const std::vector<f_t>& assignment, double work_units) {
-        std::vector<f_t> user_assignment;
-        submip_bnb.mutex_original_lp_.lock();
-        uncrush_primal_solution(
-          submip_bnb.original_problem_, submip_bnb.original_lp_, assignment, user_assignment);
-        submip_bnb.mutex_original_lp_.unlock();
-        submip_bnb.settings_.log.debug("%sSub MIP CPUFJ found solution with objective %.4g\n",
-                                       submip_bnb.settings_.log.log_prefix.c_str(),
-                                       obj);
-        // In deterministic mode the solution must be ordered by its work-unit timestamp so
-        // B&B sees incumbents in a reproducible sequence; otherwise apply it immediately.
-        if (submip_bnb.settings_.deterministic) {
-          submip_bnb.queue_external_solution_deterministic(user_assignment, work_units);
-        } else {
-          submip_bnb.set_solution_from_heuristics(user_assignment, HEURISTICS);
-        }
+        submip_bnb.set_solution_from_cpu_fj(obj, assignment, work_units);
       };
 
     f_t time_limit = submip_settings.time_limit;
-    f_t work_limit = 0.5;
-
-    submip_cpufj = mip::make_fj_cpu_task_from_host_lp<i_t, f_t>(submip_bnb.original_lp_,
-                                                                submip_bnb.var_types_,
-                                                                crushed_incumbent,
-                                                                submip_bnb.settings_,
-                                                                cpufj_improvement_callback,
-                                                                "[SUBMIP CPUFJ] ",
-                                                                worker->rng.next_i64());
-
-#pragma omp task shared(submip_cpufj) firstprivate(time_limit, work_limit) \
-  priority(CUOPT_DEFAULT_TASK_PRIORITY) default(none) depend(out : *submip_cpufj)
-    mip::run_fj_cpu_task(*submip_cpufj, time_limit, work_limit);
+    f_t work_limit = inf;
+    submip_fj_cpu_worker.from_simplex_lp(submip_bnb.original_lp_,
+                                         submip_bnb.var_types_,
+                                         crushed_incumbent,
+                                         submip_bnb.settings_,
+                                         std::format("{} [CPU FJ]", log_prefix),
+                                         worker->rng.next_i64());
+    submip_fj_cpu_worker.run_async(time_limit, work_limit);
   }
 
   mip_status_t submip_status = submip_bnb.solve(submip_solution);
@@ -3270,32 +3289,12 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   }
 
   constexpr bool enable_root_cut_cpufj = true;
-  std::unique_ptr<mip::fj_cpu_task_t<i_t, f_t>> root_cut_cpufj_task;
-  auto root_cut_cpufj_improvement_callback =
+  fj_cpu_worker_t<i_t, f_t> root_fj_cpu_worker;
+  scope_guard cpufj_guard([&]() { root_fj_cpu_worker.stop(); });
+  root_fj_cpu_worker.improvement_callback =
     [this](f_t obj, const std::vector<f_t>& assignment, double work_units) {
-      std::vector<f_t> user_assignment;
-      mutex_original_lp_.lock();
-      uncrush_primal_solution(original_problem_, original_lp_, assignment, user_assignment);
-      mutex_original_lp_.unlock();
-      settings_.log.debug("Root cut CPUFJ found solution with objective %.16e\n", obj);
-      // In deterministic mode the solution must be ordered by its work-unit timestamp so
-      // B&B sees incumbents in a reproducible sequence; otherwise apply it immediately.
-      if (settings_.deterministic) {
-        queue_external_solution_deterministic(user_assignment, work_units);
-      } else {
-        if (settings_.solution_callback != nullptr) {
-          settings_.solution_callback(user_assignment, obj);
-        }
-        set_solution_from_heuristics(user_assignment, HEURISTICS);
-      }
+      set_solution_from_cpu_fj(obj, assignment, work_units);
     };
-  auto stop_root_cut_cpufj = [&]() {
-    if (!root_cut_cpufj_task) { return; }
-    mip::stop_fj_cpu_task(*root_cut_cpufj_task);
-#pragma omp taskwait depend(in : *root_cut_cpufj_task)
-    root_cut_cpufj_task.reset();
-  };
-  cuopt::scope_guard root_cut_cpufj_guard([&]() { stop_root_cut_cpufj(); });
 
   f_t cut_generation_start_time = tic();
   i_t cut_pool_size             = 0;
@@ -3318,13 +3317,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     }
 
     cut_pass_result_t cut_pass_result;
-    if (root_cut_cpufj_task) {
-#pragma omp task shared(root_cut_cpufj_task) priority(CUOPT_DEFAULT_TASK_PRIORITY) default(none) \
-  depend(out : *root_cut_cpufj_task)
-      mip::run_fj_cpu_task(*root_cut_cpufj_task,
-                           std::numeric_limits<f_t>::infinity(),
-                           std::numeric_limits<f_t>::infinity());
-    }
+    root_fj_cpu_worker.run_async(settings_.time_limit - toc(exploration_stats_.start_time));
 
     cut_pass_result = do_cut_pass(cut_pass,
                                   solution,
@@ -3344,11 +3337,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                                   root_relax_objective,
                                   cut_pool_size,
                                   saved_solution);
-
-    if (root_cut_cpufj_task) {
-      mip::stop_fj_cpu_task(*root_cut_cpufj_task);
-#pragma omp taskwait depend(in : *root_cut_cpufj_task)
-    }
+    root_fj_cpu_worker.stop();
 
     if (cut_pass_result.action == cut_pass_action_t::RETURN) {
       if (settings_.benchmark_info_ptr != nullptr) {
@@ -3363,13 +3352,8 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     if (enable_root_cut_cpufj && !settings_.deterministic && settings_.num_threads >= 2 &&
         cut_pass + 1 < settings_.max_cut_passes) {
       f_t root_cut_cpufj_build_start_time = tic();
-      root_cut_cpufj_task =
-        mip::make_fj_cpu_task_from_host_lp<i_t, f_t>(original_lp_,
-                                                     var_types_,
-                                                     root_relax_soln_.x,
-                                                     settings_,
-                                                     root_cut_cpufj_improvement_callback,
-                                                     "[RootCut CPUFJ] ");
+      root_fj_cpu_worker.from_simplex_lp(
+        original_lp_, var_types_, root_relax_soln_.x, settings_, "[RootCut CPUFJ] ");
       settings_.log.debug("Root cut CPUFJ problem build time after pass %d: %.6f seconds\n",
                           cut_pass,
                           toc(root_cut_cpufj_build_start_time));
@@ -3407,23 +3391,20 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     // climber's behavior depends only on settings_.random_seed.
     int64_t root_cut_cpufj_seed =
       settings_.deterministic ? static_cast<int64_t>(settings_.random_seed) : -1;
-    root_cut_cpufj_task =
-      mip::make_fj_cpu_task_from_host_lp<i_t, f_t>(original_lp_,
-                                                   var_types_,
-                                                   root_relax_soln_.x,
-                                                   settings_,
-                                                   root_cut_cpufj_improvement_callback,
-                                                   "[RootCut CPUFJ] ",
-                                                   root_cut_cpufj_seed);
+    root_fj_cpu_worker.from_simplex_lp(original_lp_,
+                                       var_types_,
+                                       root_relax_soln_.x,
+                                       settings_,
+                                       "[RootCut CPUFJ] ",
+                                       root_cut_cpufj_seed);
     settings_.log.debug("Root cut CPUFJ final problem build time: %.6f seconds\n",
                         toc(root_cut_cpufj_build_start_time));
     f_t remaining_time = f_t(settings_.time_limit - toc(exploration_stats_.start_time));
     // Reserve at least half of the remaining time for B&B exploration; cap absolute spend
     // at 1s so generous budgets don't grant CPUFJ more than the historical ceiling.
     f_t fj_time_limit =
-      settings_.deterministic ? remaining_time : std::min(remaining_time * f_t{0.5}, f_t{1});
-    mip::run_fj_cpu_task(*root_cut_cpufj_task, fj_time_limit, 0.5);
-    root_cut_cpufj_task.reset();
+      settings_.deterministic ? remaining_time : std::min(remaining_time * 0.5, 1.0);
+    root_fj_cpu_worker.run_sync(fj_time_limit, 0.5);
   }
 
   set_uninitialized_steepest_edge_norms(original_lp_, basic_list, edge_norms_);
