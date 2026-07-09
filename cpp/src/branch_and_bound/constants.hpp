@@ -11,8 +11,6 @@
 
 namespace cuopt::mathematical_optimization::mip {
 
-constexpr int num_search_strategies = 8;
-
 // Indicate the search and variable selection algorithms used by each thread
 // in B&B (See [1]).
 //
@@ -21,7 +19,7 @@ constexpr int num_search_strategies = 8;
 // [2] J. Witzig and A. Gleixner, “Conflict-Driven Heuristics for Mixed Integer Programming,”
 // Feb. 07, 2019, _arXiv_: arXiv:1902.02615. doi:
 // [10.48550/arXiv.1902.02615](https://doi.org/10.48550/arXiv.1902.02615).
-enum search_strategy_t : int {
+enum worker_type_t : int {
   BEST_FIRST           = 0,  // Best-First + Plunging.
   PSEUDOCOST_DIVING    = 1,  // Pseudocost diving (9.2.5)
   LINE_SEARCH_DIVING   = 2,  // Line search diving (9.2.4)
@@ -30,6 +28,8 @@ enum search_strategy_t : int {
   FARKAS_DIVING        = 5,  // Farkas Diving (see [2])
   VECTOR_LENGTH_DIVING = 6,  // Vector Length Diving (9.2.6)
   SUBMIP               = 7,  // RINS/RENS (akin to a guided diving, see HiGHS)
+  HEURISTICS           = 8,  // Other heuristics
+  NUM_WORKER_TYPES
 };
 
 enum class branch_direction_t { NONE = -1, DOWN = 0, UP = 1 };

@@ -49,9 +49,6 @@ template <typename i_t, typename f_t>
 struct mip_symmetry_t;
 
 template <typename i_t, typename f_t>
-void upper_bound_callback(f_t upper_bound);
-
-template <typename i_t, typename f_t>
 struct nondeterministic_policy_t;
 template <typename i_t, typename f_t, typename WorkerT>
 struct deterministic_policy_base_t;
@@ -69,11 +66,6 @@ class branch_and_bound_t {
                      const probing_implied_bound_t<i_t, f_t>& probing_implied_bound,
                      std::shared_ptr<mip::clique_table_t<i_t, f_t>> clique_table = nullptr,
                      mip_symmetry_t<i_t, f_t>* symmetry                          = nullptr);
-
-  branch_and_bound_t(branch_and_bound_t& other,
-                     const simplex::simplex_solver_settings_t<i_t, f_t>& solver_settings,
-                     const std::vector<f_t>& lower,
-                     const std::vector<f_t>& upper);
 
   // Set an initial guess based on the user_problem. This should be called before solve.
   void set_initial_guess(const std::vector<f_t>& user_guess) { guess_ = user_guess; }
@@ -106,10 +98,7 @@ class branch_and_bound_t {
   }
 
   // Set a solution based on the user problem during the course of the solve
-  void set_solution_from_heuristics(const std::vector<f_t>& solution);
-
-  // Set a solution based on the user problem during the course of the solve
-  void set_solution_from_submip(const std::vector<f_t>& solution, f_t fixrate);
+  bool set_solution_from_heuristics(const std::vector<f_t>& solution, worker_type_t heuristic_type);
 
   // This queues the solution to be processed at the correct work unit timestamp
   void queue_external_solution_deterministic(const std::vector<f_t>& solution, double work_unit_ts);
@@ -274,7 +263,7 @@ class branch_and_bound_t {
   std::function<void(f_t)> user_bound_callback_;
 
   void print_table_header();
-  void report_heuristic(f_t obj, char symbol);
+  void report_heuristic(f_t obj, worker_type_t type);
   void report(char symbol,
               f_t obj,
               f_t lower_bound,
@@ -320,7 +309,7 @@ class branch_and_bound_t {
   void add_feasible_solution(f_t leaf_objective,
                              const std::vector<f_t>& leaf_solution,
                              i_t leaf_depth,
-                             search_strategy_t thread_type);
+                             worker_type_t thread_type);
 
   // Repairs low-quality solutions from the heuristics, if it is applicable.
   void repair_heuristic_solutions();
@@ -355,7 +344,7 @@ class branch_and_bound_t {
   void dive_with(diving_worker_t<i_t, f_t>* worker, i_t backtrack_limit);
 
   // Launch a new RINS/RENS worker
-  bool launch_submip_worker(const std::vector<f_t>& sol);
+  bool launch_local_branching_worker(const std::vector<f_t>& sol);
 
   // Solve the RINS/RENS sub-MIP
   void solve_submip(diving_worker_t<i_t, f_t>* worker,

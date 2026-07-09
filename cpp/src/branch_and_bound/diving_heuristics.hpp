@@ -18,30 +18,11 @@
 
 namespace cuopt::mathematical_optimization::mip {
 
-// When `log_diving_type` is true, each diving strategy gets its own letter;
-// otherwise every dive collapses to 'D'.
-inline char feasible_solution_symbol(search_strategy_t strategy, bool log_diving_type)
-{
-  if (strategy == BEST_FIRST) return 'B';
-  if (strategy == SUBMIP) return 'S';
-  if (!log_diving_type) { return 'D'; }
-  switch (strategy) {
-    case COEFFICIENT_DIVING: return 'C';
-    case LINE_SEARCH_DIVING: return 'L';
-    case PSEUDOCOST_DIVING: return 'P';
-    case GUIDED_DIVING: return 'G';
-    case FARKAS_DIVING: return 'F';
-    case VECTOR_LENGTH_DIVING: return 'V';
-    default: return 'U';
-  }
-}
-
 template <typename i_t, typename f_t>
 void get_diving_heuristic_list(const mip_diving_hyper_params_t<i_t, f_t>& settings,
-                               std::vector<search_strategy_t>& heuristic_list)
+                               std::vector<worker_type_t>& heuristic_list)
 {
   heuristic_list.clear();
-  heuristic_list.reserve(num_search_strategies - 1);
   if (settings.pseudocost_diving != 0) heuristic_list.push_back(PSEUDOCOST_DIVING);
   if (settings.line_search_diving != 0) heuristic_list.push_back(LINE_SEARCH_DIVING);
   if (settings.guided_diving != 0) heuristic_list.push_back(GUIDED_DIVING);

@@ -71,7 +71,7 @@ struct simplex_solver_settings_t {
       node_limit(std::numeric_limits<i_t>::max()),
       time_limit(std::numeric_limits<f_t>::infinity()),
       work_limit(std::numeric_limits<f_t>::infinity()),
-      bnb_iteration_limit(std::numeric_limits<i_t>::max()),
+      bnb_iteration_limit(std::numeric_limits<int64_t>::max()),
       absolute_mip_gap_tol(0.0),
       relative_mip_gap_tol(1e-3),
       integer_tol(1e-5),

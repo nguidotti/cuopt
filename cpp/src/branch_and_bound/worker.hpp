@@ -50,7 +50,7 @@ class branch_and_bound_worker_t {
   using int_type   = i_t;
 
   i_t worker_id;
-  omp_atomic_t<search_strategy_t> search_strategy;
+  omp_atomic_t<worker_type_t> search_strategy;
   omp_atomic_t<bool> is_active;
   omp_atomic_t<f_t> lower_bound;
 
@@ -190,8 +190,9 @@ class bfs_worker_t : public branch_and_bound_worker_t<i_t, f_t> {
   }
 
   // Get the next diving heuristic from the list
-  search_strategy_t next_diving_heuristic()
+  worker_type_t next_diving_heuristic()
   {
+    assert(diving_heuristics.size() > 0);
     next_heuristic = next_heuristic % diving_heuristics.size();
     return diving_heuristics[next_heuristic++];
   }
@@ -210,7 +211,7 @@ class bfs_worker_t : public branch_and_bound_worker_t<i_t, f_t> {
   i_t max_diving_workers;
 
  private:
-  std::vector<search_strategy_t> diving_heuristics;
+  std::vector<worker_type_t> diving_heuristics;
   i_t next_heuristic;
 };
 
