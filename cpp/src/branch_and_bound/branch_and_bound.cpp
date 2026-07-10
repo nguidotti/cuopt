@@ -2296,7 +2296,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
       };
 
     f_t time_limit = submip_settings.time_limit;
-    f_t work_limit = inf;
+    f_t work_limit = 1.0;
     submip_fj_cpu_worker.from_simplex_lp(submip_bnb.original_lp_,
                                          submip_bnb.var_types_,
                                          worker->leaf_solution.x,
@@ -2578,7 +2578,29 @@ void branch_and_bound_t<i_t, f_t>::rins(diving_worker_t<i_t, f_t>* rins_worker,
       rins_worker->start_lower     = std::move(lower);
       rins_worker->start_upper     = std::move(upper);
       bool is_feasible             = rins_worker->presolve_start_bounds(settings_);
-      if (is_feasible) dive_with(rins_worker, 5);
+      if (is_feasible) {
+        fj_cpu_worker_t<i_t, f_t> submip_fj_cpu_worker;
+
+        if (settings_.submip_settings.enable_cpufj) {
+          submip_fj_cpu_worker.improvement_callback =
+            [this](f_t obj, const std::vector<f_t>& assignment, double work_units) {
+              this->set_solution_from_cpu_fj(obj, assignment, work_units);
+            };
+
+          f_t time_limit =
+            std::max<f_t>(settings_.time_limit - toc(exploration_stats_.start_time), 0);
+          f_t work_limit = 1.0;
+          submip_fj_cpu_worker.from_simplex_lp(rins_worker->leaf_problem,
+                                               var_types_,
+                                               rins_worker->leaf_solution.x,
+                                               settings_,
+                                               std::format("{} [CPU FJ]", log_prefix),
+                                               rins_worker->rng.next_i64());
+          submip_fj_cpu_worker.run_sync(time_limit, work_limit);
+        }
+
+        dive_with(rins_worker, 5);
+      }
 
     } else {
       solve_submip(
