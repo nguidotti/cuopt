@@ -192,7 +192,7 @@ class bfs_worker_t : public branch_and_bound_worker_t<i_t, f_t> {
   // Get the next diving heuristic from the list
   worker_type_t next_diving_heuristic()
   {
-    assert(diving_heuristics.size() > 0);
+    assert(is_diving_enabled());
     next_heuristic = next_heuristic % diving_heuristics.size();
     return diving_heuristics[next_heuristic++];
   }

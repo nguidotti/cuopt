@@ -267,7 +267,7 @@ struct simplex_solver_settings_t {
   std::atomic<int>* concurrent_halt;  // if nullptr ignored, if !nullptr, 0 if solver should
                                       // continue, 1 if solver should halt
   // Optional non-owning pointer to run-level benchmark stats.
-  cuopt::mathematical_optimization::benchmark_info_t* benchmark_info_ptr = nullptr;
+  benchmark_info_t* benchmark_info_ptr = nullptr;
 };
 
 }  // namespace cuopt::mathematical_optimization::simplex

@@ -72,9 +72,9 @@ class branch_and_bound_t {
   // Set an initial guess based on the user_problem. This should be called before solve.
   void set_initial_guess(const std::vector<f_t>& user_guess) { guess_ = user_guess; }
 
-  void set_external_upper_bound_callback(std::function<f_t()> callback)
+  void set_halt_callback(std::function<bool(f_t, f_t)> callback)
   {
-    external_upper_bound_callback_ = std::move(callback);
+    halt_callback_ = std::move(callback);
   }
 
   // Set the root solution found by PDLP
@@ -205,10 +205,9 @@ class branch_and_bound_t {
   // original-space in the mip_solver_context_t), but does NOT imply incumbent_.has_incumbent.
   omp_atomic_t<f_t> upper_bound_;
 
-  // Callback that returns the objective of the current incumbent of the main solve in the
-  // user space. This is used for propagating changes to the upper bound to the
-  // submip solves.
-  std::function<f_t()> external_upper_bound_callback_;
+  // Callback for halting the solver. This passes the current upper and lower bound of the solver
+  // in user space.
+  std::function<bool(f_t, f_t)> halt_callback_;
 
   // Solver-space incumbent tracked directly by B&B.
   simplex::mip_solution_t<i_t, f_t> incumbent_;

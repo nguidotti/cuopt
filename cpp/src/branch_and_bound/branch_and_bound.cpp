@@ -781,9 +781,7 @@ template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::set_final_solution(mip_solution_t<i_t, f_t>& solution,
                                                       f_t lower_bound)
 {
-  if (solver_status_ == mip_status_t::SUBMIP_HALT) {
-    settings_.log.printf("Stopping submip solve...\n");
-  }
+  if (solver_status_ == mip_status_t::HALT) { settings_.log.printf("Stopping submip solve...\n"); }
 
   if (solver_status_ == mip_status_t::NUMERICAL) {
     settings_.log.printf("Numerical issue encountered. Stopping the solver...\n");
@@ -1892,18 +1890,14 @@ void branch_and_bound_t<i_t, f_t>::best_first_search_with(bfs_worker_t<i_t, f_t>
 
   while (solver_status_ == mip_status_t::UNSET && abs_gap > settings_.absolute_mip_gap_tol &&
          rel_gap > settings_.relative_mip_gap_tol && node_queue.best_first_queue_size() > 0) {
-    if (external_upper_bound_callback_) {
-      const f_t external_upper_bound = external_upper_bound_callback_();
-      bool maximize                  = original_lp_.obj_scale < 0.0;
-      bool stop = maximize ? user_lower < external_upper_bound : user_lower > external_upper_bound;
+    if (halt_callback_) {
+      bool stop = halt_callback_(user_obj, user_lower);
       if (stop) {
         node_concurrent_halt_ = 1;
-        solver_status_        = mip_status_t::SUBMIP_HALT;
-        settings_.log.debug_format(
-          "Stopping the submip since the main B&B has a better incumbent. "
-          "upper={:g}, external_upper={:g}, lower={:g}\n",
+        solver_status_        = mip_status_t::HALT;
+        settings_.log.print_format(
+          "Received halt signal. Current best obj={:.6e} and best bound={:.6e}\n",
           user_obj,
-          external_upper_bound,
           user_lower);
         break;
       }
@@ -1947,16 +1941,15 @@ void branch_and_bound_t<i_t, f_t>::best_first_search_with(bfs_worker_t<i_t, f_t>
     abs_gap     = compute_user_abs_gap(original_lp_, upper_bound_.load(), lower_bound);
     rel_gap     = user_relative_gap(user_obj, user_lower);
 
-    if (abs_gap <= settings_.absolute_mip_gap_tol || rel_gap <= settings_.relative_mip_gap_tol) {
-      node_concurrent_halt_ = 1;
-      solver_status_        = mip_status_t::OPTIMAL;
-      break;
-    }
-
     // Steal a node with some probability or when it is empty. The victim is determined at random.
     if (node_queue.best_first_queue_size() == 0 || worker->rng.next_double() < steal_chance) {
       work_stealing(worker);
     }
+  }
+
+  if (abs_gap <= settings_.absolute_mip_gap_tol || rel_gap <= settings_.relative_mip_gap_tol) {
+    node_concurrent_halt_ = 1;
+    solver_status_        = mip_status_t::OPTIMAL;
   }
 
   // If the worker has still nodes in the queue (this can happen if it was stopped due to
@@ -2159,7 +2152,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
   f_t rel_gap    = user_relative_gap(user_obj, user_lower);
   i_t explored   = exploration_stats_.nodes_explored;
 
-  simplex_solver_settings_t<i_t, f_t> submip_settings;
+  simplex_solver_settings_t<i_t, f_t> submip_settings      = settings_;
   submip_settings.print_presolve_stats                     = false;
   submip_settings.num_threads                              = 1;
   submip_settings.reliability_branching                    = 0;
@@ -2241,10 +2234,14 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
     return;
   }
 
+  submip_settings.heuristic_preemption_callback   = nullptr;
+  submip_settings.dual_simplex_objective_callback = nullptr;
+  submip_settings.set_simplex_solution_callback   = nullptr;
   submip_settings.solution_callback = [this, fixrate, &presolver](std::vector<f_t>& solution,
                                                                   f_t obj) {
     std::vector<f_t> full_sol(original_problem_.num_cols);
     presolver.uncrush_primal_solution(solution, full_sol);
+    settings_.log.debug_format("SubMIP found a feasible solution with obj={:.4g}", obj);
     bool success = set_solution_from_heuristics(full_sol, SUBMIP);
     if (success) submip_stats_.save_success(fixrate);
   };
@@ -2293,11 +2290,18 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
 
   submip_bnb.warm_start(pc_, presolver.get_reduced_to_original_map());
 
-  if (external_upper_bound_callback_) {
-    submip_bnb.set_external_upper_bound_callback(external_upper_bound_callback_);
+  if (halt_callback_) {
+    // Copy the halt callback to the deeper level.
+    submip_bnb.set_halt_callback(halt_callback_);
   } else {
-    submip_bnb.set_external_upper_bound_callback(
-      [this]() { return compute_user_objective(this->original_lp_, this->upper_bound_.load()); });
+    // This should only be called by the main solver.
+    submip_bnb.set_halt_callback([this](f_t, f_t submip_lower_bound) {
+      f_t user_upper     = compute_user_objective(this->original_lp_, this->upper_bound_.load());
+      bool is_suboptimal = original_lp_.obj_scale > 0 ? submip_lower_bound > user_upper
+                                                      : user_upper > submip_lower_bound;
+      bool is_solver_running = this->solver_status_ == mip_status_t::UNSET && this->is_running_;
+      return is_suboptimal || !is_solver_running;
+    });
   }
 
   fj_cpu_worker_t<i_t, f_t> submip_fj_cpu_worker;
