@@ -634,11 +634,7 @@ optimization_problem_t<i_t, f_t> build_optimization_problem(
 }
 
 // Read a reduced (presolved) papilo problem back into a host-side dual-simplex user_problem_t,
-// overwriting `problem` in place. This is the inverse of build_papilo_problem_mip: the objective
-// stays in minimization sense (no sign flip), two-sided papilo row bounds are mapped back to
-// (row_sense, rhs, range_rows/range_value), and the constraint matrix is read straight from
-// papilo's column-major (CSC) transpose into A. Metadata not produced by presolve (handle_ptr,
-// obj_scale, problem_name, quadratic/cone fields) is left untouched on `problem`.
+// overwriting `problem` in place.
 template <typename i_t, typename f_t>
 void build_user_problem(papilo::Problem<f_t> const& papilo_problem,
                         simplex::user_problem_t<i_t, f_t>& problem)
@@ -731,11 +727,15 @@ void build_user_problem(papilo::Problem<f_t> const& papilo_problem,
   problem.A.col_start[reduced_cols] = pos;
   cuopt_assert(pos == reduced_nnz, "papilo CSC nonzero count mismatch");
 
-  // Names are not needed for the sub-MIP solve; clear so downstream size checks skip them.
-  problem.col_names.clear();
-  problem.row_names.clear();
   problem.num_cols = reduced_cols;
   problem.num_rows = reduced_rows;
+}
+
+template <typename i_t, typename f_t>
+void papilo_round_trip(simplex::user_problem_t<i_t, f_t>& problem)
+{
+  papilo::Problem<f_t> papilo_problem = build_papilo_problem(problem);
+  build_user_problem(papilo_problem, problem);
 }
 
 void check_presolve_status(const papilo::PresolveStatus& status)
@@ -1094,6 +1094,12 @@ third_party_presolve_status_t third_party_presolve_t<i_t, f_t>::apply(
 
   // Rebuild `problem` in place from the reduced papilo problem.
   build_user_problem<i_t, f_t>(papilo_problem, problem);
+
+  // Presolve changes the dimensions, so the original row/column names no longer line up with the
+  // reduced problem. They are not needed for the sub-MIP solve, so clear them and let downstream
+  // size checks skip them.
+  problem.col_names.clear();
+  problem.row_names.clear();
 
   // Column maps for postsolve (reduced -> original and its inverse).
   auto const& col_map = result.postsolve.origcol_mapping;
@@ -1480,11 +1486,13 @@ void papilo_postsolve_deleter<f_t>::operator()(papilo::PostsolveStorage<f_t>* pt
 #if MIP_INSTANTIATE_FLOAT || PDLP_INSTANTIATE_FLOAT
 template struct papilo_postsolve_deleter<float>;
 template class third_party_presolve_t<int, float>;
+template void papilo_round_trip(simplex::user_problem_t<int, float>&);
 #endif
 
 #if MIP_INSTANTIATE_DOUBLE
 template struct papilo_postsolve_deleter<double>;
 template class third_party_presolve_t<int, double>;
+template void papilo_round_trip(simplex::user_problem_t<int, double>&);
 #endif
 
 }  // namespace cuopt::mathematical_optimization::mip

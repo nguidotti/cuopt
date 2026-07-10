@@ -129,4 +129,8 @@ class third_party_presolve_t {
   std::vector<i_t> original_to_reduced_map_{};
 };
 
+// Just for testing the conversion: user_problem -> Papilo problem -> user_problem.
+template <typename i_t, typename f_t>
+void papilo_round_trip(simplex::user_problem_t<i_t, f_t>& problem);
+
 }  // namespace cuopt::mathematical_optimization::mip

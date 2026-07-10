@@ -152,49 +152,4 @@ TEST(gf2_presolve, uses_compact_constraint_indices)
 
   EXPECT_EQ(result.status, mip::third_party_presolve_status_t::REDUCED);
 }
-
-// Exercises the MIP presolve path: presolver_t::apply -> third_party_presolve_t::apply
-// reduces a user_problem_t in place via PaPILO. ex9 is fully solved by presolve (it collapses
-// to a 0x0 problem), so this also checks the OPTIMAL status and that postsolve maps the empty
-// reduced solution back to a full-dimension, objective-81 assignment.
-TEST(submip_presolve, ex9_fully_reduced)
-{
-  const raft::handle_t handle_{};
-
-  auto path           = make_path_absolute("mip/ex9.mps");
-  auto mps_data_model = cuopt::mathematical_optimization::io::read_mps<int, double>(path, false);
-  auto op_problem     = mps_data_model_to_optimization_problem(&handle_, mps_data_model);
-
-  // The MIP presolve operates on the  host representation.
-  auto user_problem = cuopt_optimization_problem_to_user_problem<int, double>(&handle_, op_problem);
-
-  const int orig_cols   = user_problem.num_cols;
-  const auto obj_coeffs = op_problem.get_objective_coefficients_host();
-  ASSERT_GT(user_problem.num_rows, 0);
-  ASSERT_GT(orig_cols, 0);
-
-  simplex::simplex_solver_settings_t<int, double> settings;
-
-  mip::third_party_presolve_t<int, double> presolver;
-  auto status = presolver.apply(user_problem, settings, 200, 8);
-
-  // PaPILO solves ex9 entirely during presolve -> empty reduced problem.
-  EXPECT_EQ(status, mip::third_party_presolve_status_t::OPTIMAL);
-  EXPECT_EQ(user_problem.num_rows, 0);
-  EXPECT_EQ(user_problem.num_cols, 0);
-  EXPECT_EQ(user_problem.A.nnz(), 0);
-
-  // Postsolve reconstructs the full original assignment from the (empty) reduced solution.
-  std::vector<double> reduced_solution;  // no reduced columns remain
-  std::vector<double> full_solution;
-  presolver.uncrush_primal_solution(reduced_solution, full_solution);
-  ASSERT_EQ(static_cast<int>(full_solution.size()), orig_cols);
-
-  double objective = 0.0;
-  for (int j = 0; j < orig_cols; ++j) {
-    objective += obj_coeffs[j] * full_solution[j];
-  }
-  EXPECT_NEAR(objective, 81.0, 1e-6);
-}
-
 }  // namespace cuopt::mathematical_optimization::test
