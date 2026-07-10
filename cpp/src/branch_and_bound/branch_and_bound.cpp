@@ -2265,9 +2265,9 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
   // Crush the incumbent to presolve space. It may not be valid for the sub-MIP since we
   // may fix integer variables that does not match the current incumbent to reach the target
   // fix rate.
-  std::vector<f_t> crushed_incumbent;
-  presolver.crush_primal_solution(uncrushed_incumbent, crushed_incumbent);
-  submip_bnb.set_initial_guess(crushed_incumbent);
+  std::vector<f_t> presolved_incumbent;
+  presolver.crush_primal_solution(uncrushed_incumbent, presolved_incumbent);
+  submip_bnb.set_initial_guess(presolved_incumbent);
   submip_bnb.set_initial_upper_bound(upper_bound_.load());
 
   submip_bnb.warm_start(pc_, presolver.get_reduced_to_original_map());
@@ -2290,6 +2290,13 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
   scope_guard cpufj_guard([&]() { submip_fj_cpu_worker.stop(); });
 
   if (settings_.submip_settings.enable_cpufj) {
+    std::vector<f_t> initial_guess;
+    crush_primal_solution(submip_problem,
+                          submip_bnb.original_lp_,
+                          presolved_incumbent,
+                          submip_bnb.new_slacks_,
+                          initial_guess);
+
     submip_fj_cpu_worker.improvement_callback =
       [&submip_bnb](f_t obj, const std::vector<f_t>& assignment, double work_units) {
         submip_bnb.set_solution_from_cpu_fj(obj, assignment, work_units);
@@ -2299,7 +2306,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
     f_t work_limit = 1.0;
     submip_fj_cpu_worker.from_simplex_lp(submip_bnb.original_lp_,
                                          submip_bnb.var_types_,
-                                         worker->leaf_solution.x,
+                                         initial_guess,
                                          submip_bnb.settings_,
                                          std::format("{} [CPU FJ]", log_prefix),
                                          worker->rng.next_i64());
@@ -2575,8 +2582,8 @@ void branch_and_bound_t<i_t, f_t>::rins(diving_worker_t<i_t, f_t>* rins_worker,
         (settings_.inside_submip && submip_stats_.total_success != 0)) {
       rins_worker->skip_set_bounds = false;
       rins_worker->start_node      = std::move(node);
-      rins_worker->start_lower     = std::move(lower);
-      rins_worker->start_upper     = std::move(upper);
+      rins_worker->start_lower     = lower;
+      rins_worker->start_upper     = upper;
       bool is_feasible             = rins_worker->presolve_start_bounds(settings_);
       if (is_feasible) {
         fj_cpu_worker_t<i_t, f_t> submip_fj_cpu_worker;
