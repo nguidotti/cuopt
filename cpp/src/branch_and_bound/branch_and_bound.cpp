@@ -2156,7 +2156,6 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
   submip_settings.print_presolve_stats                     = false;
   submip_settings.num_threads                              = 1;
   submip_settings.reliability_branching                    = 0;
-  submip_settings.max_cut_passes                           = settings_.max_cut_passes;
   submip_settings.clique_cuts                              = 0;
   submip_settings.zero_half_cuts                           = 0;
   submip_settings.inside_submip                            = 1;
@@ -2537,7 +2536,7 @@ void branch_and_bound_t<i_t, f_t>::rins(diving_worker_t<i_t, f_t>* rins_worker,
         }
 
         if (prev_num_fixed == num_var_fixed) {
-          settings_.log.debug_format("{} Could not fix more variables\n",
+          settings_.log.debug_format("{}Could not fix more variables ({}, max={}, min={})\n",
                                      log_prefix,
                                      num_var_fixed,
                                      max_var_fixed,

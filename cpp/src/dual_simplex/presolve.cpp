@@ -703,10 +703,10 @@ void convert_simplex_problem(const lp_problem_t<i_t, f_t>& simplex_problem,
   const i_t m                             = simplex_problem.num_rows;
   const i_t n                             = simplex_problem.num_cols;
   const csc_matrix_t<i_t, f_t>& simplex_A = simplex_problem.A;
-  assert((var_types.empty() || static_cast<i_t>(var_types.size()) == n) &&
+  assert((var_types.empty() || var_types.size() == n) &&
          "var_types must span the full simplex problem (structural + slack columns)");
 
-  const i_t num_slacks = static_cast<i_t>(new_slacks.size());
+  const i_t num_slacks = new_slacks.size();
   const i_t new_n      = n - num_slacks;
   const i_t new_nnz    = simplex_A.col_start[n] - num_slacks;
 
@@ -765,7 +765,7 @@ void convert_simplex_problem(const lp_problem_t<i_t, f_t>& simplex_problem,
       user_problem.range_value.push_back(hi - lo);
     }
   }
-  user_problem.num_range_rows = static_cast<i_t>(user_problem.range_rows.size());
+  user_problem.num_range_rows = user_problem.range_rows.size();
 
   // Rebuild the constraint matrix and column data in place, dropping the
   // slack/artificial columns (each contributes exactly one nonzero). var_types
