@@ -1720,6 +1720,7 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
     if (exploration_stats_.total_simplex_iters > settings_.bnb_iteration_limit) {
       solver_status_ = mip_status_t::ITERATION_LIMIT;
       stack.push_front(node_ptr);
+      --exploration_stats_.nodes_being_solved;
       break;
     }
 
@@ -1952,12 +1953,8 @@ void branch_and_bound_t<i_t, f_t>::best_first_search_with(bfs_worker_t<i_t, f_t>
     solver_status_        = mip_status_t::OPTIMAL;
   }
 
-  // If the worker has still nodes in the queue (this can happen if it was stopped due to
-  // time limit, small gap or other reason), then do not add back to the pool to avoid
-  // constantly trying to start it again
-  if (worker->node_queue.best_first_queue_size() == 0) {
-    bfs_worker_pool_.return_worker_to_pool(worker);
-  }
+  bfs_worker_pool_.return_worker_to_pool(worker);
+  if (bfs_worker_pool_.num_idle() == bfs_worker_pool_.size()) is_running_ = false;
 }
 
 template <typename i_t, typename f_t>

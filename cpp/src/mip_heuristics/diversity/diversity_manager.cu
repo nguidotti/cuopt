@@ -192,7 +192,7 @@ void diversity_manager_t<i_t, f_t>::add_user_given_solutions(
     if (has_papilo) {
       if ((i_t)init_sol_assignment.size() != papilo_orig_n) {
         CUOPT_LOG_ERROR(
-          "Error cannot add the provided initial solution! Initial solution %zu has %zu vars, "
+          "add the provided initial solution! Initial solution %zu has %zu vars, "
           "expected %d; skipping",
           sol_idx,
           init_sol_assignment.size(),
