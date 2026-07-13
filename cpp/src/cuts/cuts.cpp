@@ -1914,6 +1914,12 @@ bool flow_cover_generation_t<i_t, f_t>::build_single_node_flow_relaxation(
     [&]() {
       f_t single_node_flow_activity = 0.0;
       f_t single_node_flow_scale    = std::max<f_t>(1.0, std::abs(single_node_flow_b));
+      // Each accepted arc may sit up to arc_{lower,upper}_tol outside its capacity — the same
+      // slack the acceptance gate above tolerates — and the y_value<0 -> 0 clamp can shift it by
+      // another arc_lower_tol. Those per-arc slacks accumulate into the aggregate activity, so the
+      // relaxation tolerance must sum them; primal_tol * scale alone (which only covers FP rounding
+      // in the summation) is far too tight and rejects LP points that are genuinely inside.
+      f_t single_node_flow_slack = 0.0;
       for (const auto& arc : scratch.arcs) {
         const f_t arc_lower_tol = flow_cover_arc_lower_tol(context);
         const f_t arc_upper_tol = flow_cover_arc_upper_tol(context, arc.u);
@@ -1922,9 +1928,11 @@ bool flow_cover_generation_t<i_t, f_t>::build_single_node_flow_relaxation(
         const f_t signed_y = arc.in_n2 ? -arc.y_value : arc.y_value;
         single_node_flow_activity += signed_y;
         single_node_flow_scale += std::abs(signed_y);
+        single_node_flow_slack += arc_lower_tol + arc_upper_tol;
       }
-      return single_node_flow_activity <=
-             single_node_flow_b + context.settings.primal_tol * single_node_flow_scale;
+      return single_node_flow_activity <= single_node_flow_b +
+                                            context.settings.primal_tol * single_node_flow_scale +
+                                            single_node_flow_slack;
     }(),
     "Flow cover single-node-flow relaxation excludes LP solution");
 
