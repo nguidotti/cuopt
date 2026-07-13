@@ -10,8 +10,11 @@
 #include <cuopt/mathematical_optimization/io/mps_data_model.hpp>
 #include <cuopt/mathematical_optimization/io/parser.hpp>
 #include <cuopt/mathematical_optimization/solve.hpp>
+#include <dual_simplex/simplex_solver_settings.hpp>
+#include <dual_simplex/user_problem.hpp>
 #include <mip_heuristics/presolve/third_party_presolve.hpp>
 #include <mip_heuristics/problem/problem.cuh>
+#include <pdlp/translate.hpp>
 #include <pdlp/utils.cuh>
 #include <utilities/common_utils.hpp>
 #include <utilities/copy_helpers.hpp>
@@ -149,5 +152,4 @@ TEST(gf2_presolve, uses_compact_constraint_indices)
 
   EXPECT_EQ(result.status, mip::third_party_presolve_status_t::REDUCED);
 }
-
 }  // namespace cuopt::mathematical_optimization::test

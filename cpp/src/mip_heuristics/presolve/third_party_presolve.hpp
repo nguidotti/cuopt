@@ -12,6 +12,8 @@
 #include <vector>
 
 #include <cuopt/mathematical_optimization/optimization_problem.hpp>
+#include <dual_simplex/simplex_solver_settings.hpp>
+#include <dual_simplex/user_problem.hpp>
 
 #include <PSLP/PSLP_API.h>
 
@@ -58,15 +60,21 @@ class third_party_presolve_t {
   third_party_presolve_t(third_party_presolve_t&&)                 = delete;
   third_party_presolve_t& operator=(third_party_presolve_t&&)      = delete;
 
-  third_party_presolve_result_t<i_t, f_t> apply(
-    optimization_problem_t<i_t, f_t> const& op_problem,
-    problem_category_t category,
-    cuopt::mathematical_optimization::presolver_t presolver,
-    bool dual_postsolve,
-    f_t absolute_tolerance,
-    f_t relative_tolerance,
-    double time_limit,
-    i_t num_cpu_threads = 0);
+  third_party_presolve_result_t<i_t, f_t> apply(optimization_problem_t<i_t, f_t> const& op_problem,
+                                                problem_category_t category,
+                                                presolver_t presolver,
+                                                bool dual_postsolve,
+                                                f_t absolute_tolerance,
+                                                f_t relative_tolerance,
+                                                double time_limit,
+                                                i_t num_cpu_threads = 0);
+
+  // Apply the presolve on an simplex::user_problem in-place. Used in sub MIP and (in the future)
+  // restarts.
+  third_party_presolve_status_t apply(simplex::user_problem_t<i_t, f_t>& problem,
+                                      const simplex::simplex_solver_settings_t<i_t, f_t>& settings,
+                                      f_t time_limit,
+                                      i_t num_threads);
 
   void undo(rmm::device_uvector<f_t>& primal_solution,
             rmm::device_uvector<f_t>& dual_solution,
@@ -105,9 +113,8 @@ class third_party_presolve_t {
                  rmm::device_uvector<f_t>& reduced_costs,
                  rmm::cuda_stream_view stream_view);
 
-  bool maximize_ = false;
-  cuopt::mathematical_optimization::presolver_t presolver_ =
-    cuopt::mathematical_optimization::presolver_t::PSLP;
+  bool maximize_         = false;
+  presolver_t presolver_ = PSLP;
   // PSLP settings
   Settings* pslp_stgs_{nullptr};
   Presolver* pslp_presolver_{nullptr};
@@ -121,5 +128,9 @@ class third_party_presolve_t {
   std::vector<i_t> reduced_to_original_map_{};
   std::vector<i_t> original_to_reduced_map_{};
 };
+
+// Just for testing the conversion: user_problem -> Papilo problem -> user_problem.
+template <typename i_t, typename f_t>
+void papilo_round_trip(simplex::user_problem_t<i_t, f_t>& problem);
 
 }  // namespace cuopt::mathematical_optimization::mip

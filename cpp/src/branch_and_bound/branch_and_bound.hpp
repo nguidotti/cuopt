@@ -25,6 +25,8 @@
 #include <dual_simplex/solve.hpp>
 #include <math_optimization/types.hpp>
 
+#include <mip_heuristics/feasibility_jump/fj_cpu_worker.cuh>
+
 #include <utilities/macros.cuh>
 #include <utilities/omp_helpers.hpp>
 #include <utilities/producer_sync.hpp>
@@ -42,29 +44,12 @@
 #include <vector>
 
 namespace cuopt::mathematical_optimization::mip {
+
 template <typename i_t, typename f_t>
 struct clique_table_t;
-}
-
-namespace cuopt::mathematical_optimization::mip {
 
 template <typename i_t, typename f_t>
 struct mip_symmetry_t;
-
-enum class mip_status_t {
-  OPTIMAL    = 0,  // The optimal integer solution was found
-  UNBOUNDED  = 1,  // The problem is unbounded
-  INFEASIBLE = 2,  // The problem is infeasible
-  TIME_LIMIT = 3,  // The solver reached a time limit
-  NODE_LIMIT = 4,  // The maximum number of nodes was reached (not implemented)
-  NUMERICAL  = 5,  // The solver encountered a numerical error
-  UNSET      = 6,  // The status is not set
-  WORK_LIMIT = 7,  // The solver reached a deterministic work limit
-  RESTART    = 8,  // The solver triggered a restart
-};
-
-template <typename i_t, typename f_t>
-void upper_bound_callback(f_t upper_bound);
 
 template <typename i_t, typename f_t>
 struct nondeterministic_policy_t;
@@ -81,13 +66,17 @@ class branch_and_bound_t {
   branch_and_bound_t(const simplex::user_problem_t<i_t, f_t>& user_problem,
                      const simplex::simplex_solver_settings_t<i_t, f_t>& solver_settings,
                      f_t start_time,
-                     std::atomic<int>* restart_concurrent_halt,
                      const probing_implied_bound_t<i_t, f_t>& probing_implied_bound,
                      std::shared_ptr<mip::clique_table_t<i_t, f_t>> clique_table = nullptr,
                      mip_symmetry_t<i_t, f_t>* symmetry                          = nullptr);
 
   // Set an initial guess based on the user_problem. This should be called before solve.
   void set_initial_guess(const std::vector<f_t>& user_guess) { guess_ = user_guess; }
+
+  void set_halt_callback(std::function<bool(f_t, f_t)> callback)
+  {
+    halt_callback_ = std::move(callback);
+  }
 
   // Set the root solution found by PDLP
   void set_root_relaxation_solution(const std::vector<f_t>& primal,
@@ -112,7 +101,10 @@ class branch_and_bound_t {
   }
 
   // Set a solution based on the user problem during the course of the solve
-  void set_solution_from_heuristics(const std::vector<f_t>& solution);
+  bool set_solution_from_heuristics(const std::vector<f_t>& solution, worker_type_t heuristic_type);
+
+  // Apply a solution found by a CPU FJ worker.
+  void set_solution_from_cpu_fj(f_t obj, const std::vector<f_t>& assignment, double work_units);
 
   // This queues the solution to be processed at the correct work unit timestamp
   void queue_external_solution_deterministic(const std::vector<f_t>& solution, double work_unit_ts);
@@ -127,6 +119,9 @@ class branch_and_bound_t {
   // Seed the global upper bound from an external source (e.g., early FJ during presolve).
   // `bound` must be in B&B's internal objective space.
   void set_initial_upper_bound(f_t bound);
+
+  void warm_start(const pseudo_costs_t<i_t, f_t>& parent_pc,
+                  const std::vector<i_t>& reduced_to_original);
 
   f_t get_upper_bound() const { return upper_bound_.load(); }
   bool has_solver_space_incumbent() const { return incumbent_.has_incumbent; }
@@ -153,6 +148,15 @@ class branch_and_bound_t {
   i_t find_reduced_cost_fixings(f_t upper_bound,
                                 std::vector<f_t>& lower_bounds,
                                 std::vector<f_t>& upper_bounds);
+
+  // Whether obj should replace the stored incumbent. Must be called under mutex_upper_.
+  // Compares against the stored incumbent's objective, NOT against upper_bound_, because
+  // set_initial_upper_bound can set a tighter bound from an OG-space solution that has no
+  // corresponding solver-space incumbent (e.g. papilo can't crush it back).
+  bool improves_incumbent(f_t obj) const
+  {
+    return !incumbent_.has_incumbent || obj < incumbent_.objective;
+  }
 
   // The main entry routine. Returns the solver status and populates solution with the incumbent.
   mip_status_t solve(simplex::mip_solution_t<i_t, f_t>& solution);
@@ -202,17 +206,12 @@ class branch_and_bound_t {
   // original-space in the mip_solver_context_t), but does NOT imply incumbent_.has_incumbent.
   omp_atomic_t<f_t> upper_bound_;
 
+  // Callback for halting the solver. This passes the current upper and lower bound of the solver
+  // in user space.
+  std::function<bool(f_t, f_t)> halt_callback_;
+
   // Solver-space incumbent tracked directly by B&B.
   simplex::mip_solution_t<i_t, f_t> incumbent_;
-
-  // Whether obj should replace the stored incumbent. Must be called under mutex_upper_.
-  // Compares against the stored incumbent's objective, NOT against upper_bound_, because
-  // set_initial_upper_bound can set a tighter bound from an OG-space solution that has no
-  // corresponding solver-space incumbent (e.g. papilo can't crush it back).
-  bool improves_incumbent(f_t obj) const
-  {
-    return !incumbent_.has_incumbent || obj < incumbent_.objective;
-  }
 
   // Structure with the general info of the solver.
   branch_and_bound_stats_t<i_t, f_t> exploration_stats_;
@@ -235,8 +234,8 @@ class branch_and_bound_t {
   bool enable_concurrent_lp_root_solve_{false};
   std::atomic<int> root_concurrent_halt_{0};
   std::atomic<int> node_concurrent_halt_{0};
-  std::atomic<int>* restart_concurrent_halt_{nullptr};
   bool is_root_solution_set{false};
+  bool root_warm_start_{false};
 
   // Pseudocosts
   pseudo_costs_t<i_t, f_t> pc_;
@@ -249,6 +248,9 @@ class branch_and_bound_t {
 
   // Worker pool dedicated to diving
   diving_worker_pool_t<i_t, f_t> diving_worker_pool_;
+
+  diving_worker_pool_t<i_t, f_t> submip_worker_pool_;
+  submip_stats_t submip_stats_;
 
   // Global status of the solver.
   omp_atomic_t<mip_status_t> solver_status_;
@@ -269,7 +271,7 @@ class branch_and_bound_t {
   f_t fixed_int_var_ratio_;
 
   void print_table_header();
-  void report_heuristic(f_t obj);
+  void report_heuristic(f_t obj, worker_type_t type);
   void report(char symbol,
               f_t obj,
               f_t lower_bound,
@@ -315,7 +317,7 @@ class branch_and_bound_t {
   void add_feasible_solution(f_t leaf_objective,
                              const std::vector<f_t>& leaf_solution,
                              i_t leaf_depth,
-                             search_strategy_t thread_type);
+                             worker_type_t thread_type);
 
   // Repairs low-quality solutions from the heuristics, if it is applicable.
   void repair_heuristic_solutions();
@@ -324,6 +326,14 @@ class branch_and_bound_t {
 
   // Launch a new diving worker from a given best-first worker.
   bool launch_diving_worker(bfs_worker_t<i_t, f_t>* bfs_worker);
+
+  // If the objective is integral or must move in steps than
+  // the lower bound will be different from the leaf objective.
+  // We use the leaf objective for RINS (on_optimal_callback)
+  // and if we are integer feasible (handle_integer_solution).
+  // We use the lower bound to decide if we should fathom the
+  // node or branch.
+  void apply_objective_step(mip_node_t<i_t, f_t>* node_ptr, f_t leaf_obj);
 
   // Launch a new best-first worker from a given bfs worker.
   void launch_bfs_worker(bfs_worker_t<i_t, f_t>* worker);
@@ -341,7 +351,21 @@ class branch_and_bound_t {
 
   // Perform a deep dive in the subtree determined by the `start_node` in order
   // to find integer feasible solutions.
-  void dive_with(diving_worker_t<i_t, f_t>* worker);
+  void dive_with(diving_worker_t<i_t, f_t>* worker, i_t backtrack_limit);
+
+  // Launch a new RINS/RENS worker
+  bool launch_local_branching_worker(const std::vector<f_t>& sol);
+
+  // Solve the RINS/RENS sub-MIP
+  void solve_submip(diving_worker_t<i_t, f_t>* worker,
+                    const std::vector<f_t>& current_incumbent,
+                    i_t num_var_fixed,
+                    i_t num_integers,
+                    i_t submip_level,
+                    std::string_view log_prefix);
+
+  // Creates and solves the RINS sub-MIP
+  void rins(diving_worker_t<i_t, f_t>* rins_worker, const std::vector<f_t>& node_solution);
 
   // Solve the LP relaxation of a leaf node
   simplex::dual_status_t solve_node_lp(mip_node_t<i_t, f_t>* node_ptr,

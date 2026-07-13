@@ -112,7 +112,8 @@ class sub_mip_recombiner_t : public recombiner_t<i_t, f_t> {
       branch_and_bound_settings.max_cut_passes                           = 0;
       branch_and_bound_settings.clique_cuts                              = 0;
       branch_and_bound_settings.zero_half_cuts                           = 0;
-      branch_and_bound_settings.sub_mip                                  = 1;
+      branch_and_bound_settings.inside_submip                            = 1;
+      branch_and_bound_settings.submip_settings.enable_rins              = false;
       branch_and_bound_settings.strong_branching_simplex_iteration_limit = 200;
       branch_and_bound_settings.solution_callback = [this](std::vector<f_t>& solution,
                                                            f_t objective) {
@@ -121,13 +122,9 @@ class sub_mip_recombiner_t : public recombiner_t<i_t, f_t> {
 
       // disable B&B logs, so that it is not interfering with the main B&B thread
       branch_and_bound_settings.log.log = false;
-      std::atomic<int> concurrent_halt  = 0;
       probing_implied_bound_t<i_t, f_t> empty_probing(branch_and_bound_problem.num_cols);
-      branch_and_bound_t<i_t, f_t> branch_and_bound(branch_and_bound_problem,
-                                                    branch_and_bound_settings,
-                                                    tic(),
-                                                    &concurrent_halt,
-                                                    empty_probing);
+      branch_and_bound_t<i_t, f_t> branch_and_bound(
+        branch_and_bound_problem, branch_and_bound_settings, tic(), empty_probing);
       branch_and_bound_status = branch_and_bound.solve(branch_and_bound_solution);
       if (solution_vector.size() > 0) {
         cuopt_assert(fixed_assignment.size() == branch_and_bound_solution.x.size(),
