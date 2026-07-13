@@ -1904,7 +1904,15 @@ bool flow_cover_generation_t<i_t, f_t>::build_single_node_flow_relaxation(
     const f_t coeff = scratch.binary_coefficients[j];
     if (std::abs(coeff) <= coefficient_tol) { continue; }
     const f_t u = std::abs(coeff);
-    scratch.arcs.push_back(flow_cover_build_arc(context, u, coeff < 0.0, j, 0.0, 0.0, -1, 0.0, u));
+    single_node_flow_arc_t<i_t, f_t> arc =
+      flow_cover_build_arc(context, u, coeff < 0.0, j, 0.0, 0.0, -1, 0.0, u);
+    // y_value is built from the raw LP value (u * xstar[j]) while x_value is clamped to [0, 1].
+    // When xstar[j] sits marginally below its bound (e.g. -5e-7, normal LP feasibility slop),
+    // y_value picks up a tiny negative (u * xstar) that trips the arc's lower gate even though the
+    // flow is really 0. Continuous-term arcs are already clamped this way above (see the
+    // `best->arc.y_value < 0.0` clamp); the binary arcs bypassed both the gate and the clamp.
+    if (arc.y_value < 0.0) { arc.y_value = 0.0; }
+    scratch.arcs.push_back(arc);
   }
 
   if (scratch.arcs.empty()) { return false; }
