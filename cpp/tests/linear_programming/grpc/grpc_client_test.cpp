@@ -16,12 +16,14 @@
 
 #include "grpc_client_test_helper.hpp"
 
-#include <cuopt/linear_programming/cpu_optimization_problem.hpp>
-#include <cuopt/linear_programming/cpu_optimization_problem_solution.hpp>
-#include <cuopt/linear_programming/mip/solver_settings.hpp>
-#include <cuopt/linear_programming/optimization_problem_interface.hpp>
-#include <cuopt/linear_programming/optimization_problem_utils.hpp>
-#include <cuopt/linear_programming/pdlp/solver_settings.hpp>
+#include <utilities/inline_lp_test_utils.hpp>
+
+#include <cuopt/mathematical_optimization/cpu_optimization_problem.hpp>
+#include <cuopt/mathematical_optimization/cpu_optimization_problem_solution.hpp>
+#include <cuopt/mathematical_optimization/mip/solver_settings.hpp>
+#include <cuopt/mathematical_optimization/optimization_problem_interface.hpp>
+#include <cuopt/mathematical_optimization/optimization_problem_utils.hpp>
+#include <cuopt/mathematical_optimization/pdlp/solver_settings.hpp>
 #include "grpc_client.hpp"
 #include "grpc_problem_mapper.hpp"
 #include "grpc_service_mapper.hpp"
@@ -36,7 +38,7 @@
 
 #include <map>
 
-using namespace cuopt::linear_programming;
+using namespace cuopt::mathematical_optimization;
 using namespace ::testing;
 
 /**
@@ -913,53 +915,35 @@ namespace {
 
 cpu_optimization_problem_t<int32_t, double> create_test_lp_problem()
 {
+  auto data = cuopt::test::parse_inline_lp(R"LP(
+Minimize
+  obj: x
+Subject To
+  c1: x >= 1
+Bounds
+  0 <= x <= 10
+End
+)LP");
   cpu_optimization_problem_t<int32_t, double> problem;
-
-  // minimize x  subject to x >= 1
-  std::vector<double> obj    = {1.0};
-  std::vector<double> var_lb = {0.0};
-  std::vector<double> var_ub = {10.0};
-  std::vector<double> con_lb = {1.0};
-  std::vector<double> con_ub = {1e20};
-  std::vector<double> A_vals = {1.0};
-  std::vector<int32_t> A_idx = {0};
-  std::vector<int32_t> A_off = {0, 1};
-
-  problem.set_objective_coefficients(obj.data(), 1);
-  problem.set_maximize(false);
-  problem.set_variable_lower_bounds(var_lb.data(), 1);
-  problem.set_variable_upper_bounds(var_ub.data(), 1);
-  problem.set_csr_constraint_matrix(A_vals.data(), 1, A_idx.data(), 1, A_off.data(), 2);
-  problem.set_constraint_lower_bounds(con_lb.data(), 1);
-  problem.set_constraint_upper_bounds(con_ub.data(), 1);
-
+  populate_from_mps_data_model(&problem, data);
   return problem;
 }
 
 cpu_optimization_problem_t<int32_t, double> create_test_mip_problem()
 {
+  auto data = cuopt::test::parse_inline_lp(R"LP(
+Minimize
+  obj: x
+Subject To
+  c1: x >= 1
+Bounds
+  0 <= x <= 10
+Generals
+  x
+End
+)LP");
   cpu_optimization_problem_t<int32_t, double> problem;
-
-  // minimize x  subject to x >= 1, x integer
-  std::vector<double> obj    = {1.0};
-  std::vector<double> var_lb = {0.0};
-  std::vector<double> var_ub = {10.0};
-  std::vector<var_t> var_ty  = {var_t::INTEGER};
-  std::vector<double> con_lb = {1.0};
-  std::vector<double> con_ub = {1e20};
-  std::vector<double> A_vals = {1.0};
-  std::vector<int32_t> A_idx = {0};
-  std::vector<int32_t> A_off = {0, 1};
-
-  problem.set_objective_coefficients(obj.data(), 1);
-  problem.set_maximize(false);
-  problem.set_variable_lower_bounds(var_lb.data(), 1);
-  problem.set_variable_upper_bounds(var_ub.data(), 1);
-  problem.set_variable_types(var_ty.data(), 1);
-  problem.set_csr_constraint_matrix(A_vals.data(), 1, A_idx.data(), 1, A_off.data(), 2);
-  problem.set_constraint_lower_bounds(con_lb.data(), 1);
-  problem.set_constraint_upper_bounds(con_ub.data(), 1);
-
+  populate_from_mps_data_model(&problem, data);
   return problem;
 }
 
@@ -2274,10 +2258,8 @@ namespace {
 
 using QC = optimization_problem_interface_t<int32_t, double>::quadratic_constraint_t;
 
-// Q is stored COO-style on quadratic_constraint_t: three parallel arrays
-// (rows, cols, vals) of the same length, one entry per non-zero in the
-// Q matrix block for this row.  Older CSR storage was replaced by the
-// SOCP barrier work upstream; the wire format renames track the struct.
+// Q is canonical COO: parallel (rows, cols, vals), one entry per variable pair
+// with row <= col (upper-triangular).
 QC make_qc(int32_t row_index,
            std::string name,
            char row_type,
@@ -2445,11 +2427,16 @@ TEST(MapperRoundtrip, QuadraticConstraintsChunkedPath)
     lv0[i] = 0.5 * i + 1.0;
     li0[i] = i;
   }
-  for (int i = 0; i < n0_q; ++i) {
-    qr0[i] = i % n0_linear;
-    qc0[i] = (i + 7) % n0_linear;
-    qv0[i] = -0.25 * i + 7.0;
+  // Upper-triangular unique pairs (row <= col); enough exist for n0_q entries.
+  int q_idx = 0;
+  for (int r = 0; r < n0_linear && q_idx < n0_q; ++r) {
+    for (int c = r; c < n0_linear && q_idx < n0_q; ++c, ++q_idx) {
+      qr0[q_idx] = r;
+      qc0[q_idx] = c;
+      qv0[q_idx] = -0.25 * q_idx + 7.125;
+    }
   }
+  ASSERT_EQ(q_idx, n0_q);
 
   std::vector<double> lv1(n1_linear);
   std::vector<int32_t> li1(n1_linear);
