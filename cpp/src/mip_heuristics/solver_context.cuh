@@ -76,9 +76,7 @@ struct mip_solver_context_t {
   std::vector<f_t> initial_incumbent_assignment{};
 
   // Symmetry information for orbital fixing during B&B. Null if no exploitable symmetry.
-  std::unique_ptr<mip_symmetry_t<i_t, f_t>> symmetry;
-
-  std::atomic<int> restart_concurrent_halt{0};
+  std::unique_ptr<mip::mip_symmetry_t<i_t, f_t>> symmetry;
 };
 
 }  // namespace cuopt::mathematical_optimization::mip

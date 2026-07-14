@@ -249,7 +249,6 @@ class pseudo_costs_t {
 
   std::shared_ptr<csc_matrix_t<i_t, f_t>> AT;  // Transpose of the constraint matrix A
   std::shared_ptr<batch_pdlp_warm_cache_t<i_t, f_t>> pdlp_warm_cache;
-  std::atomic<int>* concurrent_halt_;
 
   reliability_branching_settings_t<i_t, f_t> reliability_branching_settings;
   simplex::simplex_solver_settings_t<i_t, f_t> settings;
