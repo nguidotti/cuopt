@@ -302,7 +302,6 @@ branch_and_bound_t<i_t, f_t>::branch_and_bound_t(
   upper_bound_                 = inf;
   root_objective_              = std::numeric_limits<f_t>::quiet_NaN();
   root_lp_current_lower_bound_ = -inf;
-  pc_.concurrent_halt_         = &node_concurrent_halt_;
 }
 
 template <typename i_t, typename f_t>
@@ -2023,6 +2022,12 @@ void branch_and_bound_t<i_t, f_t>::best_first_search_with(bfs_worker_t<i_t, f_t>
     abs_gap     = compute_user_abs_gap(original_lp_, upper_bound_.load(), lower_bound);
     rel_gap     = user_relative_gap(user_obj, user_lower);
 
+    if (abs_gap <= settings_.absolute_mip_gap_tol || rel_gap <= settings_.relative_mip_gap_tol) {
+      node_concurrent_halt_ = 1;
+      solver_status_        = mip_status_t::OPTIMAL;
+      break;
+    }
+
     if (solver_status_ == mip_status_t::RESTART) { break; }
 
     // Steal a node with some probability or when it is empty. The victim is determined at random.
@@ -2031,13 +2036,19 @@ void branch_and_bound_t<i_t, f_t>::best_first_search_with(bfs_worker_t<i_t, f_t>
     }
   }
 
-  if (abs_gap <= settings_.absolute_mip_gap_tol || rel_gap <= settings_.relative_mip_gap_tol) {
-    node_concurrent_halt_ = 1;
-    solver_status_        = mip_status_t::OPTIMAL;
+  // If the worker has still nodes in the queue (this can happen if it was stopped due to
+  // time limit, small gap or other reason), then do not add back to the pool to avoid
+  // constantly trying to start it again
+  if (worker->node_queue.best_first_queue_size() == 0) {
+    bfs_worker_pool_.return_worker_to_pool(worker);
   }
 
-  bfs_worker_pool_.return_worker_to_pool(worker);
-  if (bfs_worker_pool_.num_idle() == bfs_worker_pool_.size()) is_running_ = false;
+  // We explore the entire tree and none worker is running. Set is_running_ to false to stop
+  // the submip.
+  if (exploration_stats_.nodes_unexplored == 0 &&
+      bfs_worker_pool_.num_idle() == bfs_worker_pool_.size()) {
+    is_running_ = false;
+  }
 }
 
 template <typename i_t, typename f_t>
@@ -2243,13 +2254,19 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
   submip_settings.strong_branching_simplex_iteration_limit = 50;
   submip_settings.submip_settings.level                    = submip_level;
   submip_settings.log.log                                  = false;
-  submip_settings.log.log_prefix                           = log_prefix;
+
+#ifdef DEBUG_SUBMIP
+  submip_settings.log.log_prefix = std::format("{}{}", settings_.log.log_prefix, worker->worker_id);
+  CUOPT_LOG_INFO("Writting submip %s to MPS file", submip_settings.log.log_prefix);
+  worker->leaf_problem.write_mps(std::format("submip-{}.mps", submip_settings.log.log_prefix),
+                                 var_types_);
+#else
+  submip_settings.log.log_prefix = log_prefix;
+#endif
 
   submip_settings.node_limit = settings_.submip_settings.node_limit_base + explored / 20;
-
   submip_settings.bnb_iteration_limit =
     exploration_stats_.total_simplex_iters * settings_.submip_settings.iteration_limit_ratio;
-
   submip_settings.time_limit = settings_.time_limit - toc(exploration_stats_.start_time);
   if (submip_settings.time_limit < 0) { return; }
 
