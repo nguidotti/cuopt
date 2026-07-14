@@ -823,6 +823,8 @@ void convert_user_problem(const user_problem_t<i_t, f_t>& user_problem,
                         user_problem.A.col_start[user_problem.num_cols]);
   }
 
+  new_slacks.clear();
+
   // Copy info from user_problem to problem
   problem.num_rows               = user_problem.num_rows;
   problem.num_cols               = user_problem.num_cols;

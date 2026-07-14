@@ -255,7 +255,7 @@ branch_and_bound_t<i_t, f_t>::branch_and_bound_t(
   const probing_implied_bound_t<i_t, f_t>& probing_implied_bound,
   std::shared_ptr<mip::clique_table_t<i_t, f_t>> clique_table,
   mip_symmetry_t<i_t, f_t>* symmetry)
-  : original_problem_(user_problem),
+  : user_problem_(user_problem),
     settings_(solver_settings),
     probing_implied_bound_(probing_implied_bound),
     clique_table_(std::move(clique_table)),
@@ -271,13 +271,12 @@ branch_and_bound_t<i_t, f_t>::branch_and_bound_t(
   exploration_stats_.start_time = start_time;
 #ifdef PRINT_CONSTRAINT_MATRIX
   settings_.log.printf("A");
-  original_problem_.A.print_matrix();
+  user_problem_.A.print_matrix();
 #endif
 
   simplex::dualize_info_t<i_t, f_t> dualize_info;
-  simplex::convert_user_problem(
-    original_problem_, settings_, original_lp_, new_slacks_, dualize_info);
-  full_variable_types(original_problem_, original_lp_, var_types_);
+  simplex::convert_user_problem(user_problem_, settings_, original_lp_, new_slacks_, dualize_info);
+  full_variable_types(user_problem_, original_lp_, var_types_);
 
   // Check slack
 #ifdef CHECK_SLACKS
@@ -507,13 +506,13 @@ bool branch_and_bound_t<i_t, f_t>::set_solution_from_heuristics(const std::vecto
                                                                 worker_type_t heuristic_type)
 {
   mutex_original_lp_.lock();
-  if (solution.size() != original_problem_.num_cols) {
+  if (solution.size() != user_problem_.num_cols) {
     settings_.log.printf(
-      "Solution size mismatch %ld %d\n", solution.size(), original_problem_.num_cols);
+      "Solution size mismatch %ld %d\n", solution.size(), user_problem_.num_cols);
   }
   std::vector<f_t> crushed_solution;
   crush_primal_solution<i_t, f_t>(
-    original_problem_, original_lp_, solution, new_slacks_, crushed_solution);
+    user_problem_, original_lp_, solution, new_slacks_, crushed_solution);
   f_t obj = compute_objective(original_lp_, crushed_solution);
 
   mutex_original_lp_.unlock();
@@ -534,7 +533,7 @@ bool branch_and_bound_t<i_t, f_t>::set_solution_from_heuristics(const std::vecto
       // original problem has been modified since the solution was crushed
       // we need to re-crush the solution
       crush_primal_solution<i_t, f_t>(
-        original_problem_, original_lp_, solution, new_slacks_, crushed_solution);
+        user_problem_, original_lp_, solution, new_slacks_, crushed_solution);
     }
     is_feasible = check_guess(
       original_lp_, settings_, var_types_, crushed_solution, primal_err, bound_err, num_fractional);
@@ -582,16 +581,16 @@ void branch_and_bound_t<i_t, f_t>::queue_external_solution_deterministic(
   // In deterministic mode, queue the solution to be processed at the correct work unit timestamp
   // This ensures deterministic ordering of solution events
 
-  if (solution.size() != original_problem_.num_cols) {
+  if (solution.size() != user_problem_.num_cols) {
     settings_.log.printf(
-      "Solution size mismatch %ld %d\n", solution.size(), original_problem_.num_cols);
+      "Solution size mismatch %ld %d\n", solution.size(), user_problem_.num_cols);
     return;
   }
 
   mutex_original_lp_.lock();
   std::vector<f_t> crushed_solution;
   crush_primal_solution<i_t, f_t>(
-    original_problem_, original_lp_, solution, new_slacks_, crushed_solution);
+    user_problem_, original_lp_, solution, new_slacks_, crushed_solution);
   f_t obj = compute_objective(original_lp_, crushed_solution);
 
   // Validate solution before queueing
@@ -625,7 +624,7 @@ void branch_and_bound_t<i_t, f_t>::set_solution_from_cpu_fj(f_t obj,
 {
   std::vector<f_t> user_assignment;
   mutex_original_lp_.lock();
-  uncrush_primal_solution(original_problem_, original_lp_, assignment, user_assignment);
+  uncrush_primal_solution(user_problem_, original_lp_, assignment, user_assignment);
   mutex_original_lp_.unlock();
   settings_.log.debug_format("CPUFJ found solution with objective {:.16e}\n", obj);
   // In deterministic mode the solution must be ordered by its work-unit timestamp so
@@ -722,7 +721,7 @@ void branch_and_bound_t<i_t, f_t>::repair_heuristic_solutions()
     for (const std::vector<f_t>& uncrushed_solution : to_repair) {
       std::vector<f_t> crushed_solution;
       crush_primal_solution<i_t, f_t>(
-        original_problem_, original_lp_, uncrushed_solution, new_slacks_, crushed_solution);
+        user_problem_, original_lp_, uncrushed_solution, new_slacks_, crushed_solution);
       std::vector<f_t> repaired_solution;
       f_t repaired_obj;
       bool is_feasible =
@@ -737,7 +736,7 @@ void branch_and_bound_t<i_t, f_t>::repair_heuristic_solutions()
 
           if (settings_.solution_callback != nullptr) {
             std::vector<f_t> original_x;
-            uncrush_primal_solution(original_problem_, original_lp_, repaired_solution, original_x);
+            uncrush_primal_solution(user_problem_, original_lp_, repaired_solution, original_x);
             settings_.solution_callback(original_x, repaired_obj);
           }
         }
@@ -760,7 +759,7 @@ void branch_and_bound_t<i_t, f_t>::set_solution_at_root(mip_solution_t<i_t, f_t>
   print_cut_info(settings_, cut_info);
 
   // We should be done here
-  uncrush_primal_solution(original_problem_, original_lp_, incumbent_.x, solution.x);
+  uncrush_primal_solution(user_problem_, original_lp_, incumbent_.x, solution.x);
   solution.objective          = incumbent_.objective;
   solution.lower_bound        = root_objective_;
   solution.nodes_explored     = 0;
@@ -867,7 +866,7 @@ void branch_and_bound_t<i_t, f_t>::set_final_solution(mip_solution_t<i_t, f_t>& 
   }
 
   if (has_solver_space_incumbent()) {
-    uncrush_primal_solution(original_problem_, original_lp_, incumbent_.x, solution.x);
+    uncrush_primal_solution(user_problem_, original_lp_, incumbent_.x, solution.x);
     solution.objective     = incumbent_.objective;
     solution.has_incumbent = true;
   }
@@ -903,7 +902,7 @@ void branch_and_bound_t<i_t, f_t>::add_feasible_solution(f_t leaf_objective,
 
   if (send_solution && settings_.solution_callback != nullptr) {
     std::vector<f_t> original_x;
-    uncrush_primal_solution(original_problem_, original_lp_, incumbent_.x, original_x);
+    uncrush_primal_solution(user_problem_, original_lp_, incumbent_.x, original_x);
     settings_.solution_callback(original_x, leaf_objective);
   }
   mutex_upper_.unlock();
@@ -2285,7 +2284,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
     exploration_stats_.total_simplex_iters.load(),
     submip_settings.relative_mip_gap_tol);
 
-  user_problem_t<i_t, f_t> submip_problem(original_problem_.handle_ptr);
+  user_problem_t<i_t, f_t> submip_problem(user_problem_.handle_ptr);
   simplex::convert_simplex_problem(
     worker->leaf_problem, var_types_, settings_, new_slacks_, submip_problem);
 
@@ -2324,7 +2323,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
       }
     }
 
-    std::vector<f_t> full_sol(original_problem_.num_cols);
+    std::vector<f_t> full_sol(user_problem_.num_cols);
     presolver.uncrush_primal_solution(reduced_sol, full_sol);
     bool success = set_solution_from_heuristics(full_sol, SUBMIP);
     if (success) submip_stats_.save_success(fixrate);
@@ -2336,7 +2335,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
   submip_settings.set_simplex_solution_callback   = nullptr;
   submip_settings.solution_callback = [this, fixrate, &presolver](std::vector<f_t>& solution,
                                                                   f_t obj) {
-    std::vector<f_t> full_sol(original_problem_.num_cols);
+    std::vector<f_t> full_sol(user_problem_.num_cols);
     presolver.uncrush_primal_solution(solution, full_sol);
     settings_.log.debug_format("SubMIP found a feasible solution with obj={:.4g}", obj);
     bool success = set_solution_from_heuristics(full_sol, SUBMIP);
@@ -2356,7 +2355,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
   // added.
   std::vector<f_t> uncrushed_incumbent;
   mutex_original_lp_.lock();
-  uncrush_primal_solution(original_problem_, original_lp_, current_incumbent, uncrushed_incumbent);
+  uncrush_primal_solution(user_problem_, original_lp_, current_incumbent, uncrushed_incumbent);
   mutex_original_lp_.unlock();
 
   // Crush the incumbent to presolve space. It may not be valid for the sub-MIP since we
@@ -2428,7 +2427,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
   }
 
   if (submip_solution.has_incumbent) {
-    std::vector<f_t> full_sol(original_problem_.num_cols);
+    std::vector<f_t> full_sol(user_problem_.num_cols);
     presolver.uncrush_primal_solution(submip_solution.x, full_sol);
     bool success = set_solution_from_heuristics(full_sol, SUBMIP);
     if (success) submip_stats_.save_success(fixrate);
@@ -2773,11 +2772,11 @@ lp_status_t branch_and_bound_t<i_t, f_t>::solve_root_relaxation(
     // Crush the root relaxation solution on converted user problem
     std::vector<f_t> crushed_root_x;
     crush_primal_solution(
-      original_problem_, original_lp_, root_crossover_soln_.x, new_slacks_, crushed_root_x);
+      user_problem_, original_lp_, root_crossover_soln_.x, new_slacks_, crushed_root_x);
     std::vector<f_t> crushed_root_y;
     std::vector<f_t> crushed_root_z;
 
-    f_t dual_res_inf = simplex::crush_dual_solution(original_problem_,
+    f_t dual_res_inf = simplex::crush_dual_solution(user_problem_,
                                                     original_lp_,
                                                     new_slacks_,
                                                     root_crossover_soln_.y,
@@ -3183,7 +3182,6 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   log.log_prefix                          = settings_.log.log_prefix;
   solver_status_                          = mip_status_t::UNSET;
   is_running_                             = false;
-  restart_count_                          = 0;
   min_node_queue_size_                    = 20;
   root_lp_current_lower_bound_            = -inf;
   exploration_stats_.nodes_unexplored     = 0;
@@ -3200,7 +3198,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   if (guess_.size() != 0) {
     raft::common::nvtx::range scope_guess("BB::check_initial_guess");
     std::vector<f_t> crushed_guess;
-    crush_primal_solution(original_problem_, original_lp_, guess_, new_slacks_, crushed_guess);
+    crush_primal_solution(user_problem_, original_lp_, guess_, new_slacks_, crushed_guess);
     f_t primal_err;
     f_t bound_err;
     i_t num_fractional;
@@ -3236,7 +3234,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 #pragma omp task priority(CUOPT_DEFAULT_TASK_PRIORITY) depend(out : *clique_signal) \
   firstprivate(tolerances_for_clique)
     {
-      user_problem_t<i_t, f_t> problem_copy = original_problem_;
+      user_problem_t<i_t, f_t> problem_copy = user_problem_;
       timer_t timer(std::numeric_limits<double>::infinity());
       mip::find_initial_cliques(
         problem_copy, tolerances_for_clique, clique_table_, timer, clique_signal);
@@ -3350,12 +3348,12 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 
   root_objective_ = compute_objective(original_lp_, root_relax_soln_.x);
 
-  if (settings_.set_simplex_solution_callback != nullptr) {
+  if (restart_count_ == 0 && settings_.set_simplex_solution_callback != nullptr) {
     std::vector<f_t> original_x;
-    uncrush_primal_solution(original_problem_, original_lp_, root_relax_soln_.x, original_x);
+    uncrush_primal_solution(user_problem_, original_lp_, root_relax_soln_.x, original_x);
     std::vector<f_t> original_dual;
     std::vector<f_t> original_z;
-    simplex::uncrush_dual_solution(original_problem_,
+    simplex::uncrush_dual_solution(user_problem_,
                                    original_lp_,
                                    root_relax_soln_.y,
                                    root_relax_soln_.z,
@@ -3394,7 +3392,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                                             Arow_,
                                             new_slacks_,
                                             var_types_,
-                                            original_problem_,
+                                            user_problem_,
                                             probing_implied_bound_,
                                             clique_table_,
                                             clique_signal);
@@ -3685,11 +3683,10 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   if (settings_.diving_settings.coefficient_diving != 0) {
     calculate_variable_locks(original_lp_, var_up_locks_, var_down_locks_);
   }
-  print_table_header();
 
-  if (restart_count_ == 0) {
-    settings_.log.printf("Exploring the B&B tree using %d threads\n\n", settings_.num_threads);
-  }
+  settings_.log.printf("Exploring the B&B tree using %d threads\n\n", settings_.num_threads);
+
+  print_table_header();
 
 #pragma omp taskgroup
   {
@@ -3701,6 +3698,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
       const i_t num_submip_workers = std::max(num_workers / 8, 1);
       const i_t num_diving_workers =
         std::max(num_workers - num_bfs_workers - num_submip_workers, 1);
+
       bfs_worker_pool_.init(num_bfs_workers, original_lp_, Arow_, var_types_, symmetry_, settings_);
       submip_worker_pool_.init(
         num_submip_workers, original_lp_, Arow_, var_types_, symmetry_, settings_, num_bfs_workers);
@@ -3728,17 +3726,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   is_running_ = false;
   settings_.log.printf("\n");
 
-  if (solver_status_ == mip_status_t::RESTART) {
-    settings_.log.printf("\nRestarting B&B after %.2fs and %d nodes\n",
-                         toc(exploration_stats_.start_time),
-                         exploration_stats_.nodes_explored.load());
-    search_tree_.clean();
-    bfs_worker_pool_.reset();
-    diving_worker_pool_.reset();
-    submip_worker_pool_.reset();
-
-    ++restart_count_;
-  } else {
+  if (solver_status_ != mip_status_t::RESTART) {
     // Compute final lower bound
     f_t lower_bound;
     if (deterministic_mode_enabled_) {
@@ -3768,6 +3756,189 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     }
 
     set_final_solution(solution, lower_bound);
+  }
+
+  return solver_status_;
+}
+
+template <typename i_t, typename f_t>
+class presolver_t {
+ public:
+  mip_status_t apply(user_problem_t<i_t, f_t>& user_problem,
+                     const simplex_solver_settings_t<i_t, f_t>& settings)
+  {
+    original_ncols = user_problem.num_cols;
+    original_nrows = user_problem.num_rows;
+
+    f_t presolve_time_limit = std::min(0.1 * settings.time_limit, 60.0);
+    third_party_presolve_status_t presolver_status =
+      presolver.apply(user_problem, settings, presolve_time_limit, settings.num_threads);
+
+    if (presolver_status == third_party_presolve_status_t::INFEASIBLE ||
+        presolver_status == third_party_presolve_status_t::UNBNDORINFEAS ||
+        presolver_status == third_party_presolve_status_t::UNBOUNDED) {
+      settings.log.printf("The problem is infeasible after presolve.");
+      return mip_status_t::INFEASIBLE;
+    }
+
+    return mip_status_t::UNSET;
+  }
+
+  f_t trivial_problem(user_problem_t<i_t, f_t>& user_problem,
+                      const simplex_solver_settings_t<i_t, f_t>& settings,
+                      std::vector<f_t>& full_sol)
+  {
+    settings.log.print_format("Reduced to a trivial {} x {} problem; solving by bound pushing",
+                              user_problem.num_rows,
+                              user_problem.num_cols);
+
+    f_t obj = 0.0;
+    std::vector<f_t> reduced_sol(user_problem.num_cols);
+
+    for (i_t j = 0; j < user_problem.num_cols; ++j) {
+      const f_t c = user_problem.objective[j];
+      const f_t l = user_problem.lower[j];
+      const f_t u = user_problem.upper[j];
+      // Minimize c_j x_j over [l, u]; fall back to any finite bound (0 if both are infinite).
+      if (c < -settings.zero_tol) {
+        reduced_sol[j] = std::isfinite(u) ? u : (std::isfinite(l) ? l : 0);
+      } else {
+        reduced_sol[j] = std::isfinite(l) ? l : (std::isfinite(u) ? u : 0);
+      }
+
+      obj += reduced_sol[j] * c;
+    }
+
+    uncrush_solution(reduced_sol, full_sol);
+    return user_problem.obj_constant + user_problem.obj_scale * obj;
+  }
+
+  void uncrush_solution(const std::vector<f_t>& reduced_sol, std::vector<f_t>& full_sol)
+  {
+    full_sol.resize(original_ncols);
+    presolver.uncrush_primal_solution(reduced_sol, full_sol);
+  }
+
+  void crush_solution(const std::vector<f_t>& full_sol, std::vector<f_t>& reduced_sol)
+  {
+    presolver.crush_primal_solution(full_sol, reduced_sol);
+  }
+
+  const std::vector<i_t>& get_reduced_to_original_map()
+  {
+    return presolver.get_reduced_to_original_map();
+  }
+
+ private:
+  third_party_presolve_t<i_t, f_t> presolver;
+  i_t original_nrows;
+  i_t original_ncols;
+};
+
+template <typename i_t, typename f_t>
+mip_status_t branch_and_bound_t<i_t, f_t>::solve_with_restarts(mip_solution_t<i_t, f_t>& solution)
+{
+  mip_solution_t<i_t, f_t> restart_sol(1);
+  std::vector<presolver_t<i_t, f_t>> presolver_stack;
+  solver_status_ = mip_status_t::UNSET;
+  restart_count_ = 0;
+
+  do {
+    if (solver_status_ == mip_status_t::RESTART) {
+      settings_.log.printf("\nRestarting B&B after %.2fs and %d nodes\n",
+                           toc(exploration_stats_.start_time),
+                           exploration_stats_.nodes_explored.load());
+
+      simplex::convert_simplex_problem(
+        original_lp_, var_types_, settings_, new_slacks_, user_problem_);
+
+      presolver_t<i_t, f_t> presolver;
+      mip_status_t presolve_status = presolver.apply(user_problem_, settings_);
+      if (presolve_status == mip_status_t::INFEASIBLE) {
+        solver_status_ = mip_status_t::INFEASIBLE;
+        break;
+      }
+
+      // Also handle optimal
+      if (user_problem_.num_rows == 0 || user_problem_.num_cols == 0) {
+        f_t obj = presolver.trivial_problem(user_problem_, settings_, restart_sol.x);
+
+        settings_.log.print_format("The problem is fully reduced after presolve. Obj={:.8e}", obj);
+
+        restart_sol.objective          = obj;
+        restart_sol.has_incumbent      = true;
+        restart_sol.lower_bound        = obj;
+        restart_sol.nodes_explored     = exploration_stats_.total_nodes_explored;
+        restart_sol.simplex_iterations = exploration_stats_.total_simplex_iters;
+        solver_status_                 = mip_status_t::OPTIMAL;
+        break;
+      }
+
+      simplex::dualize_info_t<i_t, f_t> dualize_info;
+      simplex::convert_user_problem(
+        user_problem_, settings_, original_lp_, new_slacks_, dualize_info);
+      full_variable_types(user_problem_, original_lp_, var_types_);
+
+      // Check slack
+#ifdef CHECK_SLACKS
+      assert(new_slacks_.size() == original_lp_.num_rows);
+      for (i_t slack : new_slacks_) {
+        const i_t col_start = original_lp_.A.col_start[slack];
+        const i_t col_end   = original_lp_.A.col_start[slack + 1];
+        const i_t col_len   = col_end - col_start;
+        if (col_len != 1) {
+          settings_.log.printf("Slack %d has %d nzs\n", slack, col_len);
+          assert(col_len == 1);
+        }
+        const i_t i = original_lp_.A.i[col_start];
+        const f_t x = original_lp_.A.x[col_start];
+        if (std::abs(x) != 1.0) {
+          settings_.log.printf("Slack %d row %d has non-unit coefficient %e\n", slack, i, x);
+          assert(std::abs(x) == 1.0);
+        }
+      }
+#endif
+
+      // Map the current incumbent to the user space, removing the variables related to the
+      // slacks/cuts added.
+      std::vector<f_t> uncrushed_incumbent;
+      mutex_original_lp_.lock();
+      uncrush_primal_solution(user_problem_, original_lp_, incumbent_.x, uncrushed_incumbent);
+      mutex_original_lp_.unlock();
+
+      // Crush the incumbent to presolve space. It may not be valid for the sub-MIP since we
+      // may fix integer variables that does not match the current incumbent to reach the target
+      // fix rate.
+      std::vector<f_t> presolved_incumbent;
+      presolver.crush_solution(uncrushed_incumbent, presolved_incumbent);
+      this->set_initial_guess(presolved_incumbent);
+      this->set_initial_upper_bound(upper_bound_.load());
+
+      this->warm_start(this->pc_, presolver.get_reduced_to_original_map());
+
+      ++restart_count_;
+      search_tree_.clean();
+      bfs_worker_pool_.reset();
+      diving_worker_pool_.reset();
+      submip_worker_pool_.reset();
+      node_concurrent_halt_ = 0;
+      root_concurrent_halt_ = 0;
+      set_concurrent_lp_root_solve(false);
+
+      presolver_stack.emplace_back(std::move(presolver));
+    }
+
+    restart_sol.resize(user_problem_.num_cols);
+    this->solve(restart_sol);
+
+  } while (solver_status_ == mip_status_t::RESTART);
+
+  solution = restart_sol;
+  if (restart_sol.has_incumbent) {
+    for (i_t i = presolver_stack.size() - 1; i >= 0; --i) {
+      std::vector<f_t> reduced_sol = solution.x;
+      presolver_stack[i].uncrush_solution(reduced_sol, solution.x);
+    }
   }
 
   return solver_status_;
@@ -4401,7 +4572,7 @@ void branch_and_bound_t<i_t, f_t>::deterministic_process_worker_solutions(
 
       if (improved && settings_.solution_callback != nullptr) {
         std::vector<f_t> original_x;
-        uncrush_primal_solution(original_problem_, original_lp_, sol->solution, original_x);
+        uncrush_primal_solution(user_problem_, original_lp_, sol->solution, original_x);
         settings_.solution_callback(original_x, sol->objective);
       }
     }
@@ -4467,7 +4638,7 @@ void branch_and_bound_t<i_t, f_t>::deterministic_sort_replay_events(
       for (const std::vector<f_t>& uncrushed_solution : to_repair) {
         std::vector<f_t> crushed_solution;
         crush_primal_solution<i_t, f_t>(
-          original_problem_, original_lp_, uncrushed_solution, new_slacks_, crushed_solution);
+          user_problem_, original_lp_, uncrushed_solution, new_slacks_, crushed_solution);
         std::vector<f_t> repaired_solution;
         f_t repaired_obj;
         bool success =
@@ -4567,7 +4738,7 @@ void branch_and_bound_t<i_t, f_t>::deterministic_sort_replay_events(
 
         if (settings_.solution_callback != nullptr) {
           std::vector<f_t> original_x;
-          uncrush_primal_solution(original_problem_, original_lp_, hsol.solution, original_x);
+          uncrush_primal_solution(user_problem_, original_lp_, hsol.solution, original_x);
           settings_.solution_callback(original_x, hsol.objective);
         }
       }

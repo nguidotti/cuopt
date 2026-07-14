@@ -1050,7 +1050,7 @@ third_party_presolve_status_t third_party_presolve_t<i_t, f_t>::apply(
 
   papilo::Problem<f_t> papilo_problem = build_papilo_problem(problem);
 
-  settings.log.printf("Sub-MIP presolve input: %d constraints, %d variables, %d nonzeros",
+  settings.log.printf("Presolve input: %d constraints, %d variables, %d nonzeros",
                       papilo_problem.getNRows(),
                       papilo_problem.getNCols(),
                       papilo_problem.getConstraintMatrix().getNnz());
@@ -1084,7 +1084,7 @@ third_party_presolve_status_t third_party_presolve_t<i_t, f_t>::apply(
   const i_t reduced_rows = papilo_problem.getNRows();
   const i_t reduced_cols = papilo_problem.getNCols();
   const i_t reduced_nnz  = papilo_problem.getConstraintMatrix().getNnz();
-  settings.log.printf("Sub-MIP presolve removed: %d constraints, %d variables, %d nonzeros",
+  settings.log.printf("Presolve removed: %d constraints, %d variables, %d nonzeros",
                       orig_rows - reduced_rows,
                       orig_cols - reduced_cols,
                       orig_nnz - reduced_nnz);

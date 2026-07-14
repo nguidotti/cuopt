@@ -94,12 +94,8 @@ class worker_pool_t {
   void reset()
   {
     std::lock_guard lock(mutex_);
-    num_idle_workers_ = workers_.size();
-    idle_workers_.clear_resize(workers_.size());
-    for (i_t i = 0; i < workers_.size(); ++i) {
-      workers_[i]->reset_state();
-      idle_workers_.push_back(i);
-    }
+    workers_.clear();
+    is_initialized_ = false;
   }
 
  private:

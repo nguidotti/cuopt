@@ -161,13 +161,15 @@ class branch_and_bound_t {
   // The main entry routine. Returns the solver status and populates solution with the incumbent.
   mip_status_t solve(simplex::mip_solution_t<i_t, f_t>& solution);
 
+  mip_status_t solve_with_restarts(simplex::mip_solution_t<i_t, f_t>& solution);
+
   work_limit_context_t& get_work_unit_context() { return work_unit_context_; }
 
   // Get producer sync for external heuristics (e.g., CPUFJ) to register
   producer_sync_t& get_producer_sync() { return producer_sync_; }
 
  private:
-  const simplex::user_problem_t<i_t, f_t>& original_problem_;
+  simplex::user_problem_t<i_t, f_t> user_problem_;
   const simplex::simplex_solver_settings_t<i_t, f_t> settings_;
   const probing_implied_bound_t<i_t, f_t>& probing_implied_bound_;
   std::shared_ptr<mip::clique_table_t<i_t, f_t>> clique_table_;
