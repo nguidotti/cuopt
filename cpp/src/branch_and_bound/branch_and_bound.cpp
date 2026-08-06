@@ -277,6 +277,8 @@ branch_and_bound_t<i_t, f_t>::branch_and_bound_t(
     solver_status_(mip_status_t::UNSET)
 {
   exploration_stats_.start_time = start_time;
+  restart_count_                = 0;
+  fixed_int_var_ratio_          = 0;
 #ifdef PRINT_CONSTRAINT_MATRIX
   settings_.log.printf("A");
   original_problem_.A.print_matrix();
@@ -1650,6 +1652,66 @@ dual_status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(
 }
 
 template <typename i_t, typename f_t>
+bool branch_and_bound_t<i_t, f_t>::should_restart(f_t current_abs_gap)
+{
+  mip_restart_hyper_params_t<i_t, f_t> restart_settings = settings_.restart_settings;
+
+  if (settings_.inside_submip || !std::isfinite(current_abs_gap) ||
+      restart_count_ >= settings_.restart_settings.max_restarts)
+    return false;
+
+  int64_t num_nodes = exploration_stats_.nodes_explored;
+  if (num_nodes < restart_settings.min_nodes || num_nodes < exploration_stats_.restart_next_check)
+    return false;
+
+  int64_t nodes_since_last_check = num_nodes - exploration_stats_.restart_nodes_at_last_check;
+  i_t num_leaves                 = search_tree_.num_final_nodes;
+  f_t current_progress           = search_tree_.progress;
+  f_t progress_since_last_check =
+    std::max(current_progress - exploration_stats_.restart_progress_at_last_check, 1E-6);
+  int64_t tree_size_estimate =
+    exploration_stats_.restart_nodes_at_last_check +
+    nodes_since_last_check * (1.0 - current_progress) / progress_since_last_check;
+
+  f_t active_ratio  = std::pow(1 - fixed_int_var_ratio_, 2);
+  f_t gap_reduction = exploration_stats_.restart_gap_at_last_check / current_abs_gap;
+
+  if (gap_reduction < 1 + restart_settings.max_gap_improvement / active_ratio &&
+      tree_size_estimate >= restart_settings.tree_size_multiple * num_nodes * active_ratio) {
+    ++exploration_stats_.restart_huge_tree_count;
+    exploration_stats_.restart_next_check = num_nodes + restart_settings.check_freq;
+
+    i_t min_count          = restart_settings.min_huge_tree_estimates;
+    f_t threshold_node     = num_leaves * restart_settings.threshold_grow_per_leaf;
+    f_t threshold_restarts = std::pow(restart_settings.threshold_grow_per_restart, restart_count_);
+    i_t threshold = std::ceil(active_ratio * (min_count + threshold_node) * threshold_restarts);
+
+    settings_.log.debug_format(
+      "[Restart] {} Current: explored={}, progress={:.4g}, gap={:.4g}. Since last check: "
+      "explored={}, "
+      "progress={:.4g}, gap_ratio={:.4g}. Tree size={}. Threshold={}",
+      exploration_stats_.restart_huge_tree_count,
+      num_nodes,
+      current_progress,
+      current_abs_gap,
+      nodes_since_last_check,
+      progress_since_last_check,
+      gap_reduction,
+      tree_size_estimate,
+      threshold);
+
+    return exploration_stats_.restart_huge_tree_count >= threshold;
+  }
+
+  exploration_stats_.restart_huge_tree_count        = 0;
+  exploration_stats_.restart_gap_at_last_check      = current_abs_gap;
+  exploration_stats_.restart_progress_at_last_check = current_progress;
+  exploration_stats_.restart_nodes_at_last_check    = num_nodes;
+  exploration_stats_.restart_next_check             = num_nodes;
+  return false;
+}
+
+template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
                                                mip_node_t<i_t, f_t>* start_node)
 {
@@ -1676,7 +1738,14 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
 
   while (stack.size() > 0 && (solver_status_ == mip_status_t::UNSET && is_running_) &&
          rel_gap > settings_.relative_mip_gap_tol && abs_gap > settings_.absolute_mip_gap_tol) {
-    if (worker->worker_id == 0) { repair_heuristic_solutions(); }
+    if (worker->worker_id == 0) {
+      if (should_restart(abs_gap)) {
+        solver_status_ = mip_status_t::RESTART;
+        break;
+      }
+
+      repair_heuristic_solutions();
+    }
 
     if (worker->active_diving_workers < worker->max_diving_workers &&
         worker->node_queue.diving_queue_size() > 0) {

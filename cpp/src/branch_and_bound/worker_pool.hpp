@@ -91,6 +91,15 @@ class worker_pool_t {
   i_t num_idle() const { return num_idle_workers_; }
   i_t size() const { return workers_.size(); }
 
+  // Destroy every worker so the pool can be re-initialized (via init) against the
+  // fresh problem after a restart.
+  void reset()
+  {
+    std::lock_guard lock(mutex_);
+    workers_.clear();
+    is_initialized_ = false;
+  }
+
  private:
   std::vector<std::unique_ptr<WorkerType>> workers_;
   bool is_initialized_ = false;

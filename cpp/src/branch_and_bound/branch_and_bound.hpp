@@ -56,7 +56,8 @@ enum class mip_status_t {
   NUMERICAL       = 6,  // The solver encountered a numerical error
   UNSET           = 7,  // The status is not set
   WORK_LIMIT      = 8,  // The solver reached a deterministic work limit
-  SUBMIP_HALT     = 9   // Halt the solver
+  SUBMIP_HALT     = 9,  // Halt the solver
+  RESTART         = 10  // The solver triggered a restart
 };
 
 inline std::string mip_status_to_string(mip_status_t status)
@@ -72,6 +73,7 @@ inline std::string mip_status_to_string(mip_status_t status)
     case mip_status_t::UNSET: return "UNSET";
     case mip_status_t::WORK_LIMIT: return "WORK_LIMIT";
     case mip_status_t::SUBMIP_HALT: return "SUBMIP_HALT";
+    case mip_status_t::RESTART: return "RESTART";
   }
   return "UNKNOWN";
 }
@@ -286,6 +288,12 @@ class branch_and_bound_t {
   // the local stack. This also determines the end of the ramp-up phase.
   i_t min_node_queue_size_;
 
+  // Number of restarts performed so far in the current solve.
+  i_t restart_count_;
+
+  // Ratio of integer variables fixed at the root.
+  f_t fixed_int_var_ratio_;
+
   // In case, a best-first thread encounters a numerical issue when solving a node,
   // its blocks the progression of the lower bound as it cannot explore the
   // corresponding subtree.
@@ -343,6 +351,9 @@ class branch_and_bound_t {
 
   // Repairs low-quality solutions from the heuristics, if it is applicable.
   void repair_heuristic_solutions();
+
+  // Decide whether the B&B search should restart based on a tree-size and gap progression
+  bool should_restart(f_t current_abs_gap);
 
   // Launch a new diving worker from a given best-first worker.
   bool launch_diving_worker(bfs_worker_t<i_t, f_t>* bfs_worker);

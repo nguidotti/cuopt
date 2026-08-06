@@ -35,6 +35,12 @@ struct branch_and_bound_stats_t {
   omp_atomic_t<i_t> nodes_since_last_log    = 0;
   omp_atomic_t<f_t> last_log                = 0.0;
 
+  int64_t restart_nodes_at_last_check = 0;
+  f_t restart_progress_at_last_check  = 0;
+  f_t restart_gap_at_last_check       = 0;
+  i_t restart_huge_tree_count         = 0;
+  int64_t restart_next_check          = 0;
+
   omp_atomic_t<int64_t> orbital_fixing_nodes              = 0;
   omp_atomic_t<int64_t> orbital_fixings_applied           = 0;
   omp_atomic_t<int64_t> orbital_conflict_nodes            = 0;

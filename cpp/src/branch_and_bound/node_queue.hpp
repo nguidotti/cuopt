@@ -62,7 +62,7 @@ class heap_t {
 
   void clear()
   {
-    buffer.clear();
+    buffer       = {};
     num_entries_ = 0;
   }
 
@@ -155,6 +155,13 @@ class node_queue_t {
   f_t get_lower_bound()
   {
     return best_first_heap_.empty() ? std::numeric_limits<f_t>::infinity() : lower_bound_.load();
+  }
+
+  void clear()
+  {
+    std::lock_guard lock(mutex_);
+    best_first_heap_.clear();
+    diving_heap_.clear();
   }
 
  private:

@@ -8,6 +8,7 @@
 #pragma once
 
 #include <cuopt/mathematical_optimization/mip/diving_hyper_params.hpp>
+#include <cuopt/mathematical_optimization/mip/restart_hyper_params.hpp>
 #include <cuopt/mathematical_optimization/mip/submip_hyper_params.hpp>
 
 #include <dual_simplex/logger.hpp>
@@ -218,6 +219,9 @@ struct simplex_solver_settings_t {
   f_t bnb_steal_chance;
   i_t bnb_nodes_per_steal;
   i_t bnb_max_steal_attempts;
+
+  // Settings controlling the B&B restart heuristic (see branch_and_bound_t::should_restart).
+  mip_restart_hyper_params_t<i_t, f_t> restart_settings;
 
   // Settings for the reliability branching.
   // - -1: automatic

@@ -7,6 +7,7 @@
 
 #pragma once
 
+namespace cuopt::mathematical_optimization {
 /**
  * @brief Tuning knobs for the recursive sub-MIP.
  */
@@ -44,3 +45,4 @@ struct mip_submip_hyper_params_t {
   // Run CPU FJ over the sub-MIP
   bool enable_cpufj = true;
 };
+}  // namespace cuopt::mathematical_optimization
