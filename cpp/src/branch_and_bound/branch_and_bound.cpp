@@ -2238,7 +2238,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
     worker->node_presolver.bounds_strengthening(settings_, bounds_changed, lower, upper);
 
   if (!feasible) {
-    // This should never happen since we are fixing bounds that are already in the incumbent.
+    // RINS: This should never happen since we are fixing bounds that are already in the incumbent.
     submip_stats_.save_infeasible(fixrate);
     DEBUG_SUBMIP("{} The problem is infeasible after running bound strengthening!", log_prefix);
     return;
@@ -2533,7 +2533,7 @@ bool apply_rens_fixings(const simplex_solver_settings_t<i_t, f_t>& settings,
     f_t old_upper     = upper[j];
     lower[j]          = std::clamp(std::floor(node_solution[j]), old_lower, old_upper);
     upper[j]          = std::clamp(std::ceil(node_solution[j]), old_lower, old_upper);
-    bounds_changed[j] = true;
+    bounds_changed[j] = lower[j] != old_lower || upper[j] != old_upper;
 
     if (std::abs(lower[j] - upper[j]) <= settings.fixed_tol) {
       ++num_var_fixed;
@@ -2762,7 +2762,7 @@ void branch_and_bound_t<i_t, f_t>::recursive_submip(diving_worker_t<i_t, f_t>* w
     if (leaf_obj > upper_bound_.load()) { break; }
 
     if (num_frac == 0) {
-      // We found a feasible solution when fixing the variables in RINS.
+      // We found a feasible solution when fixing the variables in RINS/RENS.
       add_feasible_solution(leaf_obj, current_sol, -1, worker->search_strategy);
       break;
     }
