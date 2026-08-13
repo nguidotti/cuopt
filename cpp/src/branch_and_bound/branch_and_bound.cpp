@@ -3660,6 +3660,9 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     settings_.log.printf("\n");
   }
 
+  // Stops the root heuristics and clear the associated data
+  root_heuristics.clear();
+
   set_uninitialized_steepest_edge_norms(original_lp_, basic_list, edge_norms_);
 
   pc_.resize(original_lp_.num_cols);
@@ -3760,9 +3763,6 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
         symmetry_->num_generators);
     }
   }
-
-  // Stops the root heuristics and clear the associated data
-  root_heuristics.clear();
 
   settings_.log.printf("Exploring the B&B tree using %d threads\n\n", settings_.num_threads);
   node_concurrent_halt_ = 0;
