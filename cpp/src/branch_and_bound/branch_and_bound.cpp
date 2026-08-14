@@ -669,7 +669,8 @@ void branch_and_bound_t<i_t, f_t>::set_solution_from_submip(
   const lp_problem_t<i_t, f_t>& lp,
   const std::vector<f_t>& solution,
   const third_party_presolve_t<i_t, f_t>& presolver,
-  f_t fixrate)
+  f_t fixrate,
+  std::string_view log_prefix)
 {
   bool check_postsolve = false;
   std::vector<f_t> leaf_sol;
@@ -680,7 +681,11 @@ void branch_and_bound_t<i_t, f_t>::set_solution_from_submip(
   mutex_original_lp_.lock();
   uncrush_primal_solution(original_problem_, lp, leaf_sol, user_sol);
   mutex_original_lp_.unlock();
-  settings_.log.debug_format("SubMIP found a feasible solution with obj={:.4g}", obj);
+
+  DEBUG_SUBMIP("{} Sub-MIP found a feasible solution with obj={:.4g}",
+               log_prefix,
+               compute_user_objective(lp, obj));
+
   bool success = set_solution_from_heuristics(user_sol, heuristics_origin_t::SUBMIP);
   if (success) {
     submip_stats_.save_success(fixrate);
@@ -1688,7 +1693,7 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
   f_t rel_gap     = user_relative_gap(user_obj, user_lower);
   f_t abs_gap     = compute_user_abs_gap(original_lp_, upper_bound, lower_bound);
 
-  bool can_launch_rins = true;
+  bool can_launch_new_submip = true;
 
   while (stack.size() > 0 && (solver_status_ == mip_status_t::UNSET && is_running_) &&
          rel_gap > settings_.relative_mip_gap_tol && abs_gap > settings_.absolute_mip_gap_tol) {
@@ -1798,7 +1803,9 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
     worker->recompute_bounds = node_status != node_status_t::HAS_CHILDREN;
 
     if (node_status == node_status_t::HAS_CHILDREN) {
-      if (can_launch_rins) { can_launch_rins = !launch_submip_worker(worker->leaf_solution.x); }
+      if (can_launch_new_submip) {
+        can_launch_new_submip = !launch_submip_worker(worker->leaf_solution.x);
+      }
 
       // The stack should only contain the children of the current parent.
       // If the stack size is greater than 0,
@@ -2215,19 +2222,19 @@ bool branch_and_bound_t<i_t, f_t>::launch_submip_worker(const std::vector<f_t>& 
   return true;
 }
 
-#define DEBUG_SUBMIP
-
 template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worker,
                                                 const std::vector<f_t>& current_incumbent,
                                                 const std::vector<variable_type_t>& var_type,
                                                 i_t num_var_fixed,
                                                 i_t num_integers,
-                                                i_t submip_level,
-                                                std::string_view log_prefix,
                                                 bool is_root_heuristic)
 {
   double start_time = tic();
+
+  i_t submip_level = settings_.submip_settings.level + 1;
+  std::string log_prefix =
+    std::format("[{} {}] ", search_strategy_to_string(worker->search_strategy), submip_level);
 
   std::vector<f_t>& lower           = worker->leaf_problem.lower;
   std::vector<f_t>& upper           = worker->leaf_problem.upper;
@@ -2355,9 +2362,9 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
   submip_settings.heuristic_preemption_callback   = nullptr;
   submip_settings.dual_simplex_objective_callback = nullptr;
   submip_settings.set_simplex_solution_callback   = nullptr;
-  submip_settings.solution_callback               = [this, &presolver, fixrate, worker](
+  submip_settings.solution_callback               = [this, &presolver, fixrate, log_prefix, worker](
                                         const std::vector<f_t>& solution, f_t obj) {
-    this->set_solution_from_submip(worker->leaf_problem, solution, presolver, fixrate);
+    this->set_solution_from_submip(worker->leaf_problem, solution, presolver, fixrate, log_prefix);
   };
 
   DEBUG_SUBMIP("{}Sub-MIP: {} constraints, {} variables, {} nonzeros\n",
@@ -2385,7 +2392,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
   // heuristics.
   if (std::isfinite(upper_bound_.load())) {
     const f_t user_upper    = compute_user_objective(worker->leaf_problem, upper_bound_.load());
-  const f_t submip_cutoff = compute_internal_objective(submip_bnb.original_lp_, user_upper);
+    const f_t submip_cutoff = compute_internal_objective(submip_bnb.original_lp_, user_upper);
     submip_bnb.set_initial_upper_bound(submip_cutoff);
   }
 
@@ -2462,7 +2469,8 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
   }
 
   if (submip_solution.has_incumbent) {
-    set_solution_from_submip(worker->leaf_problem, submip_solution.x, presolver, fixrate);
+    set_solution_from_submip(
+      worker->leaf_problem, submip_solution.x, presolver, fixrate, log_prefix);
   }
 
   // Accumulate simplex iterations to determine when to stop exploring the sub-MIP
@@ -2508,6 +2516,8 @@ void get_unfixed_integer_variables(const std::vector<f_t>& lower,
     if (std::abs(lower[j] - upper[j]) <= fixed_tol) { continue; }
     integer_list.push_back(j);
   }
+
+  assert(!integer_list.empty() && "The integer list cannot be empty!");
 }
 
 template <typename i_t, typename f_t>
@@ -2735,11 +2745,11 @@ void branch_and_bound_t<i_t, f_t>::recursive_submip(diving_worker_t<i_t, f_t>* w
       if (has_submip) { break; }
 
       if (prev_num_fixed == num_var_fixed) {
-          DEBUG_SUBMIP("{}Could not fix more variables ({}, max={}, min={})\n",
-                                   log_prefix,
-                                   num_var_fixed,
-                                   max_var_fixed,
-                                   min_var_fixed);
+        DEBUG_SUBMIP("{}Could not fix more variables ({}, max={}, min={})\n",
+                     log_prefix,
+                     num_var_fixed,
+                     max_var_fixed,
+                     min_var_fixed);
         has_submip = true;
         break;
       }
@@ -2813,21 +2823,18 @@ void branch_and_bound_t<i_t, f_t>::recursive_submip(diving_worker_t<i_t, f_t>* w
 
         // We need the pseudocost to do the DFS, which we do not have during the cut passes.
         if (!is_root_heuristic) {
-          DEBUG_SUBMIP("{} Running a quick DFS for the submip!", log_prefix);
-
+          DEBUG_SUBMIP("{}Running a quick DFS. fixrate={:.4g} ({}/{})",
+                       log_prefix,
+                       fixrate,
+                       num_var_fixed,
+                       integer_list.size());
           dive_with(worker, settings_.submip_settings.dfs_max_backtrack);
         }
       }
 
     } else {
-      solve_submip(worker,
-                   current_incumbent,
-                   var_types,
-                   num_var_fixed,
-                   num_integers,
-                   submip_level,
-                   log_prefix,
-                   is_root_heuristic);
+      solve_submip(
+        worker, current_incumbent, var_types, num_var_fixed, num_integers, is_root_heuristic);
     }
   }
 
@@ -2905,8 +2912,7 @@ void branch_and_bound_t<i_t, f_t>::launch_root_heuristics(
   bool use_rins = settings_.submip_settings.rins != 0 && incumbent_.has_incumbent;
   if (use_rins || settings_.submip_settings.rens != 0) {
     search_strategy_t strategy = use_rins ? search_strategy_t::RINS : search_strategy_t::RENS;
-    diving_worker_t<i_t, f_t>* worker =
-      heuristic->create_submip_worker(
+    diving_worker_t<i_t, f_t>* worker = heuristic->create_submip_worker(
       id, lp, settings_, root_objective_, root_vstatus_, sol, strategy);
 
     std::vector<f_t> current_incumbent;
@@ -3836,7 +3842,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     } else {
       const i_t num_workers        = settings_.num_threads;
       const i_t num_bfs_workers    = std::max(num_workers / 2, 1);
-      const i_t num_submip_workers = 1;  // std::max(num_workers / 8, 1);
+      const i_t num_submip_workers = std::max(num_workers / 8, 1);
       const i_t num_diving_workers = std::max(num_workers - num_bfs_workers, 1);
       bfs_worker_pool_.init(num_bfs_workers, original_lp_, Arow_, var_types_, symmetry_, settings_);
       submip_worker_pool_.init(
