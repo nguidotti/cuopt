@@ -3050,7 +3050,7 @@ auto branch_and_bound_t<i_t, f_t>::do_cut_pass(
   }
 
   // Try to do bound strengthening
-  std::vector<bool> bounds_changed(original_lp_.num_cols, true);
+  std::vector<bool> bounds_changed;  // empty --> compute from scratch
   std::vector<char> row_sense;
 #ifdef CHECK_MATRICES
   settings_.log.printf("Before A check\n");
@@ -3623,7 +3623,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     std::vector<f_t> upper_bounds;
     i_t num_fixed = find_reduced_cost_fixings(upper_bound_.load(), lower_bounds, upper_bounds);
     if (num_fixed > 0) {
-      std::vector<bool> bounds_changed(original_lp_.num_cols, true);
+      std::vector<bool> bounds_changed;  // empty --> compute from scratch
       std::vector<char> row_sense;
 
       bounds_strengthening_t<i_t, f_t> node_presolve(original_lp_, Arow_, row_sense, var_types_);

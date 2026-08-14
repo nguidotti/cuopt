@@ -65,7 +65,10 @@ bounds_strengthening_t<i_t, f_t>::bounds_strengthening_t(
     delta_min_activity(problem.num_rows),
     delta_max_activity(problem.num_rows),
     constraint_lb(problem.num_rows),
-    constraint_ub(problem.num_rows)
+    constraint_ub(problem.num_rows),
+    variable_changed(problem.num_cols),
+    constraint_changed(problem.num_rows),
+    constraint_changed_next(problem.num_rows)
 {
   const bool is_row_sense_empty = row_sense.empty();
   if (is_row_sense_empty) {
@@ -89,34 +92,17 @@ bounds_strengthening_t<i_t, f_t>::bounds_strengthening_t(
 }
 
 template <typename i_t, typename f_t>
-bool bounds_strengthening_t<i_t, f_t>::bounds_strengthening(
+bool bounds_strengthening_t<i_t, f_t>::run_bound_strengthening(
   const simplex_solver_settings_t<i_t, f_t>& settings,
-  const std::vector<bool>& bounds_changed,
   std::vector<f_t>& lower_bounds,
   std::vector<f_t>& upper_bounds)
 {
-  const i_t m = A.m;
-  const i_t n = A.n;
-
-  std::vector<bool> constraint_changed(m, true);
-  std::vector<bool> variable_changed(n, false);
-  std::vector<bool> constraint_changed_next(m, false);
-
+  const i_t m          = A.m;
+  const i_t n          = A.n;
   size_t nnz_processed = 0;
 
-  if (!bounds_changed.empty()) {
-    std::fill(constraint_changed.begin(), constraint_changed.end(), false);
-    for (i_t j = 0; j < n; ++j) {
-      if (bounds_changed[j]) {
-        const i_t col_start = A.col_start[j];
-        const i_t col_end   = A.col_start[j + 1];
-        for (i_t p = col_start; p < col_end; ++p) {
-          const i_t i           = A.i[p];
-          constraint_changed[i] = true;
-        }
-      }
-    }
-  }
+  std::fill(constraint_changed_next.begin(), constraint_changed_next.end(), false);
+  std::fill(variable_changed.begin(), variable_changed.end(), false);
 
   lower = lower_bounds;
   upper = upper_bounds;
@@ -288,6 +274,47 @@ bool bounds_strengthening_t<i_t, f_t>::bounds_strengthening(
 
   last_nnz_processed = nnz_processed;
   return true;
+}
+template <typename i_t, typename f_t>
+bool bounds_strengthening_t<i_t, f_t>::bounds_strengthening(
+  const simplex_solver_settings_t<i_t, f_t>& settings,
+  const std::vector<bool>& bounds_changed,
+  std::vector<f_t>& lower_bounds,
+  std::vector<f_t>& upper_bounds)
+{
+  if (!bounds_changed.empty()) {
+    std::fill(constraint_changed.begin(), constraint_changed.end(), false);
+    for (i_t j = 0; j < A.n; ++j) {
+      if (bounds_changed[j]) {
+        const i_t col_start = A.col_start[j];
+        const i_t col_end   = A.col_start[j + 1];
+        for (i_t p = col_start; p < col_end; ++p) {
+          const i_t i           = A.i[p];
+          constraint_changed[i] = true;
+        }
+      }
+    }
+  } else {
+    std::fill(constraint_changed.begin(), constraint_changed.end(), true);
+  }
+
+  return run_bound_strengthening(settings, lower_bounds, upper_bounds);
+}
+template <typename i_t, typename f_t>
+bool bounds_strengthening_t<i_t, f_t>::bounds_strengthening(
+  const simplex_solver_settings_t<i_t, f_t>& settings,
+  i_t branch_var,
+  std::vector<f_t>& lower_bounds,
+  std::vector<f_t>& upper_bounds)
+{
+  std::fill(constraint_changed.begin(), constraint_changed.end(), false);
+  const i_t col_start = A.col_start[branch_var];
+  const i_t col_end   = A.col_start[branch_var + 1];
+  for (i_t p = col_start; p < col_end; ++p) {
+    const i_t i           = A.i[p];
+    constraint_changed[i] = true;
+  }
+  return run_bound_strengthening(settings, lower_bounds, upper_bounds);
 }
 
 #ifdef DUAL_SIMPLEX_INSTANTIATE_DOUBLE

@@ -27,6 +27,12 @@ class bounds_strengthening_t {
                             std::vector<f_t>& lower_bounds,
                             std::vector<f_t>& upper_bounds);
 
+  // Run bounds strengthening considering that only `branch_var` has changed.
+  bool bounds_strengthening(const simplex_solver_settings_t<i_t, f_t>& settings,
+                            i_t branch_var,
+                            std::vector<f_t>& lower_bounds,
+                            std::vector<f_t>& upper_bounds);
+
   size_t last_nnz_processed{0};
 
  private:
@@ -41,5 +47,13 @@ class bounds_strengthening_t {
   std::vector<f_t> delta_max_activity;
   std::vector<f_t> constraint_lb;
   std::vector<f_t> constraint_ub;
+
+  std::vector<bool> variable_changed;
+  std::vector<bool> constraint_changed;
+  std::vector<bool> constraint_changed_next;
+
+  bool run_bound_strengthening(const simplex_solver_settings_t<i_t, f_t>& settings,
+                               std::vector<f_t>& lower_bounds,
+                               std::vector<f_t>& upper_bounds);
 };
 }  // namespace cuopt::mathematical_optimization::simplex

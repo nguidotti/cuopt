@@ -116,22 +116,30 @@ class branch_and_bound_worker_t {
   bool set_lp_variable_bounds(mip_node_t<i_t, f_t>* node_ptr,
                               const simplex::simplex_solver_settings_t<i_t, f_t>& settings)
   {
-    // Reset the bound_changed markers
-    std::fill(bounds_changed.begin(), bounds_changed.end(), false);
-
     // Set the correct bounds for the leaf problem
     if (recompute_bounds) {
+      // Reset the bound_changed markers
+      std::fill(bounds_changed.begin(), bounds_changed.end(), false);
+
       leaf_problem.lower = start_lower;
       leaf_problem.upper = start_upper;
       node_ptr->get_variable_bounds(leaf_problem.lower, leaf_problem.upper, bounds_changed);
 
-    } else {
-      node_ptr->update_branched_variable_bounds(
-        leaf_problem.lower, leaf_problem.upper, bounds_changed);
+      return node_presolver.bounds_strengthening(
+        settings, bounds_changed, leaf_problem.lower, leaf_problem.upper);
     }
 
+    // Skip if we are at the root node. Mostly used by RINS/RENS.
+    if (node_ptr->parent == nullptr) return true;
+
+    // Get the latest value. update_branched_variable_bounds will skip the value when
+    // bounds_changed[i] is true (since it assumes that we are going bottom-up on the branch).
+    bounds_changed[node_ptr->branch_var] = false;
+    node_ptr->update_branched_variable_bounds(
+      leaf_problem.lower, leaf_problem.upper, bounds_changed);
+
     return node_presolver.bounds_strengthening(
-      settings, bounds_changed, leaf_problem.lower, leaf_problem.upper);
+      settings, node_ptr->branch_var, leaf_problem.lower, leaf_problem.upper);
   }
 
   void set_active() { is_active = true; }
