@@ -160,18 +160,15 @@ class markshare_solver_t {
     i_t m{0};  // rows
     i_t n{0};  // core binaries kept in the search
 
-    std::vector<i_t> core_col;         // search index -> solver column
-    std::vector<uint8_t> flipped;      // search index -> was complemented?
-    std::vector<i_t> slack_col;        // row -> solver column
-    std::vector<i_t> pinned_col;       // core columns dropped as all zero
-    std::vector<double> row_divisor;   // row -> gamma_k, the slack coefficient
+    std::vector<i_t> core_col;    // search index -> solver column
+    std::vector<i_t> pinned_col;  // columns with no constraint role, written at their lower bound
 
     std::vector<markshare_coeff_t> a_row;       // m x n, for the table builders
     std::vector<markshare_coeff_t> a_col;       // n x m, the DFS hot layout
     std::vector<markshare_coeff_t> b;           // row -> normalized rhs
     std::vector<markshare_coeff_t> prefix_max;  // m x (n + 1), running column sums
     std::vector<markshare_coeff_t> row_gcd;     // row -> gcd of its coefficients
-    f_t slack_cost{0};                          // the common slack objective cost
+    f_t weight{0};  // the common w in c_j = -w * sum_k a_kj
   };
 
   enum class dfs_result_t { FOUND, EXHAUSTED, BUDGET };

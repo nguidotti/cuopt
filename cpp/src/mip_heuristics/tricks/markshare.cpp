@@ -364,245 +364,152 @@ bool markshare_solver_t<i_t, f_t>::detect_impl()
   // Two rows minimum: the joint table is what makes the search tractable, and a single row
   // market split is just a subset sum that presolve already handles.
   if (m < 2 || m > settings_.max_rows) { return false; }
-  // Room for several continuous columns per row: running ahead of PaPILO means fixed decoy
-  // columns are still present (markshare1 and markshare2 carry one per row).
-  if (num_cols < m + 1 || num_cols > settings_.max_core_cols + 4 * settings_.max_rows) {
-    return false;
-  }
+  if (num_cols < 1 || num_cols > settings_.max_core_cols) { return false; }
   // A range row is reported with sense 'E' plus a separate range value, so it would otherwise
-  // be misread as an equality.
+  // be misread as an ordinary row.
   if (problem_.num_range_rows != 0 || !problem_.range_rows.empty()) { return false; }
   if (problem_.A.nnz() > m * num_cols) { return false; }
 
+  // Presolve substitutes the per-row slack out, so what reaches branch and bound is a pure
+  // covering form: every row an upper bounded knapsack over binaries, with the slack cost folded
+  // into the objective and the constant into the objective offset.
   for (i_t k = 0; k < m; ++k) {
-    if (problem_.row_sense[k] != 'E' || !std::isfinite(problem_.rhs[k])) {
-      CUOPT_LOG_DEBUG("markshare: row %d is not a finite equality", k);
+    if (problem_.row_sense[k] != 'L' || !std::isfinite(problem_.rhs[k])) {
+      CUOPT_LOG_DEBUG("markshare: row %d is not a finite <= row", k);
       return false;
     }
   }
 
-  // --- classify every column as a core binary or a row slack -------------------------------
-  const f_t int_tol = settings_.integrality_tolerance;
-  std::vector<i_t> slack_col(m, -1);
-  std::vector<double> row_divisor(m, 0.0);
-  std::vector<i_t> core_col;
-  std::vector<i_t> pinned_col;
-  std::vector<double> fixed_activity(m, 0.0);
-  core_col.reserve(num_cols);
-
-  for (i_t j = 0; j < num_cols; ++j) {
-    const i_t len = problem_.A.col_length(j);
-
-    // Fixed columns contribute a constant. This runs ahead of cuOpt's trivial presolve, so the
-    // decoy columns that markshare1 and markshare2 pin at zero are still here.
-    if (problem_.lower[j] == problem_.upper[j] && std::isfinite(problem_.lower[j])) {
-      const double value = problem_.lower[j];
-      pinned_col.push_back(j);
-      if (value != 0.0) {
-        for (i_t e = problem_.A.col_start[j]; e < problem_.A.col_start[j + 1]; ++e) {
-          fixed_activity[problem_.A.i[e]] += problem_.A.x[e] * value;
-        }
-      }
-      continue;
-    }
-
-    if (problem_.var_types[j] != simplex::variable_type_t::CONTINUOUS) {
-      // get_host_user_problem collapses every non-continuous type to INTEGER, so a binary has to
-      // be recognised by its bounds rather than by its declared type.
-      if (problem_.lower[j] != 0.0 || problem_.upper[j] != 1.0) {
-        CUOPT_LOG_DEBUG("markshare: integer column %d is not binary", j);
-        return false;
-      }
-      if (std::abs(problem_.objective[j]) > int_tol) {
-        CUOPT_LOG_DEBUG("markshare: binary column %d carries objective cost", j);
-        return false;
-      }
-      if (len > m) { return false; }
-      core_col.push_back(j);
-      continue;
-    }
-
-    // Continuous columns must be the per-row slack, and nothing else.
-    if (len != 1) {
-      CUOPT_LOG_DEBUG("markshare: continuous column %d is not a singleton", j);
-      return false;
-    }
-    const i_t entry  = problem_.A.col_start[j];
-    const i_t k      = problem_.A.i[entry];
-    const double gam = problem_.A.x[entry];
-    if (gam == 0.0) { return false; }
-    // A strictly positive cost. A maximisation model arrives with negated costs and is rejected
-    // here, which is what we want.
-    if (!(problem_.objective[j] > int_tol)) {
-      CUOPT_LOG_DEBUG("markshare: continuous column %d has non-positive cost", j);
-      return false;
-    }
-    if (problem_.lower[j] != 0.0) { return false; }
-    // Two slacks in one row would be the two sided market split form. Reading that as one sided
-    // forbids negative residuals and could "prove" an optimum above the true one.
-    if (slack_col[k] >= 0) {
-      CUOPT_LOG_DEBUG("markshare: row %d has more than one slack", k);
-      return false;
-    }
-    slack_col[k]   = j;
-    row_divisor[k] = gam;
-  }
-
-  const i_t core_count = core_col.size();
-  if (core_count < 1 || core_count > settings_.max_core_cols) { return false; }
-  // Every column must be accounted for as a core binary, a row slack, or a fixed column.
-  if (core_count + m + i_t(pinned_col.size()) != num_cols) { return false; }
-  for (i_t k = 0; k < m; ++k) {
-    if (slack_col[k] < 0) {
-      CUOPT_LOG_DEBUG("markshare: row %d has no slack", k);
-      return false;
-    }
-  }
-
-  // All slack costs must agree: the objective has to be a positive multiple of the total slack,
-  // otherwise the objective levels are not evenly spaced.
-  const f_t slack_cost = problem_.objective[slack_col[0]];
-  for (i_t k = 1; k < m; ++k) {
-    if (std::abs(problem_.objective[slack_col[k]] - slack_cost) > int_tol) {
-      CUOPT_LOG_DEBUG("markshare: slack costs are not uniform");
-      return false;
-    }
-  }
-
-  // The slack bound must not bind before the residual does.
-  for (i_t k = 0; k < m; ++k) {
-    const double upper = problem_.upper[slack_col[k]];
-    if (!(std::isinf(upper) && upper > 0.0)) {
-      const double implied = problem_.rhs[k] / row_divisor[k];
-      if (upper < implied) {
-        CUOPT_LOG_DEBUG("markshare: slack of row %d is bounded above", k);
-        return false;
-      }
-    }
-  }
-
-  // --- normalize each row by its own slack coefficient -------------------------------------
-  // Dividing row k through by gamma_k makes the normalized slack coefficient exactly one, so the
-  // slack value equals the residual. This also absorbs any MIP row scaling factor exactly, which
-  // dividing by the coefficient gcd would not: row scaling leaves the *slack* coefficient as a
-  // possibly non-integer rational.
+  const f_t int_tol      = settings_.integrality_tolerance;
   const double exact_tol = settings_.exactness_tolerance;
-  auto normalize         = [&](double value, double gamma, markshare_coeff_t& out) -> bool {
-    const double q      = value / gamma;
-    const double q_int  = std::round(q);
-    if (std::abs(q - q_int) > int_tol * std::max(1.0, std::abs(q))) { return false; }
-    if (std::abs(q_int * gamma - value) > exact_tol * std::max(1.0, std::abs(value))) {
-      return false;
-    }
-    if (std::abs(q_int) > settings_.max_normalized_rhs) { return false; }
-    out = markshare_coeff_t(q_int);
+  auto to_integer        = [&](double value, markshare_coeff_t& out) -> bool {
+    const double rounded = std::round(value);
+    if (std::abs(value - rounded) > exact_tol * std::max(1.0, std::abs(value))) { return false; }
+    if (std::abs(rounded) > settings_.max_normalized_rhs) { return false; }
+    out = markshare_coeff_t(rounded);
     return true;
   };
 
-  std::vector<markshare_coeff_t> a_row(size_t(m) * core_count, 0);
   std::vector<markshare_coeff_t> b(m, 0);
   for (i_t k = 0; k < m; ++k) {
-    // Fixed columns have already been folded out of the right hand side.
-    if (!normalize(problem_.rhs[k] - fixed_activity[k], row_divisor[k], b[k])) {
-      CUOPT_LOG_DEBUG("markshare: rhs of row %d does not normalize to an integer", k);
+    if (!to_integer(problem_.rhs[k], b[k]) || b[k] < 0) {
+      CUOPT_LOG_DEBUG("markshare: rhs of row %d is not a small non-negative integer", k);
       return false;
     }
   }
-  for (i_t p = 0; p < core_count; ++p) {
-    const i_t j = core_col[p];
+
+  // --- every column a binary, and the objective a positive multiple of the column sums -------
+  // That relation is the whole point: it is what makes the objective equal to the total slack,
+  // and hence what makes the ascending level enumeration a valid optimality proof. A model whose
+  // objective is any other function of the same knapsacks is a multi-knapsack, not a market
+  // split, and is correctly rejected here.
+  std::vector<i_t> core_col;
+  std::vector<i_t> pinned_col;
+  std::vector<markshare_coeff_t> column(m, 0);
+  std::vector<markshare_coeff_t> gathered;  // core columns, column major, m entries each
+  std::vector<markshare_coeff_t> col_sum;
+  gathered.reserve(size_t(num_cols) * m);
+  double weight = 0.0;
+
+  for (i_t j = 0; j < num_cols; ++j) {
+    if (problem_.var_types[j] == simplex::variable_type_t::CONTINUOUS ||
+        problem_.lower[j] != 0.0 || problem_.upper[j] != 1.0) {
+      CUOPT_LOG_DEBUG("markshare: column %d is not binary", j);
+      return false;
+    }
+
+    std::fill(column.begin(), column.end(), 0);
+    markshare_coeff_t sum = 0;
     for (i_t e = problem_.A.col_start[j]; e < problem_.A.col_start[j + 1]; ++e) {
-      const i_t k = problem_.A.i[e];
-      markshare_coeff_t normalized;
-      if (!normalize(problem_.A.x[e], row_divisor[k], normalized)) {
-        CUOPT_LOG_DEBUG("markshare: entry (%d, %d) does not normalize to an integer", k, j);
+      markshare_coeff_t value;
+      if (!to_integer(problem_.A.x[e], value)) {
+        CUOPT_LOG_DEBUG("markshare: an entry of column %d is not integral", j);
         return false;
       }
-      a_row[size_t(k) * core_count + p] = normalized;
+      if (value < 0) {
+        CUOPT_LOG_DEBUG("markshare: column %d has a negative coefficient", j);
+        return false;
+      }
+      column[problem_.A.i[e]] = value;
+      sum += value;
     }
-  }
 
-  // --- complement all-negative columns, then require a non-negative model -------------------
-  std::vector<uint8_t> flipped(core_count, 0);
-  for (i_t p = 0; p < core_count; ++p) {
-    bool any_negative = false;
-    bool any_positive = false;
-    for (i_t k = 0; k < m; ++k) {
-      const markshare_coeff_t v = a_row[size_t(k) * core_count + p];
-      any_negative |= v < 0;
-      any_positive |= v > 0;
-    }
-    if (!any_negative) { continue; }
-    if (any_positive) {
-      CUOPT_LOG_DEBUG("markshare: core column %d has mixed signs", core_col[p]);
-      return false;
-    }
-    // x = 1 - x': the coefficient negates and its old value moves to the right hand side.
-    flipped[p] = 1;
-    for (i_t k = 0; k < m; ++k) {
-      markshare_coeff_t& v = a_row[size_t(k) * core_count + p];
-      b[k] -= v;
-      v = -v;
-    }
-  }
-  for (i_t k = 0; k < m; ++k) {
-    if (b[k] < 0 || b[k] > settings_.max_normalized_rhs) {
-      CUOPT_LOG_DEBUG("markshare: normalized rhs of row %d is out of range", k);
-      return false;
-    }
-  }
-
-  // --- drop all-zero columns, then order by column sum --------------------------------------
-  // All-zero core columns join the already fixed columns: both are simply written at their lower
-  // bound during reconstruction, and keeping them would double the search space for nothing.
-  std::vector<i_t> kept;
-  std::vector<int64_t> col_sum(core_count, 0);
-  for (i_t p = 0; p < core_count; ++p) {
-    int64_t sum = 0;
-    for (i_t k = 0; k < m; ++k) { sum += a_row[size_t(k) * core_count + p]; }
-    col_sum[p] = sum;
+    const double cost = problem_.objective[j];
     if (sum == 0) {
-      pinned_col.push_back(core_col[p]);
-    } else {
-      kept.push_back(p);
+      // No constraint role, so it must carry no cost either and can simply be pinned low.
+      if (std::abs(cost) > int_tol) {
+        CUOPT_LOG_DEBUG("markshare: empty column %d carries objective cost", j);
+        return false;
+      }
+      pinned_col.push_back(j);
+      continue;
     }
+
+    const double ratio = -cost / double(sum);
+    if (weight == 0.0) {
+      if (!(ratio > 0.0)) {
+        CUOPT_LOG_DEBUG("markshare: objective is not a positive multiple of the column sums");
+        return false;
+      }
+      weight = ratio;
+    } else if (std::abs(ratio - weight) > exact_tol * std::max(1.0, weight)) {
+      // Non-uniform weights are what per-row scaling would produce. Rejecting is the safe
+      // response: fitting a weight vector here could silently corrupt the level correspondence.
+      CUOPT_LOG_DEBUG("markshare: objective weight is not uniform across columns");
+      return false;
+    }
+
+    core_col.push_back(j);
+    col_sum.push_back(sum);
+    gathered.insert(gathered.end(), column.begin(), column.end());
   }
-  if (kept.empty()) { return false; }
 
-  // Ascending by column sum. The enumeration runs backwards, so it decides the largest
-  // coefficients first while the tables' prefixes hold the smallest -- that is what makes both
-  // the remaining-capacity prune and the reachability prune bite at shallow depth. Measured on
-  // 40 columns this is the difference between milliseconds and not terminating.
-  std::stable_sort(
-    kept.begin(), kept.end(), [&](i_t x, i_t y) { return col_sum[x] < col_sum[y]; });
-
-  const i_t n = kept.size();
-  if (n >= markshare_unreachable) { return false; }
+  const i_t core_count = core_col.size();
+  if (core_count < 1 || core_count >= markshare_unreachable) { return false; }
   // Beyond this the enumeration cannot finish even with the meet-in-the-middle terminal, and the
   // budget is the whole remaining solve, so hand the model back rather than spending it all.
-  if (n > settings_.max_search_cols) {
-    CUOPT_LOG_DEBUG("markshare: %d core columns is beyond the tractable range", n);
+  if (core_count > settings_.max_search_cols) {
+    CUOPT_LOG_DEBUG("markshare: %d columns is beyond the tractable range", core_count);
     return false;
   }
 
-  model_.m           = m;
-  model_.n           = n;
-  model_.slack_col   = std::move(slack_col);
-  model_.row_divisor = std::move(row_divisor);
-  model_.pinned_col  = std::move(pinned_col);
-  model_.b           = std::move(b);
-  model_.slack_cost  = slack_cost;
+  // Consistency only: presolve folds w * sum_k b_k into the offset, but other reductions can
+  // contribute to it too, and the objective is recomputed from the assignment either way.
+  {
+    double expected = 0.0;
+    for (i_t k = 0; k < m; ++k) { expected += weight * b[k]; }
+    CUOPT_LOG_DEBUG("markshare: objective offset %g, w * sum(rhs) %g",
+                    double(problem_.obj_constant),
+                    expected);
+  }
+
+  // --- order columns ascending by column sum -----------------------------------------------
+  // The enumeration runs backwards, so it decides the largest coefficients first while the
+  // tables' prefixes hold the smallest. That is what makes both the remaining-capacity prune and
+  // the reachability prune bite at shallow depth; measured on 40 columns it is the difference
+  // between milliseconds and not terminating.
+  std::vector<i_t> order(core_count);
+  std::iota(order.begin(), order.end(), 0);
+  std::stable_sort(order.begin(), order.end(), [&](i_t x, i_t y) {
+    return col_sum[x] < col_sum[y];
+  });
+
+  const i_t n = core_count;
+  model_.m    = m;
+  model_.n    = n;
+  model_.b    = std::move(b);
+  model_.pinned_col = std::move(pinned_col);
+  model_.weight     = weight;
   model_.core_col.resize(n);
-  model_.flipped.resize(n);
   model_.a_row.assign(size_t(m) * n, 0);
   model_.a_col.assign(size_t(n) * m, 0);
   for (i_t p = 0; p < n; ++p) {
-    const i_t src      = kept[p];
-    model_.core_col[p] = core_col[src];
-    model_.flipped[p]  = flipped[src];
+    const i_t source   = order[p];
+    model_.core_col[p] = core_col[source];
     for (i_t k = 0; k < m; ++k) {
-      const markshare_coeff_t v         = a_row[size_t(k) * core_count + src];
-      model_.a_row[size_t(k) * n + p]   = v;
-      model_.a_col[size_t(p) * m + k]   = v;
+      const markshare_coeff_t value    = gathered[size_t(source) * m + k];
+      model_.a_row[size_t(k) * n + p]  = value;
+      model_.a_col[size_t(p) * m + k]  = value;
     }
   }
 
@@ -612,16 +519,12 @@ bool markshare_solver_t<i_t, f_t>::detect_impl()
     markshare_coeff_t running = 0;
     markshare_coeff_t divisor = 0;
     for (i_t p = 0; p < n; ++p) {
-      const markshare_coeff_t v                    = model_.a_row[size_t(k) * n + p];
-      running                                      += v;
+      const markshare_coeff_t value                  = model_.a_row[size_t(k) * n + p];
+      running                                        += value;
       model_.prefix_max[size_t(k) * (n + 1) + p + 1] = running;
-      divisor                                       = std::gcd(divisor, v);
+      divisor                                        = std::gcd(divisor, value);
     }
     model_.row_gcd[k] = divisor;
-    if (running < model_.b[k]) {
-      CUOPT_LOG_DEBUG("markshare: row %d cannot reach its rhs", k);
-      return false;
-    }
   }
 
   // --- pick the joint pair and check the table budget ---------------------------------------
@@ -630,9 +533,9 @@ bool markshare_solver_t<i_t, f_t>::detect_impl()
     for (i_t k1 = k0 + 1; k1 < m; ++k1) {
       const int64_t cells = (int64_t(model_.b[k0]) + 1) * (int64_t(model_.b[k1]) + 1);
       if (best_cells < 0 || cells < best_cells) {
-        best_cells   = cells;
-        joint_row0_  = k0;
-        joint_row1_  = k1;
+        best_cells  = cells;
+        joint_row0_ = k0;
+        joint_row1_ = k1;
       }
     }
   }
@@ -644,10 +547,11 @@ bool markshare_solver_t<i_t, f_t>::detect_impl()
 
   CUOPT_LOG_INFO("%s",
                  std::format("Markshare structure detected: {} rows, {} binaries, rhs max {}, "
-                             "joint rows ({}, {}), joint table {:.1f} MB",
+                             "objective weight {:g}, joint rows ({}, {}), joint table {:.1f} MB",
                              model_.m,
                              model_.n,
                              *std::max_element(model_.b.begin(), model_.b.end()),
+                             double(model_.weight),
                              joint_row0_,
                              joint_row1_,
                              joint_bytes / (1024.0 * 1024.0))
@@ -954,34 +858,13 @@ bool markshare_solver_t<i_t, f_t>::reconstruct(std::vector<f_t>& solution, f_t& 
   const i_t num_cols = problem_.num_cols;
 
   solution.assign(num_cols, f_t{0});
-  for (i_t p = 0; p < n; ++p) {
-    const uint8_t v            = model_.flipped[p] != 0 ? 1 - value_[p] : value_[p];
-    solution[model_.core_col[p]] = v;
-  }
+  for (i_t p = 0; p < n; ++p) { solution[model_.core_col[p]] = value_[p]; }
   for (i_t col : model_.pinned_col) { solution[col] = problem_.lower[col]; }
 
-  // Recompute each slack from the original row rather than from the level distribution, so a
-  // normalization mistake shows up here instead of hiding.
+  // Independent verification against the untouched problem. This is the last line of defence
+  // against every assumption the detector made, and it is deliberately written in terms of the
+  // original data rather than the normalized model.
   std::vector<double> activity(m, 0.0);
-  for (i_t j = 0; j < num_cols; ++j) {
-    const double x = solution[j];
-    if (x == 0.0) { continue; }
-    for (i_t e = problem_.A.col_start[j]; e < problem_.A.col_start[j + 1]; ++e) {
-      activity[problem_.A.i[e]] += problem_.A.x[e] * x;
-    }
-  }
-  for (i_t k = 0; k < m; ++k) {
-    const double slack = (problem_.rhs[k] - activity[k]) / model_.row_divisor[k];
-    if (slack < -settings_.integrality_tolerance) {
-      CUOPT_LOG_ERROR("markshare: reconstructed slack of row %d is negative", k);
-      return false;
-    }
-    solution[model_.slack_col[k]] = std::max(slack, 0.0);
-  }
-
-  // Independent verification against the untouched user problem. This is the last line of
-  // defence against every detection assumption above.
-  std::vector<double> check(m, 0.0);
   for (i_t j = 0; j < num_cols; ++j) {
     const double x = solution[j];
     if (x < problem_.lower[j] - settings_.integrality_tolerance ||
@@ -989,19 +872,18 @@ bool markshare_solver_t<i_t, f_t>::reconstruct(std::vector<f_t>& solution, f_t& 
       CUOPT_LOG_ERROR("markshare: reconstructed column %d violates its bounds", j);
       return false;
     }
-    if (problem_.var_types[j] != simplex::variable_type_t::CONTINUOUS &&
-        std::abs(x - std::round(x)) > settings_.integrality_tolerance) {
+    if (std::abs(x - std::round(x)) > settings_.integrality_tolerance) {
       CUOPT_LOG_ERROR("markshare: reconstructed column %d is fractional", j);
       return false;
     }
     if (x == 0.0) { continue; }
     for (i_t e = problem_.A.col_start[j]; e < problem_.A.col_start[j + 1]; ++e) {
-      check[problem_.A.i[e]] += problem_.A.x[e] * x;
+      activity[problem_.A.i[e]] += problem_.A.x[e] * x;
     }
   }
   for (i_t k = 0; k < m; ++k) {
     const double tolerance = 1e-6 * std::max(1.0, std::abs(double(problem_.rhs[k])));
-    if (std::abs(check[k] - problem_.rhs[k]) > tolerance) {
+    if (activity[k] > problem_.rhs[k] + tolerance) {
       CUOPT_LOG_ERROR("markshare: reconstructed row %d is violated", k);
       return false;
     }
@@ -1062,7 +944,9 @@ markshare_result_t<i_t, f_t> markshare_solver_t<i_t, f_t>::solve()
   result.search_time = steady_seconds() - started;
   // Exhausting levels 0..L-1 proves that no feasible point has a total slack below L. The slacks
   // are implied integer, so the levels are spaced exactly one apart and the bound is exact.
-  result.proven_lower_bound = model_.slack_cost * result.levels_exhausted;
+  double rhs_total = 0.0;
+  for (i_t k = 0; k < model_.m; ++k) { rhs_total += model_.b[k]; }
+  result.proven_lower_bound = model_.weight * (result.levels_exhausted - rhs_total);
 
   if (solution_level >= 0) {
     f_t objective = 0;

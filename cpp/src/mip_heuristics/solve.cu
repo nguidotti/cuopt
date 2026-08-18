@@ -15,7 +15,6 @@
 #include <mip_heuristics/mip_constants.hpp>
 #include <mip_heuristics/mip_scaling_strategy.cuh>
 #include <mip_heuristics/presolve/presolve_budget_policy.hpp>
-#include <mip_heuristics/tricks/markshare.hpp>
 #include <mip_heuristics/presolve/semi_continuous.cuh>
 #include <mip_heuristics/presolve/third_party_presolve.hpp>
 #include <mip_heuristics/presolve/trivial_presolve.cuh>
@@ -496,70 +495,6 @@ mip_solution_t<i_t, f_t> solve_mip_helper(optimization_problem_t<i_t, f_t>& op_p
     f_t early_best_user_obj{std::numeric_limits<f_t>::infinity()};
     std::vector<f_t> early_best_user_assignment;
     std::mutex early_callback_mutex;
-
-    // Markshare / market split short circuit. This has to run ahead of PaPILO: the presolver
-    // substitutes the per-row slacks away, which turns the equalities into <= rows and folds the
-    // slack cost into an objective offset, destroying the structure recognized here.
-    {
-      mip::markshare_settings_t<i_t, f_t> markshare_settings;
-      markshare_settings.integrality_tolerance = settings.tolerances.integrality_tolerance;
-      // The wall clock is the only nondeterminism in the search, so deterministic mode relies on
-      // the node limit alone.
-      markshare_settings.time_limit = settings.determinism_mode == CUOPT_MODE_DETERMINISTIC
-                                        ? std::numeric_limits<double>::infinity()
-                                        : timer.remaining_time();
-
-      const bool markshare_shape_possible =
-        problem.n_constraints >= 2 && problem.n_constraints <= markshare_settings.max_rows &&
-        problem.n_integer_vars > 0 &&
-        problem.n_variables <= markshare_settings.max_core_cols + 4 * markshare_settings.max_rows;
-
-      if (markshare_shape_possible) {
-        user_problem_t<i_t, f_t> markshare_problem(op_problem.get_handle_ptr());
-        problem.get_host_user_problem(markshare_problem);
-        const auto markshare_result =
-          mip::markshare_solver_t<i_t, f_t>::try_solve(markshare_problem, markshare_settings);
-
-        if (markshare_result.proved_optimal()) {
-          problem.preprocess_problem();
-          mip::solution_t<i_t, f_t> solution(problem);
-          solution.copy_new_assignment(markshare_result.solution);
-          solution.compute_feasibility();
-          problem.handle_ptr->sync_stream();
-          // Independent confirmation on the device before asserting optimality: a wrong claim
-          // here silently returns a suboptimal answer as Optimal, which is the worst failure
-          // this feature could have.
-          const bool verified =
-            solution.get_feasible() &&
-            std::abs(solution.get_objective() - markshare_result.objective) <=
-              settings.tolerances.absolute_tolerance;
-          if (verified) {
-            problem.post_process_solution(solution);
-            solution.compute_objective();
-            auto stats = solver_stats_t<i_t, f_t>{};
-            // Matching the solution bound to the objective is what makes get_solution() report
-            // Optimal; there is no status to set, and nothing here touches the dual bound that
-            // branch and bound prunes with.
-            stats.set_solution_bound(solution.get_user_objective());
-            stats.total_solve_time = timer.elapsed_time();
-            CUOPT_LOG_INFO("Markshare trick proved optimality, objective %g",
-                           solution.get_user_objective());
-            return solution.get_solution(true, stats, true);
-          }
-          CUOPT_LOG_ERROR(
-            "Markshare solution failed verification, falling back to the normal solve");
-        } else if (markshare_result.has_solution()) {
-          // Not proven optimal within budget. Hand the incumbent to the normal pipeline: these
-          // are original-space assignments, and PaPILO crushing plus validation happen downstream
-          // in add_user_given_solutions().
-          const f_t user_obj = problem.get_user_obj_from_solver_obj(markshare_result.objective);
-          early_best_user_obj        = user_obj;
-          early_best_user_assignment = markshare_result.solution;
-          early_incumbent_pool.push_back({user_obj, markshare_result.solution});
-          CUOPT_LOG_INFO("Markshare trick found an incumbent with objective %g", user_obj);
-        }
-      }
-    }
 
     std::unique_ptr<mip::early_cpufj_t<i_t, f_t>> early_cpufj;
     std::unique_ptr<mip::early_gpufj_t<i_t, f_t>> early_gpufj;

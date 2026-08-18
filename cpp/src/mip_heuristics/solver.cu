@@ -25,6 +25,7 @@
 
 #include <mip_heuristics/feasibility_jump/early_cpufj.cuh>
 #include <mip_heuristics/presolve/conflict_graph/clique_table.cuh>
+#include <mip_heuristics/tricks/markshare.hpp>
 
 #include <raft/sparse/detail/cusparse_wrappers.h>
 #include <raft/core/cusparse_macros.hpp>
@@ -333,6 +334,50 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
   if (!context.settings.heuristics_only) {
     // Convert the presolved problem to user_problem_t
     op_problem_.get_host_user_problem(branch_and_bound_problem);
+
+    // Markshare / market split short circuit. Presolve substitutes the per-row slack out, so the
+    // form that arrives here is upper bounded knapsacks over binaries with the slack cost folded
+    // into the objective -- that is what the detector recognises, and it rejects anything else in
+    // O(nnz).
+    std::vector<f_t> markshare_guess;
+    {
+      mip::markshare_settings_t<i_t, f_t> markshare_settings;
+      markshare_settings.integrality_tolerance = context.settings.tolerances.integrality_tolerance;
+      // The wall clock is the only nondeterminism in the search, so deterministic mode relies on
+      // the node limit alone.
+      markshare_settings.time_limit = context.settings.determinism_mode == CUOPT_MODE_DETERMINISTIC
+                                        ? std::numeric_limits<double>::infinity()
+                                        : timer_.remaining_time();
+
+      const auto markshare_result =
+        mip::markshare_solver_t<i_t, f_t>::try_solve(branch_and_bound_problem, markshare_settings);
+
+      if (markshare_result.proved_optimal()) {
+        sol.copy_new_assignment(markshare_result.solution);
+        sol.compute_feasibility();
+        context.problem_ptr->handle_ptr->sync_stream();
+        // Independent confirmation on the device before asserting optimality: a wrong claim here
+        // silently returns a suboptimal answer as Optimal, the worst failure this could have.
+        const bool verified = sol.get_feasible() &&
+                              std::abs(sol.get_objective() - markshare_result.objective) <=
+                                context.settings.tolerances.absolute_tolerance;
+        if (verified) {
+          // Matching the reported solution bound to the objective is what makes get_solution()
+          // derive Optimal. Nothing here touches the internal dual bound B&B prunes with.
+          context.stats.set_solution_bound(sol.get_user_objective());
+          context.stats.total_solve_time = timer_.elapsed_time();
+          CUOPT_LOG_INFO("Markshare trick proved optimality, objective %g",
+                         sol.get_user_objective());
+          context.problem_ptr->post_process_solution(sol);
+          return sol;
+        }
+        CUOPT_LOG_ERROR(
+          "Markshare solution failed verification, falling back to branch and bound");
+      } else if (markshare_result.has_solution()) {
+        markshare_guess = markshare_result.solution;
+      }
+    }
+
     // Resize the solution now that we know the number of columns/variables
     branch_and_bound_solution.resize(branch_and_bound_problem.num_cols);
 
@@ -423,6 +468,14 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
                                                           context.problem_ptr->clique_table,
                                                           context.symmetry.get());
     context.branch_and_bound_ptr = branch_and_bound.get();
+
+    // The markshare search found a solution but could not prove it optimal within budget. Hand it
+    // over as a MIP start: set_initial_guess crushes and feasibility checks it, then sets both the
+    // incumbent and the upper bound before the root relaxation, so the node cutoff follows.
+    if (!markshare_guess.empty()) {
+      branch_and_bound->set_initial_guess(markshare_guess);
+      CUOPT_LOG_INFO("Markshare trick seeded branch and bound with an initial guess");
+    }
 
     // Convert the best external upper bound from user-space to B&B's internal objective space.
     // context.problem_ptr is the post-trivial-presolve problem, whose get_solver_obj_from_user_obj
