@@ -22,6 +22,7 @@ set(MIP_NON_LP_FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/mip_scaling_strategy.cu
   ${CMAKE_CURRENT_SOURCE_DIR}/solve.cu
   ${CMAKE_CURRENT_SOURCE_DIR}/solver.cu
+  ${CMAKE_CURRENT_SOURCE_DIR}/tricks/markshare.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/diversity/assignment_hash_map.cu
   ${CMAKE_CURRENT_SOURCE_DIR}/diversity/diversity_manager.cu
   ${CMAKE_CURRENT_SOURCE_DIR}/diversity/multi_armed_bandit.cu
