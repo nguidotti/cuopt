@@ -253,6 +253,7 @@ struct submip_stats_t {
   omp_atomic_t<int> total_infeasible          = 0;
   omp_atomic_t<double> infeasible_fixrate_sum = 0;
   omp_atomic_t<int> total_calls               = 0;
+  omp_atomic_t<double> total_empty            = 0;
 
   void save_success(double fixrate)
   {
@@ -266,6 +267,7 @@ struct submip_stats_t {
     infeasible_fixrate_sum += fixrate;
   }
 
+  void save_empty() { ++total_empty; }
   double average_infeasible_fixrate() const { return infeasible_fixrate_sum / total_infeasible; }
   double average_success_fixrate() const { return success_fixrate_sum / total_success; }
 };
