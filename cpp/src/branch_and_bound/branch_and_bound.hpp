@@ -381,7 +381,7 @@ class branch_and_bound_t {
   // Solve the RINS sub-MIP
   void solve_submip(diving_worker_t<i_t, f_t>* worker,
                     const std::vector<f_t>& current_incumbent,
-                    const std::vector<simplex::variable_type_t>& var_type,
+                    const std::vector<simplex::variable_type_t>& var_types,
                     submip_stats_t& submip_stats,
                     f_t fixrate,
                     i_t simplex_iter_used,
