@@ -63,11 +63,6 @@ struct reliability_branching_settings_t {
   // Only used when `reliable_threshold` is negative
   i_t max_reliable_threshold = 5;
   i_t min_reliable_threshold = 1;
-
-  // Estimate the objective change of each fractional variable
-  // using a single pivot of dual simplex. Then rank the candidates
-  // based on this estimation.
-  bool rank_candidates_with_dual_pivot = true;
 };
 
 template <typename i_t>
@@ -199,22 +194,29 @@ class pseudo_costs_t {
     }
   }
 
-  f_t get_pseudocost_down(i_t j, f_t avg) const
+  f_t get_pseudocost_down(i_t j) const
   {
     i_t num = pseudo_cost_num_down[j];
     f_t sum = pseudo_cost_sum_down[j];
-    return num > 0 ? sum / num : avg;
+    assert(pseudo_cost_num_down[j] > 0);
+    return sum / num;
   }
 
-  f_t get_pseudocost_up(i_t j, f_t avg) const
+  f_t get_pseudocost_up(i_t j) const
   {
     i_t num = pseudo_cost_num_up[j];
     f_t sum = pseudo_cost_sum_up[j];
-    return num > 0 ? sum / num : avg;
+    assert(pseudo_cost_num_up[j] > 0);
+    return sum / num;
   }
 
-  f_t compute_pseudocost_average_down();
-  f_t compute_pseudocost_average_up();
+  void initialize_with_estimate(const simplex::lp_problem_t<i_t, f_t>& lp,
+                                const std::vector<simplex::variable_status_t>& vstatus,
+                                const std::vector<i_t>& fractional,
+                                const simplex::lp_solution_t<i_t, f_t>& lp_solution,
+                                const std::vector<i_t>& basic_list,
+                                const std::vector<i_t>& nonbasic_list,
+                                simplex::basis_update_mpf_t<i_t, f_t>& basis_factors);
 
   f_t obj_estimate(const std::vector<i_t>& fractional,
                    const std::vector<f_t>& solution,
@@ -243,10 +245,7 @@ class pseudo_costs_t {
            cuopt::compute_hash(pseudo_cost_num_down) ^ cuopt::compute_hash(pseudo_cost_num_up);
   }
 
-  f_t calculate_pseudocost_score(i_t j,
-                                 const std::vector<f_t>& solution,
-                                 f_t avg_down,
-                                 f_t avg_up) const;
+  f_t calculate_pseudocost_score(i_t j, const std::vector<f_t>& solution) const;
 
   std::shared_ptr<csc_matrix_t<i_t, f_t>> AT;  // Transpose of the constraint matrix A
   std::shared_ptr<batch_pdlp_warm_cache_t<i_t, f_t>> pdlp_warm_cache;

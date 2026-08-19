@@ -1009,6 +1009,13 @@ branch_variable_t<i_t> branch_and_bound_t<i_t, f_t>::variable_selection(
                                                      new_slacks_,
                                                      original_lp_);
       } else {
+        pc_.initialize_with_estimate(worker->leaf_problem,
+                                     worker->leaf_vstatus,
+                                     fractional,
+                                     worker->leaf_solution,
+                                     worker->basic_list,
+                                     worker->nonbasic_list,
+                                     worker->basis_factors);
         branch_var = pc_.variable_selection(fractional, solution);
       }
 
@@ -1024,6 +1031,13 @@ branch_variable_t<i_t> branch_and_bound_t<i_t, f_t>::variable_selection(
       return line_search_diving(fractional, solution, root_relax_soln_.x, log);
 
     case search_strategy_t::PSEUDOCOST_DIVING:
+      pc_.initialize_with_estimate(worker->leaf_problem,
+                                   worker->leaf_vstatus,
+                                   fractional,
+                                   worker->leaf_solution,
+                                   worker->basic_list,
+                                   worker->nonbasic_list,
+                                   worker->basis_factors);
       return pseudocost_diving(pc_, fractional, solution, root_relax_soln_.x, log);
 
     case search_strategy_t::GUIDED_DIVING:
@@ -1031,6 +1045,14 @@ branch_variable_t<i_t> branch_and_bound_t<i_t, f_t>::variable_selection(
       mutex_upper_.lock();
       current_incumbent = incumbent_.x;
       mutex_upper_.unlock();
+
+      pc_.initialize_with_estimate(worker->leaf_problem,
+                                   worker->leaf_vstatus,
+                                   fractional,
+                                   worker->leaf_solution,
+                                   worker->basic_list,
+                                   worker->nonbasic_list,
+                                   worker->basis_factors);
       return guided_diving(pc_, fractional, solution, current_incumbent, log);
 
     case search_strategy_t::FARKAS_DIVING:
@@ -1041,6 +1063,13 @@ branch_variable_t<i_t> branch_and_bound_t<i_t, f_t>::variable_selection(
 
     case search_strategy_t::RINS:  // This is used for solving the DFS of the sub-MIP.
     case search_strategy_t::RENS:
+      pc_.initialize_with_estimate(worker->leaf_problem,
+                                   worker->leaf_vstatus,
+                                   fractional,
+                                   worker->leaf_solution,
+                                   worker->basic_list,
+                                   worker->nonbasic_list,
+                                   worker->basis_factors);
       branch_var = pc_.variable_selection(fractional, solution);
       round_dir  = martin_criteria(solution[branch_var], root_relax_soln_.x[branch_var]);
       return {branch_var, round_dir};
@@ -2211,11 +2240,11 @@ bool branch_and_bound_t<i_t, f_t>::launch_submip_worker(const std::vector<f_t>& 
   if (settings_.inside_submip) {
     // LLVM libomp's GOMP compatibility path skips GCC's firstprivate copy
     // function for included tasks.
-    recursive_submip(worker, current_incumbent, var_types_, is_root_heuristic);
+    recursive_submip(worker, current_incumbent, var_types_);
   } else {
 #pragma omp task priority(CUOPT_DEFAULT_TASK_PRIORITY) affinity(worker) \
   firstprivate(worker, current_incumbent)
-    recursive_submip(worker, current_incumbent, var_types_, is_root_heuristic);
+    recursive_submip(worker, current_incumbent, var_types_);
   }
 
   return true;
@@ -2227,8 +2256,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
                                                 const std::vector<variable_type_t>& var_types,
                                                 submip_stats_t& submip_stats,
                                                 f_t fixrate,
-                                                i_t simplex_iter_used,
-                                                bool is_root_heuristic)
+                                                i_t simplex_iter_used)
 {
   double start_time = tic();
 
@@ -2366,8 +2394,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
     submip_bnb.set_initial_upper_bound(submip_cutoff);
   }
 
-  if (!is_root_heuristic)
-    submip_bnb.set_initial_pseudocost(pc_, presolver.get_reduced_to_original_map());
+  submip_bnb.set_initial_pseudocost(pc_, presolver.get_reduced_to_original_map());
 
   if (submip_halt_callback_) {
     // Copy the halt callback to the deeper level.
@@ -2628,8 +2655,7 @@ f_t calculate_fixrate(const std::vector<i_t>& integer_list,
 template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::recursive_submip(diving_worker_t<i_t, f_t>* worker,
                                                     const std::vector<f_t>& current_incumbent,
-                                                    const std::vector<variable_type_t>& var_types,
-                                                    bool is_root_heuristic)
+                                                    const std::vector<variable_type_t>& var_types)
 {
   raft::common::nvtx::range scope("BB::submip_thread");
   if (worker->orbital_fixing) { worker->orbital_fixing->disable(); }
@@ -2883,25 +2909,17 @@ void branch_and_bound_t<i_t, f_t>::recursive_submip(diving_worker_t<i_t, f_t>* w
           submip_fj_cpu_worker.run_sync(time_limit, work_limit);
         }
 
-        // We need the pseudocost to do the DFS, which we do not have during the cut passes.
-        if (!is_root_heuristic) {
-          DEBUG_SUBMIP("{}Running a quick DFS. fixrate={:.4g} ({}/{})",
-                       log_prefix,
-                       fixrate,
-                       fixrate * num_integers,
-                       num_integers);
-          dive_with(worker, settings_.submip_settings.dfs_max_backtrack);
-        }
+        DEBUG_SUBMIP("{}Running a quick DFS. fixrate={:.4g} ({}/{})",
+                     log_prefix,
+                     fixrate,
+                     fixrate * num_integers,
+                     num_integers);
+        dive_with(worker, settings_.submip_settings.dfs_max_backtrack);
       }
 
     } else {
-      solve_submip(worker,
-                   current_incumbent,
-                   var_types,
-                   submip_stats,
-                   fixrate,
-                   stats.total_simplex_iters,
-                   is_root_heuristic);
+      solve_submip(
+        worker, current_incumbent, var_types, submip_stats, fixrate, stats.total_simplex_iters);
     }
   }
 
@@ -2918,11 +2936,9 @@ void branch_and_bound_t<i_t, f_t>::recursive_submip(diving_worker_t<i_t, f_t>* w
     max_fixrate,
     min_fixrate);
 
-  if (!is_root_heuristic) {
-    submip_worker_pool_.return_worker_to_pool(worker);
-  } else {
-    worker->set_inactive();
-  }
+  // In the root node, this will just set the worker to inactive as this particular pool is
+  // uninitialized.
+  submip_worker_pool_.return_worker_to_pool(worker);
 }
 
 template <typename i_t, typename f_t>
@@ -2985,7 +3001,7 @@ void branch_and_bound_t<i_t, f_t>::launch_root_heuristics(
     if (settings_.inside_submip) {
       // LLVM libomp's GOMP compatibility path skips GCC's firstprivate copy
       // function for included tasks.
-      recursive_submip(worker, current_incumbent, heuristic->var_types_, is_root_heuristic);
+      recursive_submip(worker, current_incumbent, heuristic->var_types_);
       heuristic->Arow_      = csr_matrix_t<i_t, f_t>(1, 1, 1);
       heuristic->var_types_ = {};
       heuristic->submip_worker_.reset();
@@ -2995,7 +3011,7 @@ void branch_and_bound_t<i_t, f_t>::launch_root_heuristics(
   shared(heuristics, worker_count) firstprivate(worker, current_incumbent, heuristic) \
   depend(out : *worker)
       {
-        recursive_submip(worker, current_incumbent, heuristic->var_types_, is_root_heuristic);
+        recursive_submip(worker, current_incumbent, heuristic->var_types_);
         --worker_count;
         heuristic->Arow_      = csr_matrix_t<i_t, f_t>(1, 1, 1);
         heuristic->var_types_ = {};
@@ -3805,6 +3821,16 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                                basis_update,
                                symmetry_,
                                pc_);
+  } else {
+    // If the pseudocost was copied from another B&B instance (e.g., from the parent
+    // B&B in the recursive sub-MIP), then some pseudocost may be still uninitialized
+    pc_.initialize_with_estimate(original_lp_,
+                                 root_vstatus_,
+                                 fractional,
+                                 root_relax_soln_,
+                                 basic_list,
+                                 nonbasic_list,
+                                 basis_update);
   }
 
   if (toc(exploration_stats_.start_time) > settings_.time_limit) {

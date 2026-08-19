@@ -1370,52 +1370,72 @@ void strong_branching(const lp_problem_t<i_t, f_t>& original_lp,
 }
 
 template <typename i_t, typename f_t>
-inline f_t pseudo_costs_t<i_t, f_t>::compute_pseudocost_average_down()
+void pseudo_costs_t<i_t, f_t>::initialize_with_estimate(
+  const lp_problem_t<i_t, f_t>& lp,
+  const std::vector<simplex::variable_status_t>& vstatus,
+  const std::vector<i_t>& fractional,
+  const lp_solution_t<i_t, f_t>& lp_solution,
+  const std::vector<i_t>& basic_list,
+  const std::vector<i_t>& nonbasic_list,
+  basis_update_mpf_t<i_t, f_t>& basis_factors)
 {
-  i_t num_initialized = 0;
-  f_t avg             = 0.0;
+  i_t m = lp.num_rows;
+  i_t n = lp.num_cols;
 
-  for (size_t j = 0; j < pseudo_cost_sum_down.size(); ++j) {
-    i_t num = pseudo_cost_num_down[j];
-    f_t sum = pseudo_cost_sum_down[j];
-    if (num > 0 && std::isfinite(sum)) {
-      ++num_initialized;
-      avg += sum / num;
-    }
+  std::vector<f_t> delta_z(n, 0);
+  std::vector<i_t> workspace(n, 0);
+
+  f_t work_estimate = 0;
+
+  std::vector<i_t> basic_map(n, -1);
+  for (i_t i = 0; i < m; i++) {
+    basic_map[basic_list[i]] = i;
   }
 
-  return (num_initialized > 0) ? avg / num_initialized : 1.0;
-}
+  // compute_initial_nonbasic_end permutes columns in place; copy so pc.Arow is unchanged
+  csr_matrix_t<i_t, f_t> local_Arow = Arow;
 
-template <typename i_t, typename f_t>
-inline f_t pseudo_costs_t<i_t, f_t>::compute_pseudocost_average_up()
-{
-  i_t num_initialized = 0;
-  f_t avg             = 0.0;
+  std::vector<i_t> nonbasic_end(m);
+  compute_initial_nonbasic_end(basic_map, local_Arow, nonbasic_end);
 
-  for (size_t j = 0; j < pseudo_cost_sum_up.size(); ++j) {
-    i_t num = pseudo_cost_num_up[j];
-    f_t sum = pseudo_cost_sum_up[j];
-    if (num > 0 && std::isfinite(sum)) {
-      ++num_initialized;
-      avg += sum / num;
+  for (i_t k = 0; k < fractional.size(); k++) {
+    const i_t j = fractional[k];
+    assert(j >= 0);
+
+    if (pseudo_cost_num_up[j] == 0 || pseudo_cost_num_down[j] == 0) {
+      objective_change_estimate_t<f_t> estimate =
+        single_pivot_objective_change_estimate(lp,
+                                               settings,
+                                               local_Arow,
+                                               vstatus,
+                                               j,
+                                               basic_map[j],
+                                               lp_solution,
+                                               basic_list,
+                                               nonbasic_list,
+                                               nonbasic_end,
+                                               basis_factors,
+                                               workspace,
+                                               delta_z,
+                                               work_estimate);
+
+      pseudo_cost_sum_down[j] = estimate.down_obj_change;
+      ++pseudo_cost_num_down[j];
+      pseudo_cost_sum_up[j] = estimate.up_obj_change;
+      ++pseudo_cost_num_up[j];
     }
   }
-
-  return (num_initialized > 0) ? avg / num_initialized : 1.0;
 }
 
 template <typename i_t, typename f_t>
 f_t pseudo_costs_t<i_t, f_t>::calculate_pseudocost_score(i_t j,
-                                                         const std::vector<f_t>& solution,
-                                                         f_t avg_down,
-                                                         f_t avg_up) const
+                                                         const std::vector<f_t>& solution) const
 {
   constexpr f_t eps = 1e-6;
   f_t f_down        = solution[j] - std::floor(solution[j]);
   f_t f_up          = std::ceil(solution[j]) - solution[j];
-  f_t pc_down       = get_pseudocost_down(j, avg_down);
-  f_t pc_up         = get_pseudocost_up(j, avg_up);
+  f_t pc_down       = get_pseudocost_down(j);
+  f_t pc_up         = get_pseudocost_up(j);
   return std::max(f_down * pc_down, eps) * std::max(f_up * pc_up, eps);
 }
 
@@ -1449,13 +1469,9 @@ i_t pseudo_costs_t<i_t, f_t>::variable_selection(const std::vector<i_t>& fractio
 
   i_t branch_var = fractional[0];
   f_t max_score  = -1;
-  f_t avg_down   = compute_pseudocost_average_down();
-  f_t avg_up     = compute_pseudocost_average_up();
-
-  settings.log.debug("PC: avg down %e up %e\n", avg_down, avg_up);
 
   for (i_t j : fractional) {
-    f_t score = calculate_pseudocost_score(j, solution, avg_down, avg_up);
+    f_t score = calculate_pseudocost_score(j, solution);
 
     if (score > max_score) {
       max_score  = score;
@@ -1522,9 +1538,13 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
   // Otherwise, the best ones are initialized via strong branching, while the other are ignored.  //
   // So we only need to initialize the average for the former.
   if (reliable_threshold == 0) {
-    avg_down = compute_pseudocost_average_down();
-    avg_up   = compute_pseudocost_average_up();
-    settings.log.debug("PC: avg down %e up %e\n", avg_down, avg_up);
+    initialize_with_estimate(worker->leaf_problem,
+                             worker->leaf_vstatus,
+                             fractional,
+                             worker->leaf_solution,
+                             worker->basic_list,
+                             worker->nonbasic_list,
+                             worker->basis_factors);
   }
 
   std::vector<std::pair<f_t, i_t>> unreliable_list;
@@ -1536,7 +1556,8 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
       unreliable_list.push_back(std::make_pair(-1, j));
       continue;
     }
-    f_t score = calculate_pseudocost_score(j, leaf_solution.x, avg_down, avg_up);
+
+    f_t score = calculate_pseudocost_score(j, leaf_solution.x);
 
     if (score > max_score) {
       max_score  = score;
@@ -1645,58 +1666,49 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
     reliable_threshold);
 
   if (unreliable_list.size() > max_num_candidates) {
-    if (reliability_branching_settings.rank_candidates_with_dual_pivot) {
-      i_t m             = worker->leaf_problem.num_rows;
-      i_t n             = worker->leaf_problem.num_cols;
-      f_t work_estimate = 0;
+    i_t m             = worker->leaf_problem.num_rows;
+    i_t n             = worker->leaf_problem.num_cols;
+    f_t work_estimate = 0;
 
-      std::vector<f_t> delta_z(n, 0);
-      std::vector<i_t> workspace(n, 0);
+    std::vector<f_t> delta_z(n, 0);
+    std::vector<i_t> workspace(n, 0);
 
-      std::vector<i_t> basic_map(n, -1);
-      for (i_t i = 0; i < m; i++) {
-        basic_map[worker->basic_list[i]] = i;
-      }
+    std::vector<i_t> basic_map(n, -1);
+    for (i_t i = 0; i < m; i++) {
+      basic_map[worker->basic_list[i]] = i;
+    }
 
-      // Each thread will have a different basis
-      // So we need to make a copy of Arow before we permute the columns
-      // so that nonbasic variables appear first
-      csr_matrix_t<i_t, f_t> local_Arow = Arow;
+    // Each thread will have a different basis
+    // So we need to make a copy of Arow before we permute the columns
+    // so that nonbasic variables appear first
+    csr_matrix_t<i_t, f_t> local_Arow = Arow;
 
-      std::vector<i_t> nonbasic_end(m);
-      compute_initial_nonbasic_end(basic_map, local_Arow, nonbasic_end);
+    std::vector<i_t> nonbasic_end(m);
+    compute_initial_nonbasic_end(basic_map, local_Arow, nonbasic_end);
 
-      for (auto& [score, j] : unreliable_list) {
-        if (pseudo_cost_num_down[j] == 0 || pseudo_cost_num_up[j] == 0) {
-          // Estimate the objective change by performing a single pivot of dual simplex.
-          objective_change_estimate_t<f_t> estimate =
-            single_pivot_objective_change_estimate(worker->leaf_problem,
-                                                   settings,
-                                                   local_Arow,
-                                                   worker->leaf_vstatus,
-                                                   j,
-                                                   basic_map[j],
-                                                   leaf_solution,
-                                                   worker->basic_list,
-                                                   worker->nonbasic_list,
-                                                   nonbasic_end,
-                                                   worker->basis_factors,
-                                                   workspace,
-                                                   delta_z,
-                                                   work_estimate);
+    for (auto& [score, j] : unreliable_list) {
+      if (pseudo_cost_num_down[j] == 0 || pseudo_cost_num_up[j] == 0) {
+        // Estimate the objective change by performing a single pivot of dual simplex.
+        objective_change_estimate_t<f_t> estimate =
+          single_pivot_objective_change_estimate(worker->leaf_problem,
+                                                 settings,
+                                                 local_Arow,
+                                                 worker->leaf_vstatus,
+                                                 j,
+                                                 basic_map[j],
+                                                 leaf_solution,
+                                                 worker->basic_list,
+                                                 worker->nonbasic_list,
+                                                 nonbasic_end,
+                                                 worker->basis_factors,
+                                                 workspace,
+                                                 delta_z,
+                                                 work_estimate);
 
-          score = std::max(estimate.up_obj_change, eps) * std::max(estimate.down_obj_change, eps);
-        } else {
-          // Use the previous score, even if it is unreliable
-          score = calculate_pseudocost_score(j, leaf_solution.x, avg_down, avg_up);
-        }
-      }
-    } else {
-      f_t high = max_score > 0 ? max_score : 1;
-      f_t low  = 0;
-
-      for (auto& [score, j] : unreliable_list) {
-        if (score == -1) { score = worker->rng.uniform(low, high); }
+        score = std::max(estimate.up_obj_change, eps) * std::max(estimate.down_obj_change, eps);
+      } else {
+        // Use the previous score, even if it is unreliable
+        score = calculate_pseudocost_score(j, leaf_solution.x);
       }
     }
 
@@ -1855,7 +1867,7 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
 
       if (toc(start_time) > settings.time_limit) { continue; }
 
-      score = calculate_pseudocost_score(j, leaf_solution.x, avg_down, avg_up);
+      score = calculate_pseudocost_score(j, leaf_solution.x);
       score_mutex.lock();
       if (score > max_score) {
         max_score  = score;
@@ -1917,7 +1929,7 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
         }
       }
 
-      f_t score = calculate_pseudocost_score(j, leaf_solution.x, avg_down, avg_up);
+      f_t score = calculate_pseudocost_score(j, leaf_solution.x);
       if (score > max_score) {
         max_score  = score;
         branch_var = j;
@@ -1943,12 +1955,10 @@ f_t pseudo_costs_t<i_t, f_t>::obj_estimate(const std::vector<i_t>& fractional,
                                            f_t lower_bound)
 {
   f_t estimate = lower_bound;
-  f_t avg_down = compute_pseudocost_average_down();
-  f_t avg_up   = compute_pseudocost_average_up();
 
   for (i_t j : fractional) {
-    f_t pc_down = get_pseudocost_down(j, avg_down);
-    f_t pc_up   = get_pseudocost_up(j, avg_up);
+    f_t pc_down = get_pseudocost_down(j);
+    f_t pc_up   = get_pseudocost_up(j);
     f_t f_down  = solution[j] - std::floor(solution[j]);
     f_t f_up    = std::ceil(solution[j]) - solution[j];
     estimate += std::min(pc_down * f_down, pc_up * f_up);
