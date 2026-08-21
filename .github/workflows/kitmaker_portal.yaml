@@ -213,14 +213,23 @@ jobs:
           body=$(jq -n --arg project_name "$PROJECT_NAME" --argjson payload "$PAYLOAD" \
             '{project_name: $project_name, payload: $payload}')
 
-          response=$(curl --fail-with-body --show-error \
+          http_response=$(curl -sS -w '\n%{http_code}' \
             -H "X-Charon-GHA-Token: $FERRY_TOKEN" \
             -H "Authorization: $PORTAL_AUTHORIZATION" \
             -H "Content-Type: application/json" \
             -d "$body" \
             "http://127.0.0.1:8888/kitmaker-portal/api/v0/projects/${PROJECT_ID}/releases")
 
+          http_code=$(echo "$http_response" | tail -n1)
+          response=$(echo "$http_response" | sed '$d')
+
+          echo "HTTP $http_code"
           echo "$response"
+
+          if [[ "$http_code" != "202" ]]; then
+            exit 1
+          fi
+
           status_id=$(echo "$response" | jq -r '.release_uuid')
           echo "status_id=$status_id" >> "$GITHUB_OUTPUT"
 
@@ -231,10 +240,19 @@ jobs:
           STATUS_ID: ${{ steps.kitmaker-release.outputs.status_id }}
         run: |
           for _ in $(seq 1 60); do
-            response=$(curl --fail-with-body --show-error \
+            http_response=$(curl -sS -w '\n%{http_code}' \
               -H "X-Charon-GHA-Token: $FERRY_TOKEN" \
               -H "Authorization: $PORTAL_AUTHORIZATION" \
               "http://127.0.0.1:8888/kitmaker-portal/api/v0/status/$STATUS_ID")
+            http_code=$(echo "$http_response" | tail -n1)
+            response=$(echo "$http_response" | sed '$d')
+
+            if [[ "$http_code" != "200" ]]; then
+              echo "HTTP $http_code"
+              echo "$response"
+              exit 1
+            fi
+
             status=$(echo "$response" | jq -r '.status')
             echo "Kitmaker Portal release status: $status"
             case "$status" in
