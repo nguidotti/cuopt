@@ -119,7 +119,7 @@ jobs:
       - name: Poll Kitmaker Portal status
         env:
           FERRY_TOKEN: ${{ steps.ferry-token.outputs.token }}
-          # Store the complete value, such as "Bearer …", in this secret.
+          # Store just the bare token (e.g. kmp_...); "Bearer " is prepended below.
           PORTAL_AUTHORIZATION: ${{ secrets.KITMAKER_PORTAL_AUTHORIZATION }}
           STATUS_ID: ${{ inputs.status_id }}
         run: |
@@ -130,7 +130,7 @@ jobs:
 
           curl --fail-with-body --show-error \
             -H "X-Charon-GHA-Token: $FERRY_TOKEN" \
-            -H "Authorization: $PORTAL_AUTHORIZATION" \
+            -H "Authorization: Bearer $PORTAL_AUTHORIZATION" \
             "http://127.0.0.1:8888/kitmaker-portal/api/v0/status/$STATUS_ID"
 
   release:
@@ -206,7 +206,7 @@ jobs:
         id: kitmaker-release
         env:
           FERRY_TOKEN: ${{ steps.ferry-token.outputs.token }}
-          # Store the complete value, such as "Bearer …", in this secret.
+          # Store just the bare token (e.g. kmp_...); "Bearer " is prepended below.
           PORTAL_AUTHORIZATION: ${{ secrets.KITMAKER_PORTAL_AUTHORIZATION }}
           PAYLOAD: ${{ steps.assets.outputs.payload }}
         run: |
@@ -215,7 +215,7 @@ jobs:
 
           http_response=$(curl -sS -w '\n%{http_code}' \
             -H "X-Charon-GHA-Token: $FERRY_TOKEN" \
-            -H "Authorization: $PORTAL_AUTHORIZATION" \
+            -H "Authorization: Bearer $PORTAL_AUTHORIZATION" \
             -H "Content-Type: application/json" \
             -d "$body" \
             "http://127.0.0.1:8888/kitmaker-portal/api/v0/projects/${PROJECT_ID}/releases")
@@ -242,7 +242,7 @@ jobs:
           for _ in $(seq 1 60); do
             http_response=$(curl -sS -w '\n%{http_code}' \
               -H "X-Charon-GHA-Token: $FERRY_TOKEN" \
-              -H "Authorization: $PORTAL_AUTHORIZATION" \
+              -H "Authorization: Bearer $PORTAL_AUTHORIZATION" \
               "http://127.0.0.1:8888/kitmaker-portal/api/v0/status/$STATUS_ID")
             http_code=$(echo "$http_response" | tail -n1)
             response=$(echo "$http_response" | sed '$d')
