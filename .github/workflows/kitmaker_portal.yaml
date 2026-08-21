@@ -92,6 +92,10 @@ jobs:
     permissions:
       id-token: write
       contents: read
+    env:
+      # Referenced here (unused) so GitHub Actions masks it in this job's logs too,
+      # since a polled status response can echo a release's pic email back.
+      PIC: ${{ secrets.KITMAKER_PORTAL_ACC_OWNER_EMAIL }}
     steps:
       - name: Install Teleport
         uses: teleport-actions/setup@v1
@@ -119,7 +123,6 @@ jobs:
       - name: Poll Kitmaker Portal status
         env:
           FERRY_TOKEN: ${{ steps.ferry-token.outputs.token }}
-          # Store just the bare token (e.g. kmp_...); "Bearer " is prepended below.
           PORTAL_AUTHORIZATION: ${{ secrets.KITMAKER_PORTAL_AUTHORIZATION }}
           STATUS_ID: ${{ inputs.status_id }}
         run: |
@@ -134,8 +137,6 @@ jobs:
             "http://127.0.0.1:8888/kitmaker-portal/api/v0/status/$STATUS_ID"
 
   release:
-    # Schema (POST /api/v0/projects/{id}/releases, GET /api/v0/status/{uuid}) follows
-    # https://kitmaker.gitlab-master-pages.nvidia.com/kitmaker-docs/users/portal-api/wheel-release-api.html
     if: inputs.mode == 'release'
     runs-on: ubuntu-latest
     permissions:
@@ -206,7 +207,6 @@ jobs:
         id: kitmaker-release
         env:
           FERRY_TOKEN: ${{ steps.ferry-token.outputs.token }}
-          # Store just the bare token (e.g. kmp_...); "Bearer " is prepended below.
           PORTAL_AUTHORIZATION: ${{ secrets.KITMAKER_PORTAL_AUTHORIZATION }}
           PAYLOAD: ${{ steps.assets.outputs.payload }}
         run: |
@@ -263,11 +263,7 @@ jobs:
                 echo "$response"
                 exit 1
                 ;;
-              # Any other status (e.g. 'pending', 'in_progress', 'processing') is
-              # treated as still-in-progress: keep polling rather than hard-failing
-              # on a status value not covered by the documented pending|in_progress
-              # |completed|failed set (observed 'processing' in practice).
-              *) ;;
+              *) ;;  # still in progress, keep polling
             esac
             sleep 30
           done
