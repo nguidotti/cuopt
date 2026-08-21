@@ -16,7 +16,22 @@ on:
         description: "status_id: existing Kitmaker Portal status UUID. Required for mode == 'smoke-test'."
         type: string
       release_tag:
-        description: "release_tag: git tag whose GitHub Release should be published to Kitmaker. Required for mode == 'release'."
+        description: "release_tag: git tag whose GitHub Release assets should be published to Kitmaker. Required for mode == 'release'."
+        type: string
+      project_name:
+        description: "project_name: Kitmaker project name. Must exactly match the wheel/component name. Required for mode == 'release'."
+        type: string
+      project_id:
+        description: "project_id: numeric Kitmaker project ID (from GET /api/v0/projects). Required for mode == 'release'."
+        type: string
+      wheel-asset-pattern:
+        description: |
+          wheel-asset-pattern: extended regex (matched with jq's 'test()') selecting this
+          project's wheel/sdist asset names out of the GitHub Release, e.g. '^libcuopt-'.
+          Required for mode == 'release'.
+        type: string
+      pic:
+        description: "pic: 'person in charge' email required by the Kitmaker release API. Defaults to vars.KITMAKER_RELEASE_PIC."
         type: string
     outputs:
       status_id:
@@ -87,9 +102,8 @@ jobs:
             "http://127.0.0.1:8888/kitmaker-portal/api/v0/status/$STATUS_ID"
 
   release:
-    # NOTE: request/response field names below (release_url, uuid, state) are best-effort
-    # from the Slack thread with Andrew Dickson / Jesus Alvarez (KITMAKER-4800) and must be
-    # confirmed against the actual Kitmaker Portal API contract before this can run for real.
+    # Schema (POST /api/v0/projects/{id}/releases, GET /api/v0/status/{uuid}) follows
+    # https://kitmaker.gitlab-master-pages.nvidia.com/kitmaker-docs/users/portal-api/wheel-release-api.html
     if: inputs.mode == 'release'
     runs-on: [self-hosted, linux]
     permissions:
@@ -98,14 +112,37 @@ jobs:
     outputs:
       status_id: ${{ steps.kitmaker-release.outputs.status_id }}
     env:
-      KITMAKER_PROJECT_ID: ${{ vars.KITMAKER_PROJECT_ID }}
+      GH_TOKEN: ${{ github.token }}
+      PROJECT_NAME: ${{ inputs.project_name }}
+      PROJECT_ID: ${{ inputs.project_id }}
+      ASSET_PATTERN: ${{ inputs.wheel-asset-pattern }}
+      PIC: ${{ inputs.pic || vars.KITMAKER_RELEASE_PIC }}
     steps:
-      - name: Require a release tag
+      - name: Validate inputs
         run: |
-          if [[ -z "${{ inputs.release_tag }}" ]]; then
-            echo "::error::mode == 'release' requires 'release_tag'"
+          [[ -n "${{ inputs.release_tag }}" ]] || { echo "::error::mode == 'release' requires 'release_tag'"; exit 1; }
+          [[ -n "$PROJECT_NAME" ]] || { echo "::error::mode == 'release' requires 'project_name'"; exit 1; }
+          [[ -n "$PROJECT_ID" ]] || { echo "::error::mode == 'release' requires 'project_id'"; exit 1; }
+          [[ -n "$ASSET_PATTERN" ]] || { echo "::error::mode == 'release' requires 'wheel-asset-pattern'"; exit 1; }
+          [[ -n "$PIC" ]] || { echo "::error::'pic' input or vars.KITMAKER_RELEASE_PIC must be set"; exit 1; }
+
+      - name: Collect wheel asset URLs from the GitHub Release
+        id: assets
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          urls_json=$(gh release view "$RELEASE_TAG" --repo "${{ github.repository }}" --json assets \
+            --jq "[.assets[] | select(.name | test(\"$ASSET_PATTERN\")) | .url]")
+
+          if [[ "$(echo "$urls_json" | jq 'length')" -eq 0 ]]; then
+            echo "::error::No assets on release '$RELEASE_TAG' matched pattern '$ASSET_PATTERN'"
             exit 1
           fi
+
+          payload=$(echo "$urls_json" | jq -c --arg pic "$PIC" '
+            map({pic: $pic, job_type: "wheel-release-job", url: ., upload: true})
+          ')
+          echo "payload=$payload" >> "$GITHUB_OUTPUT"
 
       - name: Start staging Ferry tunnel
         run: |
@@ -147,17 +184,20 @@ jobs:
           FERRY_TOKEN: ${{ steps.ferry-token.outputs.token }}
           # Store the complete value, such as "Bearer …", in this secret.
           PORTAL_AUTHORIZATION: ${{ secrets.KITMAKER_PORTAL_AUTHORIZATION }}
-          RELEASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ inputs.release_tag }}
+          PAYLOAD: ${{ steps.assets.outputs.payload }}
         run: |
+          body=$(jq -n --arg project_name "$PROJECT_NAME" --argjson payload "$PAYLOAD" \
+            '{project_name: $project_name, payload: $payload}')
+
           response=$(curl --fail-with-body --show-error \
             -H "X-Charon-GHA-Token: $FERRY_TOKEN" \
             -H "Authorization: $PORTAL_AUTHORIZATION" \
             -H "Content-Type: application/json" \
-            -d "{\"release_url\": \"${RELEASE_URL}\"}" \
-            "http://127.0.0.1:8888/kitmaker-portal/api/v0/projects/${KITMAKER_PROJECT_ID}/releases")
+            -d "$body" \
+            "http://127.0.0.1:8888/kitmaker-portal/api/v0/projects/${PROJECT_ID}/releases")
 
           echo "$response"
-          status_id=$(echo "$response" | jq -r '.uuid')
+          status_id=$(echo "$response" | jq -r '.release_uuid')
           echo "status_id=$status_id" >> "$GITHUB_OUTPUT"
 
       - name: Poll Kitmaker Portal status
@@ -171,13 +211,19 @@ jobs:
               -H "X-Charon-GHA-Token: $FERRY_TOKEN" \
               -H "Authorization: $PORTAL_AUTHORIZATION" \
               "http://127.0.0.1:8888/kitmaker-portal/api/v0/status/$STATUS_ID")
-            state=$(echo "$response" | jq -r '.state')
-            echo "Kitmaker Portal release status: $state"
-            case "$state" in
-              succeeded|completed|success)
+            status=$(echo "$response" | jq -r '.status')
+            echo "Kitmaker Portal release status: $status"
+            case "$status" in
+              completed)
                 exit 0
                 ;;
-              failed|error)
+              failed)
+                echo "$response"
+                exit 1
+                ;;
+              pending|in_progress) ;;
+              *)
+                echo "::error::Unexpected status '$status'"
                 echo "$response"
                 exit 1
                 ;;

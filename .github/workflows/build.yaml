@@ -322,9 +322,11 @@ jobs:
             "${wheels[@]}"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-  kitmaker-portal-release:
-    # Calls the Kitmaker Portal release API (via Charon Ferry) to publish the wheels
-    # from the GitHub Release above to pypi.org / pypi.nvidia.com.
+  # Each job below calls the Kitmaker Portal release API (via Charon Ferry) to publish
+  # one package's wheels from the GitHub Release above to pypi.org / pypi.nvidia.com.
+  # Kitmaker projects are 1:1 with wheel/component name, so one call per package,
+  # mirroring the wheel-publish-* jobs above.
+  kitmaker-portal-release-libcuopt:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: release-github
     permissions:
@@ -335,6 +337,51 @@ jobs:
     with:
       mode: release
       release_tag: ${{ needs.release-github.outputs.release-tag }}
+      project_name: libcuopt
+      project_id: ${{ vars.KITMAKER_PROJECT_ID_LIBCUOPT }}
+      wheel-asset-pattern: "^libcuopt-"
+  kitmaker-portal-release-cuopt:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release-github
+    permissions:
+      id-token: write
+      contents: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: ./.github/workflows/kitmaker_portal.yaml
+    with:
+      mode: release
+      release_tag: ${{ needs.release-github.outputs.release-tag }}
+      project_name: cuopt
+      project_id: ${{ vars.KITMAKER_PROJECT_ID_CUOPT }}
+      wheel-asset-pattern: "^cuopt-"
+  kitmaker-portal-release-cuopt-server:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release-github
+    permissions:
+      id-token: write
+      contents: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: ./.github/workflows/kitmaker_portal.yaml
+    with:
+      mode: release
+      release_tag: ${{ needs.release-github.outputs.release-tag }}
+      project_name: cuopt_server
+      project_id: ${{ vars.KITMAKER_PROJECT_ID_CUOPT_SERVER }}
+      wheel-asset-pattern: "^cuopt_server-"
+  kitmaker-portal-release-cuopt-sh-client:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release-github
+    permissions:
+      id-token: write
+      contents: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: ./.github/workflows/kitmaker_portal.yaml
+    with:
+      mode: release
+      release_tag: ${{ needs.release-github.outputs.release-tag }}
+      project_name: cuopt_sh_client
+      project_id: ${{ vars.KITMAKER_PROJECT_ID_CUOPT_SH_CLIENT }}
+      wheel-asset-pattern: "^cuopt_sh_client-"
 
   tests:
     # Docker image build / tests aren't necessary for the 'test.yaml' workflow,
