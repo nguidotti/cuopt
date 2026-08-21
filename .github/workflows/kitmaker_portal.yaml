@@ -33,6 +33,13 @@ on:
       pic:
         description: "pic: 'person in charge' email required by the Kitmaker release API. Defaults to vars.KITMAKER_RELEASE_PIC."
         type: string
+      upload:
+        description: |
+          upload: forwarded to the Kitmaker release API. 'false' (default) runs validation
+          checks only, with no real publish. Must be explicitly set to 'true' to actually
+          publish wheels. Only used for mode == 'release'.
+        type: boolean
+        default: false
     outputs:
       status_id:
         description: Kitmaker Portal status UUID created by mode == 'release'.
@@ -130,6 +137,7 @@ jobs:
         id: assets
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
+          UPLOAD: ${{ inputs.upload }}
         run: |
           urls_json=$(gh release view "$RELEASE_TAG" --repo "${{ github.repository }}" --json assets \
             --jq "[.assets[] | select(.name | test(\"$ASSET_PATTERN\")) | .url]")
@@ -139,8 +147,10 @@ jobs:
             exit 1
           fi
 
-          payload=$(echo "$urls_json" | jq -c --arg pic "$PIC" '
-            map({pic: $pic, job_type: "wheel-release-job", url: ., upload: true})
+          echo "upload=$UPLOAD (false = validate only, no real publish; true = publishes for real)"
+
+          payload=$(echo "$urls_json" | jq -c --arg pic "$PIC" --argjson upload "$UPLOAD" '
+            map({pic: $pic, job_type: "wheel-release-job", url: ., upload: $upload})
           ')
           echo "payload=$payload" >> "$GITHUB_OUTPUT"
 

@@ -340,6 +340,7 @@ jobs:
       project_name: libcuopt
       project_id: ${{ vars.KITMAKER_PROJECT_ID_LIBCUOPT }}
       wheel-asset-pattern: "^libcuopt-"
+      upload: true
   kitmaker-portal-release-cuopt:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: release-github
@@ -354,6 +355,7 @@ jobs:
       project_name: cuopt
       project_id: ${{ vars.KITMAKER_PROJECT_ID_CUOPT }}
       wheel-asset-pattern: "^cuopt-"
+      upload: true
   kitmaker-portal-release-cuopt-server:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: release-github
@@ -368,6 +370,7 @@ jobs:
       project_name: cuopt_server
       project_id: ${{ vars.KITMAKER_PROJECT_ID_CUOPT_SERVER }}
       wheel-asset-pattern: "^cuopt_server-"
+      upload: true
   kitmaker-portal-release-cuopt-sh-client:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: release-github
@@ -382,6 +385,7 @@ jobs:
       project_name: cuopt_sh_client
       project_id: ${{ vars.KITMAKER_PROJECT_ID_CUOPT_SH_CLIENT }}
       wheel-asset-pattern: "^cuopt_sh_client-"
+      upload: true
 
   tests:
     # Docker image build / tests aren't necessary for the 'test.yaml' workflow,
