@@ -88,7 +88,7 @@ defaults:
 jobs:
   smoke-test:
     if: inputs.mode == 'smoke-test'
-    runs-on: [self-hosted, linux]
+    runs-on: linux-amd64-cpu4
     permissions:
       id-token: write
       contents: read
@@ -148,7 +148,7 @@ jobs:
     # Schema (POST /api/v0/projects/{id}/releases, GET /api/v0/status/{uuid}) follows
     # https://kitmaker.gitlab-master-pages.nvidia.com/kitmaker-docs/users/portal-api/wheel-release-api.html
     if: inputs.mode == 'release'
-    runs-on: [self-hosted, linux]
+    runs-on: linux-amd64-cpu4
     permissions:
       id-token: write
       contents: read
