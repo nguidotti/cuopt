@@ -81,17 +81,14 @@ on:
         type: boolean
         default: false
 
-defaults:
-  run:
-    shell: bash
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
   smoke-test:
     if: inputs.mode == 'smoke-test'
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
     env:
       # Referenced here (unused) so GitHub Actions masks it in this job's logs too,
       # since a polled status response can echo a release's pic email back.
@@ -139,9 +136,6 @@ jobs:
   release:
     if: inputs.mode == 'release'
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
     outputs:
       status_id: ${{ steps.kitmaker-release.outputs.status_id }}
     env:
