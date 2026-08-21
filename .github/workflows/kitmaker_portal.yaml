@@ -131,7 +131,7 @@ jobs:
             exit 1
           fi
 
-          curl --fail-with-body --show-error \
+          curl --fail-with-body --show-error --retry 3 --retry-delay 5 \
             -H "X-Charon-GHA-Token: $FERRY_TOKEN" \
             -H "Authorization: Bearer $PORTAL_AUTHORIZATION" \
             "http://127.0.0.1:8888/kitmaker-portal/api/v0/status/$STATUS_ID"
@@ -213,7 +213,7 @@ jobs:
           body=$(jq -n --arg project_name "$PROJECT_NAME" --argjson payload "$PAYLOAD" \
             '{project_name: $project_name, payload: $payload}')
 
-          http_response=$(curl -sS -w '\n%{http_code}' \
+          http_response=$(curl -sS --retry 3 --retry-delay 5 -w '\n%{http_code}' \
             -H "X-Charon-GHA-Token: $FERRY_TOKEN" \
             -H "Authorization: Bearer $PORTAL_AUTHORIZATION" \
             -H "Content-Type: application/json" \
@@ -240,7 +240,7 @@ jobs:
           STATUS_ID: ${{ steps.kitmaker-release.outputs.status_id }}
         run: |
           for _ in $(seq 1 60); do
-            http_response=$(curl -sS -w '\n%{http_code}' \
+            http_response=$(curl -sS --retry 3 --retry-delay 5 -w '\n%{http_code}' \
               -H "X-Charon-GHA-Token: $FERRY_TOKEN" \
               -H "Authorization: Bearer $PORTAL_AUTHORIZATION" \
               "http://127.0.0.1:8888/kitmaker-portal/api/v0/status/$STATUS_ID")
@@ -269,3 +269,26 @@ jobs:
           done
           echo "Timed out waiting for Kitmaker Portal release to complete"
           exit 1
+
+      - name: Notify Slack on failure
+        if: failure()
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.CUOPT_SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.CUOPT_SLACK_CHANNEL_ID }}
+          SLACK_MENTION_ID: ${{ secrets.CUOPT_SLACK_MENTION_ID }}
+          PROJECT_NAME: ${{ inputs.project_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [[ -z "$SLACK_BOT_TOKEN" || -z "$SLACK_CHANNEL_ID" ]]; then
+            echo "SLACK_BOT_TOKEN or SLACK_CHANNEL_ID not set, skipping notification."
+            exit 0
+          fi
+
+          mention="${SLACK_MENTION_ID:+<@${SLACK_MENTION_ID}> }"
+          text="${mention}Kitmaker Portal release failed for project '${PROJECT_NAME}': ${RUN_URL}"
+
+          curl -sS --max-time 30 -X POST \
+            -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data "$(jq -n --arg channel "$SLACK_CHANNEL_ID" --arg text "$text" '{channel: $channel, text: $text}')" \
+            "https://slack.com/api/chat.postMessage"
