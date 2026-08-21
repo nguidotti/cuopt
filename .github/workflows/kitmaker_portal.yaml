@@ -31,7 +31,7 @@ on:
           Required for mode == 'release'.
         type: string
       pic:
-        description: "pic: 'person in charge' email required by the Kitmaker release API. Defaults to secrets.KITMAKER_RELEASE_PIC."
+        description: "pic: 'person in charge' email required by the Kitmaker release API. Defaults to secrets.KITMAKER_PORTAL_ACC_OWNER_EMAIL."
         type: string
       upload:
         description: |
@@ -72,7 +72,7 @@ on:
           Required for mode == 'release'.
         type: string
       pic:
-        description: "pic: 'person in charge' email required by the Kitmaker release API. Defaults to secrets.KITMAKER_RELEASE_PIC."
+        description: "pic: 'person in charge' email required by the Kitmaker release API. Defaults to secrets.KITMAKER_PORTAL_ACC_OWNER_EMAIL."
         type: string
       upload:
         description: |
@@ -148,7 +148,7 @@ jobs:
       PROJECT_NAME: ${{ inputs.project_name }}
       PROJECT_ID: ${{ inputs.project_id }}
       ASSET_PATTERN: ${{ inputs.wheel_asset_pattern }}
-      PIC: ${{ inputs.pic || secrets.KITMAKER_RELEASE_PIC }}
+      PIC: ${{ inputs.pic || secrets.KITMAKER_PORTAL_ACC_OWNER_EMAIL }}
     steps:
       - name: Validate inputs
         run: |
@@ -156,7 +156,7 @@ jobs:
           [[ -n "$PROJECT_NAME" ]] || { echo "::error::mode == 'release' requires 'project_name'"; exit 1; }
           [[ -n "$PROJECT_ID" ]] || { echo "::error::mode == 'release' requires 'project_id'"; exit 1; }
           [[ -n "$ASSET_PATTERN" ]] || { echo "::error::mode == 'release' requires 'wheel_asset_pattern'"; exit 1; }
-          [[ -n "$PIC" ]] || { echo "::error::'pic' input or secrets.KITMAKER_RELEASE_PIC must be set"; exit 1; }
+          [[ -n "$PIC" ]] || { echo "::error::'pic' input or secrets.KITMAKER_PORTAL_ACC_OWNER_EMAIL must be set"; exit 1; }
 
       - name: Collect wheel asset URLs from the GitHub Release
         id: assets
