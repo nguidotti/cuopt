@@ -263,12 +263,11 @@ jobs:
                 echo "$response"
                 exit 1
                 ;;
-              pending|in_progress) ;;
-              *)
-                echo "::error::Unexpected status '$status'"
-                echo "$response"
-                exit 1
-                ;;
+              # Any other status (e.g. 'pending', 'in_progress', 'processing') is
+              # treated as still-in-progress: keep polling rather than hard-failing
+              # on a status value not covered by the documented pending|in_progress
+              # |completed|failed set (observed 'processing' in practice).
+              *) ;;
             esac
             sleep 30
           done
