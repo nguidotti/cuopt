@@ -24,9 +24,9 @@ on:
       project_id:
         description: "project_id: numeric Kitmaker project ID (from GET /api/v0/projects). Required for mode == 'release'."
         type: string
-      wheel-asset-pattern:
+      wheel_asset_pattern:
         description: |
-          wheel-asset-pattern: extended regex (matched with jq's 'test()') selecting this
+          wheel_asset_pattern: extended regex (matched with jq's 'test()') selecting this
           project's wheel/sdist asset names out of the GitHub Release, e.g. '^libcuopt-'.
           Required for mode == 'release'.
         type: string
@@ -44,6 +44,42 @@ on:
       status_id:
         description: Kitmaker Portal status UUID created by mode == 'release'.
         value: ${{ jobs.release.outputs.status_id }}
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "mode: 'smoke-test' polls an existing status ID. 'release' requests a new release and polls it."
+        required: true
+        type: choice
+        options:
+          - smoke-test
+          - release
+      status_id:
+        description: "status_id: existing Kitmaker Portal status UUID. Required for mode == 'smoke-test'."
+        type: string
+      release_tag:
+        description: "release_tag: git tag whose GitHub Release assets should be published to Kitmaker. Required for mode == 'release'."
+        type: string
+      project_name:
+        description: "project_name: Kitmaker project name. Must exactly match the registered project. Required for mode == 'release'."
+        type: string
+      project_id:
+        description: "project_id: numeric Kitmaker project ID (from GET /api/v0/projects). Required for mode == 'release'."
+        type: string
+      wheel_asset_pattern:
+        description: |
+          wheel_asset_pattern: extended regex (matched with jq's 'test()') selecting this
+          project's wheel/sdist asset names out of the GitHub Release, e.g. '^libcuopt-'.
+          Required for mode == 'release'.
+        type: string
+      pic:
+        description: "pic: 'person in charge' email required by the Kitmaker release API. Defaults to vars.KITMAKER_RELEASE_PIC."
+        type: string
+      upload:
+        description: |
+          upload: forwarded to the Kitmaker release API. 'false' (default) runs validation
+          checks only, with no real publish. Only used for mode == 'release'.
+        type: boolean
+        default: false
 
 defaults:
   run:
@@ -122,7 +158,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       PROJECT_NAME: ${{ inputs.project_name }}
       PROJECT_ID: ${{ inputs.project_id }}
-      ASSET_PATTERN: ${{ inputs.wheel-asset-pattern }}
+      ASSET_PATTERN: ${{ inputs.wheel_asset_pattern }}
       PIC: ${{ inputs.pic || vars.KITMAKER_RELEASE_PIC }}
     steps:
       - name: Validate inputs
@@ -130,7 +166,7 @@ jobs:
           [[ -n "${{ inputs.release_tag }}" ]] || { echo "::error::mode == 'release' requires 'release_tag'"; exit 1; }
           [[ -n "$PROJECT_NAME" ]] || { echo "::error::mode == 'release' requires 'project_name'"; exit 1; }
           [[ -n "$PROJECT_ID" ]] || { echo "::error::mode == 'release' requires 'project_id'"; exit 1; }
-          [[ -n "$ASSET_PATTERN" ]] || { echo "::error::mode == 'release' requires 'wheel-asset-pattern'"; exit 1; }
+          [[ -n "$ASSET_PATTERN" ]] || { echo "::error::mode == 'release' requires 'wheel_asset_pattern'"; exit 1; }
           [[ -n "$PIC" ]] || { echo "::error::'pic' input or vars.KITMAKER_RELEASE_PIC must be set"; exit 1; }
 
       - name: Collect wheel asset URLs from the GitHub Release
