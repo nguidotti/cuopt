@@ -7,6 +7,15 @@ on:
   push:
     branches:
       - "pull-request/[0-9]+"
+  workflow_dispatch:
+    inputs:
+      kitmaker_status_id:
+        description: |
+          kitmaker_status_id: existing Kitmaker Portal status UUID to poll, e.g. one
+          returned by a prior 'kitmaker-portal-release' run in build.yaml.
+          Used only to smoke-test the Charon Ferry -> kitmaker-portal path in staging.
+        required: true
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -585,6 +594,20 @@ jobs:
     with:
       build_type: pull-request
       script: ci/test_self_hosted_service.sh
+  kitmaker-portal-smoke-test:
+    # Manual-only POC call to validate the Charon Ferry -> kitmaker-portal.nvidia.com
+    # (staging) path before wiring the real publish call in build.yaml. Not part of
+    # pr-builder's required checks since it isn't triggered by normal PR pushes.
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      id-token: write
+      contents: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: ./.github/workflows/kitmaker_portal.yaml
+    with:
+      mode: smoke-test
+      status_id: ${{ inputs.kitmaker_status_id }}
+
   pr-test-summary:
     name: "PR test summary (non-blocking)"
     needs:

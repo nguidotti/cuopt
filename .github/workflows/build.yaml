@@ -287,6 +287,55 @@ jobs:
       package-name: cuopt_sh_client
       package-type: python
       publish-wheel-search-key: cuopt_wheel_python_cuopt-sh-client
+  release-github:
+    # Attaches the built wheels to a GitHub Release on the version tag, so Kitmaker
+    # can pull them from a public Release URL (Kitmaker itself never reaches inside NVIDIA).
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - wheel-publish-libcuopt
+      - wheel-publish-cuopt
+      - wheel-publish-cuopt-server
+      - wheel-publish-cuopt-sh-client
+    permissions:
+      contents: write
+    runs-on: linux-amd64-cpu4
+    outputs:
+      release-tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - name: Download built wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "wheel_*"
+          path: dist
+          merge-multiple: true
+      - name: Create GitHub Release and upload wheels
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          mapfile -t wheels < <(find dist -name '*.whl')
+          gh release create "$tag" \
+            --repo "${{ github.repository }}" \
+            --title "$tag" \
+            --generate-notes \
+            "${wheels[@]}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  kitmaker-portal-release:
+    # Calls the Kitmaker Portal release API (via Charon Ferry) to publish the wheels
+    # from the GitHub Release above to pypi.org / pypi.nvidia.com.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release-github
+    permissions:
+      id-token: write
+      contents: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: ./.github/workflows/kitmaker_portal.yaml
+    with:
+      mode: release
+      release_tag: ${{ needs.release-github.outputs.release-tag }}
+
   tests:
     # Docker image build / tests aren't necessary for the 'test.yaml' workflow,
     # so 'test.yaml' can be triggered without waiting for those.

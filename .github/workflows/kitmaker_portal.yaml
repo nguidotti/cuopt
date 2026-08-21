@@ -1,0 +1,188 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Kitmaker Portal (via Charon Ferry)
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: |
+          mode: 'smoke-test' polls an existing Kitmaker Portal status ID (no side effects).
+          'release' requests a new release for 'release_tag' and polls it to completion.
+        required: true
+        type: string
+      status_id:
+        description: "status_id: existing Kitmaker Portal status UUID. Required for mode == 'smoke-test'."
+        type: string
+      release_tag:
+        description: "release_tag: git tag whose GitHub Release should be published to Kitmaker. Required for mode == 'release'."
+        type: string
+    outputs:
+      status_id:
+        description: Kitmaker Portal status UUID created by mode == 'release'.
+        value: ${{ jobs.release.outputs.status_id }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  smoke-test:
+    if: inputs.mode == 'smoke-test'
+    runs-on: [self-hosted, linux]
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Start staging Ferry tunnel
+        run: |
+          command -v tbot
+
+          cat > "$RUNNER_TEMP/tbot.yaml" <<'YAML'
+          version: v2
+          proxy_server: nv-stg-ps.teleport.sh:443
+          onboarding:
+            join_method: github
+            token: charon-gha-runners
+          storage:
+            type: memory
+          outputs: []
+          services:
+            - type: application-tunnel
+              app_name: charon
+              listen: tcp://127.0.0.1:8888
+          YAML
+
+          tbot start -c "$RUNNER_TEMP/tbot.yaml" \
+            >"$RUNNER_TEMP/tbot.log" 2>&1 &
+
+          timeout 30 bash -c \
+            'until curl -sf http://127.0.0.1:8888/ready >/dev/null; do sleep 1; done'
+
+      - name: Mint Ferry identity token
+        id: ferry-token
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const token = await core.getIDToken('charon.nvidia.com');
+            core.setSecret(token);
+            core.setOutput('token', token);
+
+      - name: Poll Kitmaker Portal status
+        env:
+          FERRY_TOKEN: ${{ steps.ferry-token.outputs.token }}
+          # Store the complete value, such as "Bearer …", in this secret.
+          PORTAL_AUTHORIZATION: ${{ secrets.KITMAKER_PORTAL_AUTHORIZATION }}
+          STATUS_ID: ${{ inputs.status_id }}
+        run: |
+          if [[ -z "$STATUS_ID" ]]; then
+            echo "::error::mode == 'smoke-test' requires 'status_id'"
+            exit 1
+          fi
+
+          curl --fail-with-body --show-error \
+            -H "X-Charon-GHA-Token: $FERRY_TOKEN" \
+            -H "Authorization: $PORTAL_AUTHORIZATION" \
+            "http://127.0.0.1:8888/kitmaker-portal/api/v0/status/$STATUS_ID"
+
+  release:
+    # NOTE: request/response field names below (release_url, uuid, state) are best-effort
+    # from the Slack thread with Andrew Dickson / Jesus Alvarez (KITMAKER-4800) and must be
+    # confirmed against the actual Kitmaker Portal API contract before this can run for real.
+    if: inputs.mode == 'release'
+    runs-on: [self-hosted, linux]
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      status_id: ${{ steps.kitmaker-release.outputs.status_id }}
+    env:
+      KITMAKER_PROJECT_ID: ${{ vars.KITMAKER_PROJECT_ID }}
+    steps:
+      - name: Require a release tag
+        run: |
+          if [[ -z "${{ inputs.release_tag }}" ]]; then
+            echo "::error::mode == 'release' requires 'release_tag'"
+            exit 1
+          fi
+
+      - name: Start staging Ferry tunnel
+        run: |
+          command -v tbot
+
+          cat > "$RUNNER_TEMP/tbot.yaml" <<'YAML'
+          version: v2
+          proxy_server: nv-stg-ps.teleport.sh:443
+          onboarding:
+            join_method: github
+            token: charon-gha-runners
+          storage:
+            type: memory
+          outputs: []
+          services:
+            - type: application-tunnel
+              app_name: charon
+              listen: tcp://127.0.0.1:8888
+          YAML
+
+          tbot start -c "$RUNNER_TEMP/tbot.yaml" \
+            >"$RUNNER_TEMP/tbot.log" 2>&1 &
+
+          timeout 30 bash -c \
+            'until curl -sf http://127.0.0.1:8888/ready >/dev/null; do sleep 1; done'
+
+      - name: Mint Ferry identity token
+        id: ferry-token
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const token = await core.getIDToken('charon.nvidia.com');
+            core.setSecret(token);
+            core.setOutput('token', token);
+
+      - name: Request Kitmaker Portal release
+        id: kitmaker-release
+        env:
+          FERRY_TOKEN: ${{ steps.ferry-token.outputs.token }}
+          # Store the complete value, such as "Bearer …", in this secret.
+          PORTAL_AUTHORIZATION: ${{ secrets.KITMAKER_PORTAL_AUTHORIZATION }}
+          RELEASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ inputs.release_tag }}
+        run: |
+          response=$(curl --fail-with-body --show-error \
+            -H "X-Charon-GHA-Token: $FERRY_TOKEN" \
+            -H "Authorization: $PORTAL_AUTHORIZATION" \
+            -H "Content-Type: application/json" \
+            -d "{\"release_url\": \"${RELEASE_URL}\"}" \
+            "http://127.0.0.1:8888/kitmaker-portal/api/v0/projects/${KITMAKER_PROJECT_ID}/releases")
+
+          echo "$response"
+          status_id=$(echo "$response" | jq -r '.uuid')
+          echo "status_id=$status_id" >> "$GITHUB_OUTPUT"
+
+      - name: Poll Kitmaker Portal status
+        env:
+          FERRY_TOKEN: ${{ steps.ferry-token.outputs.token }}
+          PORTAL_AUTHORIZATION: ${{ secrets.KITMAKER_PORTAL_AUTHORIZATION }}
+          STATUS_ID: ${{ steps.kitmaker-release.outputs.status_id }}
+        run: |
+          for _ in $(seq 1 60); do
+            response=$(curl --fail-with-body --show-error \
+              -H "X-Charon-GHA-Token: $FERRY_TOKEN" \
+              -H "Authorization: $PORTAL_AUTHORIZATION" \
+              "http://127.0.0.1:8888/kitmaker-portal/api/v0/status/$STATUS_ID")
+            state=$(echo "$response" | jq -r '.state')
+            echo "Kitmaker Portal release status: $state"
+            case "$state" in
+              succeeded|completed|success)
+                exit 0
+                ;;
+              failed|error)
+                echo "$response"
+                exit 1
+                ;;
+            esac
+            sleep 30
+          done
+          echo "Timed out waiting for Kitmaker Portal release to complete"
+          exit 1
