@@ -88,35 +88,24 @@ defaults:
 jobs:
   smoke-test:
     if: inputs.mode == 'smoke-test'
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
     steps:
+      - name: Install Teleport
+        uses: teleport-actions/setup@v1
+        with:
+          version: auto
+          proxy: nv-stg-ps.teleport.sh:443
+
       - name: Start staging Ferry tunnel
-        run: |
-          command -v tbot
-
-          cat > "$RUNNER_TEMP/tbot.yaml" <<'YAML'
-          version: v2
-          proxy_server: nv-stg-ps.teleport.sh:443
-          onboarding:
-            join_method: github
-            token: charon-gha-runners
-          storage:
-            type: memory
-          outputs: []
-          services:
-            - type: application-tunnel
-              app_name: charon
-              listen: tcp://127.0.0.1:8888
-          YAML
-
-          tbot start -c "$RUNNER_TEMP/tbot.yaml" \
-            >"$RUNNER_TEMP/tbot.log" 2>&1 &
-
-          timeout 30 bash -c \
-            'until curl -sf http://127.0.0.1:8888/ready >/dev/null; do sleep 1; done'
+        uses: teleport-actions/application-tunnel@v1
+        with:
+          proxy: nv-stg-ps.teleport.sh:443
+          token: charon-gha-runners
+          app: charon
+          listen: tcp://127.0.0.1:8888
 
       - name: Mint Ferry identity token
         id: ferry-token
@@ -148,7 +137,7 @@ jobs:
     # Schema (POST /api/v0/projects/{id}/releases, GET /api/v0/status/{uuid}) follows
     # https://kitmaker.gitlab-master-pages.nvidia.com/kitmaker-docs/users/portal-api/wheel-release-api.html
     if: inputs.mode == 'release'
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
@@ -190,30 +179,19 @@ jobs:
           ')
           echo "payload=$payload" >> "$GITHUB_OUTPUT"
 
+      - name: Install Teleport
+        uses: teleport-actions/setup@v1
+        with:
+          version: auto
+          proxy: nv-stg-ps.teleport.sh:443
+
       - name: Start staging Ferry tunnel
-        run: |
-          command -v tbot
-
-          cat > "$RUNNER_TEMP/tbot.yaml" <<'YAML'
-          version: v2
-          proxy_server: nv-stg-ps.teleport.sh:443
-          onboarding:
-            join_method: github
-            token: charon-gha-runners
-          storage:
-            type: memory
-          outputs: []
-          services:
-            - type: application-tunnel
-              app_name: charon
-              listen: tcp://127.0.0.1:8888
-          YAML
-
-          tbot start -c "$RUNNER_TEMP/tbot.yaml" \
-            >"$RUNNER_TEMP/tbot.log" 2>&1 &
-
-          timeout 30 bash -c \
-            'until curl -sf http://127.0.0.1:8888/ready >/dev/null; do sleep 1; done'
+        uses: teleport-actions/application-tunnel@v1
+        with:
+          proxy: nv-stg-ps.teleport.sh:443
+          token: charon-gha-runners
+          app: charon
+          listen: tcp://127.0.0.1:8888
 
       - name: Mint Ferry identity token
         id: ferry-token
