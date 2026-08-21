@@ -284,7 +284,12 @@ jobs:
             exit 0
           fi
 
-          mention="${SLACK_MENTION_ID:+<@${SLACK_MENTION_ID}> }"
+          mention=""
+          if [[ "$SLACK_MENTION_ID" == S* ]]; then
+            mention="<!subteam^${SLACK_MENTION_ID}> "
+          elif [[ -n "$SLACK_MENTION_ID" ]]; then
+            mention="<@${SLACK_MENTION_ID}> "
+          fi
           text="${mention}Kitmaker Portal release failed for project '${PROJECT_NAME}': ${RUN_URL}"
 
           curl -sS --max-time 30 -X POST \
