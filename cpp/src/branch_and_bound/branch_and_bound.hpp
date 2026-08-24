@@ -387,15 +387,13 @@ class branch_and_bound_t {
                     submip_stats_t& submip_stats,
                     f_t fixrate,
                     i_t simplex_iter_used,
-                    bool is_root_heuristic = false,
-                        std::atomic<int>* halt = nullptr);
+                    simplex::simplex_solver_settings_t<i_t, f_t> submip_settings);
 
   // Creates and solves the RINS/RENS sub-MIP.
   void recursive_submip(diving_worker_t<i_t, f_t>* worker,
                         const std::vector<f_t>& current_incumbent,
                         const std::vector<simplex::variable_type_t>& var_types,
-            bool is_root_heuristic = false,
-                        std::atomic<int>* halt = nullptr);
+                        simplex::simplex_solver_settings_t<i_t, f_t> submip_settings);
 
   void launch_root_heuristics(const simplex::lp_problem_t<i_t, f_t>& lp,
                               const std::vector<f_t>& sol,

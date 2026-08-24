@@ -32,6 +32,7 @@ struct cut_pass_heuristics_t {
       Arow_(Arow),
       root_solution_(root_solution),
       root_edge_norm_(root_edge_norm),
+      halt_(false),
       submip_worker_(nullptr) {};
 
   ~cut_pass_heuristics_t() { stop_and_sync(); }
@@ -109,6 +110,8 @@ struct root_heuristics_t {
     for (auto& heuristic : cut_passes_heuristics_) {
       heuristic->stop_and_sync();
     }
+
+    cut_passes_heuristics_.clear();
   }
 
   std::shared_ptr<cut_pass_heuristics_t<i_t, f_t>> create_new_cut_pass_heuristic(
