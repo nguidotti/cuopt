@@ -46,7 +46,7 @@
 #include <utilities/scope_guard.hpp>
 #include <vector>
 
-#define SUBMIP_VERBOSE false
+#define SUBMIP_VERBOSE true
 #if SUBMIP_VERBOSE
 #define DEBUG_SUBMIP(fmt, ...) settings_.log.print_format(fmt, __VA_ARGS__);
 #else
@@ -2651,6 +2651,60 @@ f_t calculate_fixrate(const std::vector<i_t>& integer_list,
 }
 
 template <typename i_t, typename f_t>
+void sort_by_implied_slack_consumption(const lp_problem_t<i_t, f_t>& lp,
+                                       const csr_matrix_t<i_t, f_t>& Arow,
+                                       std::vector<i_t>& list,
+                                       f_t zero_tol)
+{
+  i_t n = Arow.n;
+  i_t m = Arow.m;
+
+  std::vector<f_t> slack_up(m, 0);
+  std::vector<f_t> slack_down(m, 0);
+  std::vector<f_t> implied_slack_consumption(n, 0);
+
+  for (i_t i = 0; i < m; ++i) {
+    i_t row_start = Arow.row_start[i];
+    i_t row_end   = Arow.row_start[i + 1];
+    f_t min_alpha = 0;  // Minimum activity bounds
+    f_t max_alpha = 0;  // Maximum activity bounds
+
+    for (i_t k = row_start; k < row_end; ++k) {
+      i_t j = Arow.j[k];
+      if (Arow.x[k] > 0) {
+        max_alpha += Arow.x[k] * lp.upper[j];
+        min_alpha += Arow.x[k] * lp.lower[j];
+      } else {
+        max_alpha += Arow.x[k] * lp.lower[j];
+        min_alpha += Arow.x[k] * lp.upper[j];
+      }
+    }
+
+    slack_down[i] = lp.rhs[i] - max_alpha;
+    slack_up[i]   = lp.rhs[i] - min_alpha;
+  }
+
+  for (i_t j : list) {
+    f_t sigma     = 0.0;  // Implied slack consumption for variable j
+    i_t col_start = lp.A.col_start[j];
+    i_t col_end   = lp.A.col_start[j + 1];
+    for (i_t k = col_start; k < col_end; ++k) {
+      i_t i   = lp.A.i[k];
+      f_t aij = lp.A.x[k];
+      sigma += std::abs(slack_up[i]) < zero_tol ? 1000 : aij * aij / slack_up[i] / slack_up[i];
+      sigma +=
+        std::abs(slack_down[i]) < zero_tol ? 1000 : aij * aij / slack_down[i] / slack_down[i];
+    }
+
+    implied_slack_consumption[j] = sigma;
+  }
+
+  std::sort(list.begin(), list.end(), [&implied_slack_consumption](auto a, auto b) {
+    return implied_slack_consumption[a] < implied_slack_consumption[b];
+  });
+}
+
+template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::recursive_submip(
   diving_worker_t<i_t, f_t>* worker,
   const std::vector<f_t>& current_incumbent,
@@ -2710,9 +2764,11 @@ void branch_and_bound_t<i_t, f_t>::recursive_submip(
     i_t num_bound_changed    = 0;
     // Shuffle the fractional and integer list, so every variable has the same chance to the picked
     // (we iterate the list in order).
-    worker->rng.shuffle(integer_list);
     worker->rng.shuffle(fractional);
+
     if (worker->search_strategy == search_strategy_t::RINS) {
+      worker->rng.shuffle(integer_list);
+
       // RINS neighbourhood: Fix all the integer variables where the current solution matches the
       // incumbent. We are using the `max_fixrate` here to allow RINS to fix all integer variables
       // that it can within our budget.
@@ -2741,6 +2797,9 @@ void branch_and_bound_t<i_t, f_t>::recursive_submip(
           break;
         }
       }
+
+      sort_by_implied_slack_consumption(
+        worker->leaf_problem, worker->Arow, integer_list, settings_.zero_tol);
 
       num_bound_changed = apply_rens_fixings(
         settings_, current_sol, integer_list, round_target, lower, upper, bounds_changed);

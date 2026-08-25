@@ -58,6 +58,7 @@ class branch_and_bound_worker_t {
   simplex::lp_solution_t<i_t, f_t> leaf_solution;
   std::vector<simplex::variable_status_t> leaf_vstatus;
   std::vector<f_t> leaf_edge_norms;
+  const csr_matrix_t<i_t, f_t>& Arow;
 
   simplex::basis_update_mpf_t<i_t, f_t> basis_factors;
   std::vector<i_t> basic_list;
@@ -107,6 +108,7 @@ class branch_and_bound_worker_t {
       leaf_problem(original_lp),
       leaf_solution(original_lp.num_rows, original_lp.num_cols),
       leaf_vstatus(original_lp.num_cols),
+      Arow(Arow),
       basis_factors(original_lp.num_rows, settings.refactor_frequency),
       basic_list(original_lp.num_rows),
       nonbasic_list(),
