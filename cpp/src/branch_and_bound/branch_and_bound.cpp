@@ -2697,6 +2697,16 @@ void branch_and_bound_t<i_t, f_t>::recursive_submip(diving_worker_t<i_t, f_t>* w
     f_t round_target_fixrate = std::min(distance, max_fixrate) - prev_fixrate;
     i_t round_target         = round_target_fixrate * num_integers;
     i_t num_bound_changed    = 0;
+
+    if (round_target == 0) {
+      round_target_fixrate = max_fixrate - prev_fixrate;
+      round_target         = round_target_fixrate * num_integers;
+      if (round_target == 0) {
+        has_submip = fixrate > 0;
+        break;
+      }
+    }
+
     // Shuffle the fractional and integer list, so every variable has the same chance to the picked
     // (we iterate the list in order).
     worker->rng.shuffle(integer_list);
@@ -2709,7 +2719,7 @@ void branch_and_bound_t<i_t, f_t>::recursive_submip(diving_worker_t<i_t, f_t>* w
                                              current_sol,
                                              integer_list,
                                              current_incumbent,
-                                             max_fixrate - prev_fixrate,
+                                             round_target_fixrate,
                                              lower,
                                              upper,
                                              bounds_changed);
@@ -2722,15 +2732,6 @@ void branch_and_bound_t<i_t, f_t>::recursive_submip(diving_worker_t<i_t, f_t>* w
       }
 
     } else if (worker->search_strategy == search_strategy_t::RENS) {
-      if (round_target == 0) {
-        round_target_fixrate = max_fixrate - prev_fixrate;
-        round_target         = round_target_fixrate * num_integers;
-        if (round_target == 0) {
-          has_submip = fixrate > 0;
-          break;
-        }
-      }
-
       num_bound_changed = apply_rens_fixings(
         settings_, current_sol, integer_list, round_target, lower, upper, bounds_changed);
     }
@@ -2739,15 +2740,6 @@ void branch_and_bound_t<i_t, f_t>::recursive_submip(diving_worker_t<i_t, f_t>* w
     // iteration. Iterate over the fractional variables again and fixing those that closest to
     // an integer solution first in order to reach the fixing threshold.
     if (num_bound_changed == 0) {
-      if (round_target == 0) {
-        round_target_fixrate = max_fixrate - prev_fixrate;
-        round_target         = round_target_fixrate * num_integers;
-        if (round_target == 0) {
-          has_submip = fixrate > 0;
-          break;
-        }
-      }
-
       num_bound_changed = extend_variable_fixings(settings_,
                                                   worker->leaf_problem.objective,
                                                   fractional,
