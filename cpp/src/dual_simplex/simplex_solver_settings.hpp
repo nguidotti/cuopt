@@ -108,6 +108,9 @@ struct simplex_solver_settings_t {
       bnb_steal_chance(-1),
       bnb_nodes_per_steal(-1),
       bnb_max_steal_attempts(-1),
+      bnb_plunge_gap_factor(0.25),
+      bnb_min_plunge_depth(0.1),
+      bnb_max_plunge_depth(0.5),
       reliability_branching(-1),
       inside_mip(0),
       inside_submip(0),
@@ -222,6 +225,9 @@ struct simplex_solver_settings_t {
   f_t bnb_steal_chance;
   i_t bnb_nodes_per_steal;
   i_t bnb_max_steal_attempts;
+  f_t bnb_plunge_gap_factor;
+  f_t bnb_min_plunge_depth;
+  f_t bnb_max_plunge_depth;
 
   // Settings for the reliability branching.
   // - -1: automatic

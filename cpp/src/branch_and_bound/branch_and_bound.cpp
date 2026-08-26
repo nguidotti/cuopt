@@ -1722,6 +1722,7 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
     // relaxation
     // - The lower bound of the parent is lower or equal to its children
     worker->lower_bound = node_ptr->lower_bound;
+    fetch_max(exploration_stats_.max_node_depth, node_ptr->depth);
 
     if (node_ptr->lower_bound > upper_bound_.load()) {
       search_tree_.graphviz_node(settings_.log, node_ptr, "cutoff", node_ptr->lower_bound);
@@ -1770,6 +1771,18 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
       stack.push_front(node_ptr);
       --exploration_stats_.nodes_being_solved;
       break;
+    }
+
+    i_t max_node_depth = exploration_stats_.max_node_depth;
+    i_t plunge_depth   = node_ptr->depth - start_node->depth;
+
+    if (plunge_depth >= settings_.bnb_min_plunge_depth * max_node_depth) {
+      f_t max_bound = lower_bound + settings_.bnb_plunge_gap_factor * (upper_bound - lower_bound);
+      if (node_ptr->lower_bound >= max_bound ||
+          plunge_depth >= settings_.bnb_max_plunge_depth * max_node_depth) {
+        stack.push_front(node_ptr);
+        break;
+      }
     }
 
     decompress_vstatus(

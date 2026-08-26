@@ -219,6 +219,7 @@ class omp_atomic_t {
 
   friend double fetch_min(omp_atomic_t<double>& atomic_var, double other);
   friend double fetch_max(omp_atomic_t<double>& atomic_var, double other);
+  friend double fetch_max(omp_atomic_t<int>& atomic_var, int other);
 };
 
 // Free non-template functions are necessary because of a clang 20 bug
@@ -236,6 +237,17 @@ inline double fetch_min(omp_atomic_t<double>& atomic_var, double other)
 }
 
 inline double fetch_max(omp_atomic_t<double>& atomic_var, double other)
+{
+  double old;
+#pragma omp atomic compare capture
+  {
+    old = atomic_var.val;
+    if (other > atomic_var.val) { atomic_var.val = other; }
+  }
+  return old;
+}
+
+inline double fetch_max(omp_atomic_t<int>& atomic_var, int other)
 {
   double old;
 #pragma omp atomic compare capture
