@@ -59,7 +59,7 @@ inline constexpr int probing_budget_step_size = 128;
 // Being exempt still means a bounded badge. Leaving it uncapped hands Papilo ncols/2, which on wide
 // problems is enormous and costs most of the presolve budget for nothing: rail01 went to badge
 // 58763 and Papilo 12.1s -> 49.2s. 1024 keeps the reduction that mattered on triptim1 and mzzv11.
-inline constexpr double papilo_badge_cost_threshold = 5.0e5;
+inline constexpr double papilo_badge_cost_threshold = 1E6;
 inline constexpr int papilo_badge_clamped           = 32;
 inline constexpr int papilo_badge_exempt            = 1024;
 
