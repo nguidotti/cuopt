@@ -214,50 +214,31 @@ class omp_atomic_t {
   T& underlying() { return val; }
   T underlying() const { return val; }
 
+  T fetch_min(T other)
+  {
+    T old;
+#pragma omp atomic compare capture
+    {
+      old = val;
+      if (other < val) { val = other; }
+    }
+    return old;
+  }
+
+  T fetch_max(T other)
+  {
+    T old;
+#pragma omp atomic compare capture
+    {
+      old = val;
+      if (other > val) { val = other; }
+    }
+    return old;
+  }
+
  private:
   T val;
-
-  friend double fetch_min(omp_atomic_t<double>& atomic_var, double other);
-  friend double fetch_max(omp_atomic_t<double>& atomic_var, double other);
-  friend double fetch_max(omp_atomic_t<int>& atomic_var, int other);
 };
-
-// Free non-template functions are necessary because of a clang 20 bug
-// when omp atomic compare is used within a templated context.
-// see https://github.com/llvm/llvm-project/issues/127466
-inline double fetch_min(omp_atomic_t<double>& atomic_var, double other)
-{
-  double old;
-#pragma omp atomic compare capture
-  {
-    old = atomic_var.val;
-    if (other < atomic_var.val) { atomic_var.val = other; }
-  }
-  return old;
-}
-
-inline double fetch_max(omp_atomic_t<double>& atomic_var, double other)
-{
-  double old;
-#pragma omp atomic compare capture
-  {
-    old = atomic_var.val;
-    if (other > atomic_var.val) { atomic_var.val = other; }
-  }
-  return old;
-}
-
-inline double fetch_max(omp_atomic_t<int>& atomic_var, int other)
-{
-  double old;
-#pragma omp atomic compare capture
-  {
-    old = atomic_var.val;
-    if (other > atomic_var.val) { atomic_var.val = other; }
-  }
-  return old;
-}
-
 }  // namespace cuopt
 
 #endif

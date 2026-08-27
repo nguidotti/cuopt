@@ -1124,7 +1124,7 @@ struct nondeterministic_policy_t : tree_update_policy_t<i_t, f_t> {
   void on_numerical_issue(mip_node_t<i_t, f_t>* node) override
   {
     if (worker->search_strategy == search_strategy_t::BEST_FIRST) {
-      fetch_min(bnb.lower_bound_numerical_, node->lower_bound);
+      bnb.lower_bound_numerical_.fetch_min(node->lower_bound);
       log.printf("LP returned numerical issue on node %d. Best bound set to %+10.6e.\n",
                  node->node_id,
                  compute_user_objective(bnb.original_lp_, bnb.lower_bound_numerical_.load()));
@@ -1722,7 +1722,7 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
     // relaxation
     // - The lower bound of the parent is lower or equal to its children
     worker->lower_bound = node_ptr->lower_bound;
-    fetch_max(exploration_stats_.max_node_depth, node_ptr->depth);
+    exploration_stats_.max_node_depth.fetch_max(node_ptr->depth);
 
     if (node_ptr->lower_bound > upper_bound_.load()) {
       search_tree_.graphviz_node(settings_.log, node_ptr, "cutoff", node_ptr->lower_bound);
@@ -1781,6 +1781,7 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
       if (node_ptr->lower_bound >= max_bound ||
           plunge_depth >= settings_.bnb_max_plunge_depth * max_node_depth) {
         stack.push_front(node_ptr);
+        --exploration_stats_.nodes_being_solved;
         break;
       }
     }
@@ -3470,6 +3471,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   root_lp_current_lower_bound_        = -inf;
   exploration_stats_.nodes_unexplored = 0;
   exploration_stats_.nodes_explored   = 0;
+  exploration_stats_.max_node_depth   = 0;
   original_lp_.A.to_compressed_row(Arow_);
 
   settings_.log.debug("Reduced cost strengthening enabled: %d\n",
@@ -3900,6 +3902,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 
   exploration_stats_.nodes_explored       = 0;
   exploration_stats_.nodes_unexplored     = 2;
+  exploration_stats_.max_node_depth       = 0;
   exploration_stats_.nodes_since_last_log = 0;
   exploration_stats_.last_log             = tic();
   min_node_queue_size_                    = 20;
