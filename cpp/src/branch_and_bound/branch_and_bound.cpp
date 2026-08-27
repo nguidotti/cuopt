@@ -4819,7 +4819,7 @@ void branch_and_bound_t<i_t, f_t>::deterministic_sort_replay_events(
   deterministic_merge_pseudo_cost_updates(*deterministic_workers_);
 
   for (const auto& worker : *deterministic_workers_) {
-    fetch_min(lower_bound_numerical_, worker.local_lower_bound_ceiling);
+    lower_bound_numerical_.fetch_min(worker.local_lower_bound_ceiling);
   }
 }
 
