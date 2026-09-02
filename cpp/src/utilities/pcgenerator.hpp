@@ -8,6 +8,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -173,13 +174,19 @@ class pcgenerator_t {
    * @brief Shuffles @p seq in-place using the Fisher-Yates algorithm.
    */
   template <typename T>
-  void shuffle(std::vector<T>& seq)
+  void shuffle(std::span<T> seq)
   {
     if (seq.empty()) { return; }
     for (size_t i = 0; i < seq.size() - 1; ++i) {
       size_t j = uniform(i, seq.size());
       if (j != i) std::swap(seq[i], seq[j]);
     }
+  }
+
+  template <typename T>
+  void shuffle(std::vector<T>& seq)
+  {
+    shuffle(std::span<T>{seq});
   }
 
  private:
