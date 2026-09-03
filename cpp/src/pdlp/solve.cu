@@ -6,6 +6,7 @@
 /* clang-format on */
 
 #include <cuopt/error.hpp>
+#include <cuopt/export.hpp>
 #include <cuopt/mathematical_optimization/solve_remote.hpp>
 #include <pdlp/cusparse_view.hpp>
 #include <pdlp/optimal_batch_size_handler/optimal_batch_size_handler.hpp>
@@ -497,21 +498,27 @@ std::tuple<simplex::lp_solution_t<i_t, f_t>, simplex::lp_status_t, f_t, f_t, f_t
   f_t norm_rhs            = vector_norm2<i_t, f_t>(user_problem.rhs);
 
   simplex::simplex_solver_settings_t<i_t, f_t> barrier_settings;
-  barrier_settings.num_gpus                        = settings.num_gpus;
-  barrier_settings.time_limit                      = settings.time_limit;
-  barrier_settings.iteration_limit                 = settings.iteration_limit;
-  barrier_settings.concurrent_halt                 = settings.concurrent_halt;
-  barrier_settings.folding                         = settings.folding;
-  barrier_settings.augmented                       = settings.augmented;
-  barrier_settings.dualize                         = settings.dualize;
-  barrier_settings.ordering                        = settings.ordering;
-  barrier_settings.barrier_dual_initial_point      = settings.barrier_dual_initial_point;
-  barrier_settings.postsolve_info                  = settings.postsolve_info;
+  barrier_settings.num_gpus                   = settings.num_gpus;
+  barrier_settings.time_limit                 = settings.time_limit;
+  barrier_settings.iteration_limit            = settings.iteration_limit;
+  barrier_settings.concurrent_halt            = settings.concurrent_halt;
+  barrier_settings.folding                    = settings.folding;
+  barrier_settings.augmented                  = settings.augmented;
+  barrier_settings.dualize                    = settings.dualize;
+  barrier_settings.ordering                   = settings.ordering;
+  barrier_settings.barrier_dual_initial_point = settings.barrier_dual_initial_point;
+  barrier_settings.postsolve_info             = settings.postsolve_info;
+  barrier_settings.barrier_presolve_bound_free_variables =
+    settings.barrier_presolve_bound_free_variables;
+  barrier_settings.barrier_initial_point_safeguard = settings.barrier_initial_point_safeguard;
   barrier_settings.barrier                         = true;
   barrier_settings.barrier_presolve                = true;
   barrier_settings.crossover                       = settings.crossover;
   barrier_settings.eliminate_dense_columns         = settings.eliminate_dense_columns;
   barrier_settings.barrier_iterative_refinement    = settings.barrier_iterative_refinement;
+  barrier_settings.barrier_adaptive_regularization = settings.barrier_adaptive_regularization;
+  barrier_settings.barrier_primal_regularization   = settings.barrier_primal_regularization;
+  barrier_settings.barrier_dual_regularization     = settings.barrier_dual_regularization;
   barrier_settings.barrier_soc_threshold           = settings.barrier_soc_threshold;
   barrier_settings.barrier_step_scale              = settings.barrier_step_scale;
   barrier_settings.qcqp_ruiz_equilibration         = settings.qcqp_ruiz_equilibration;
@@ -687,27 +694,30 @@ static optimization_problem_solution_t<i_t, double> run_pdlp_solver_in_fp32(
     static_cast<float>(settings.tolerances.primal_infeasible_tolerance);
   fs.tolerances.dual_infeasible_tolerance =
     static_cast<float>(settings.tolerances.dual_infeasible_tolerance);
-  fs.detect_infeasibility         = settings.detect_infeasibility;
-  fs.strict_infeasibility         = settings.strict_infeasibility;
-  fs.iteration_limit              = settings.iteration_limit;
-  fs.time_limit                   = static_cast<float>(settings.time_limit);
-  fs.pdlp_solver_mode             = settings.pdlp_solver_mode;
-  fs.log_to_console               = settings.log_to_console;
-  fs.log_file                     = settings.log_file;
-  fs.per_constraint_residual      = settings.per_constraint_residual;
-  fs.save_best_primal_so_far      = settings.save_best_primal_so_far;
-  fs.first_primal_feasible        = settings.first_primal_feasible;
-  fs.all_primal_feasible          = settings.all_primal_feasible;
-  fs.eliminate_dense_columns      = settings.eliminate_dense_columns;
-  fs.barrier_iterative_refinement = settings.barrier_iterative_refinement;
-  fs.barrier_step_scale           = settings.barrier_step_scale;
-  fs.pdlp_precision               = pdlp_precision_t::DefaultPrecision;
-  fs.method                       = method_t::PDLP;
-  fs.inside_mip                   = settings.inside_mip;
-  fs.hyper_params                 = settings.hyper_params;
-  fs.presolver                    = settings.presolver;
-  fs.num_gpus                     = settings.num_gpus;
-  fs.concurrent_halt              = settings.concurrent_halt;
+  fs.detect_infeasibility            = settings.detect_infeasibility;
+  fs.strict_infeasibility            = settings.strict_infeasibility;
+  fs.iteration_limit                 = settings.iteration_limit;
+  fs.time_limit                      = static_cast<float>(settings.time_limit);
+  fs.pdlp_solver_mode                = settings.pdlp_solver_mode;
+  fs.log_to_console                  = settings.log_to_console;
+  fs.log_file                        = settings.log_file;
+  fs.per_constraint_residual         = settings.per_constraint_residual;
+  fs.save_best_primal_so_far         = settings.save_best_primal_so_far;
+  fs.first_primal_feasible           = settings.first_primal_feasible;
+  fs.all_primal_feasible             = settings.all_primal_feasible;
+  fs.eliminate_dense_columns         = settings.eliminate_dense_columns;
+  fs.barrier_iterative_refinement    = settings.barrier_iterative_refinement;
+  fs.barrier_adaptive_regularization = settings.barrier_adaptive_regularization;
+  fs.barrier_primal_regularization   = settings.barrier_primal_regularization;
+  fs.barrier_dual_regularization     = settings.barrier_dual_regularization;
+  fs.barrier_step_scale              = settings.barrier_step_scale;
+  fs.pdlp_precision                  = pdlp_precision_t::DefaultPrecision;
+  fs.method                          = method_t::PDLP;
+  fs.inside_mip                      = settings.inside_mip;
+  fs.hyper_params                    = settings.hyper_params;
+  fs.presolver                       = settings.presolver;
+  fs.num_gpus                        = settings.num_gpus;
+  fs.concurrent_halt                 = settings.concurrent_halt;
 
   pdlp::pdlp_solver_t<i_t, float> solver(float_problem, fs, is_batch_mode);
   if (settings.inside_mip) { solver.set_inside_mip(true); }
@@ -1880,6 +1890,12 @@ optimization_problem_solution_t<i_t, f_t> solve_qcqp(
       CUOPT_LOG_INFO("Dual variables for problems with quadratic constraints not returned.");
       const f_t nan_val = std::numeric_limits<f_t>::quiet_NaN();
       auto stream       = op_problem.get_handle_ptr()->get_stream();
+      // solve_qcqp() reformulates quadratic constraints into second-order cones, which grows
+      // the internal row/column count beyond the documented num_constraints/num_variables.
+      // Resize back down to the documented lengths.
+      solution.get_dual_solution().resize(
+        op_problem.get_n_constraints() + op_problem.get_quadratic_constraints().size(), stream);
+      solution.get_reduced_cost().resize(op_problem.get_n_variables(), stream);
       thrust::fill(rmm::exec_policy(stream),
                    solution.get_dual_solution().begin(),
                    solution.get_dual_solution().end(),
@@ -2744,28 +2760,28 @@ std::unique_ptr<lp_solution_interface_t<i_t, f_t>> solve_lp(
 }
 
 #define INSTANTIATE(F_TYPE)                                                                      \
-  template optimization_problem_solution_t<int, F_TYPE> solve_lp(                                \
+  template CUOPT_EXPORT optimization_problem_solution_t<int, F_TYPE> solve_lp(                   \
     optimization_problem_t<int, F_TYPE>& op_problem,                                             \
     pdlp_solver_settings_t<int, F_TYPE> const& settings,                                         \
     bool problem_checking,                                                                       \
     bool use_pdlp_solver_mode,                                                                   \
     bool is_batch_mode);                                                                         \
                                                                                                  \
-  template optimization_problem_solution_t<int, F_TYPE> solve_lp(                                \
+  template CUOPT_EXPORT optimization_problem_solution_t<int, F_TYPE> solve_lp(                   \
     raft::handle_t const* handle_ptr,                                                            \
     const cuopt::mathematical_optimization::io::mps_data_model_t<int, F_TYPE>& mps_data_model,   \
     pdlp_solver_settings_t<int, F_TYPE> const& settings,                                         \
     bool problem_checking,                                                                       \
     bool use_pdlp_solver_mode);                                                                  \
                                                                                                  \
-  template std::unique_ptr<lp_solution_interface_t<int, F_TYPE>> solve_lp(                       \
+  template CUOPT_EXPORT std::unique_ptr<lp_solution_interface_t<int, F_TYPE>> solve_lp(          \
     cpu_optimization_problem_t<int, F_TYPE>&,                                                    \
     pdlp_solver_settings_t<int, F_TYPE> const&,                                                  \
     bool,                                                                                        \
     bool,                                                                                        \
     bool);                                                                                       \
                                                                                                  \
-  template std::unique_ptr<lp_solution_interface_t<int, F_TYPE>> solve_lp(                       \
+  template CUOPT_EXPORT std::unique_ptr<lp_solution_interface_t<int, F_TYPE>> solve_lp(          \
     optimization_problem_interface_t<int, F_TYPE>*,                                              \
     pdlp_solver_settings_t<int, F_TYPE> const&,                                                  \
     bool,                                                                                        \
@@ -2778,7 +2794,7 @@ std::unique_ptr<lp_solution_interface_t<i_t, f_t>> solve_lp(
     const timer_t& timer,                                                                        \
     bool is_batch_mode);                                                                         \
                                                                                                  \
-  template optimization_problem_solution_t<int, F_TYPE> batch_pdlp_solve(                        \
+  template CUOPT_EXPORT optimization_problem_solution_t<int, F_TYPE> batch_pdlp_solve(           \
     raft::handle_t const* handle_ptr,                                                            \
     const cuopt::mathematical_optimization::io::mps_data_model_t<int, F_TYPE>& mps_data_model,   \
     const std::vector<int>& fractional,                                                          \
@@ -2794,7 +2810,8 @@ std::unique_ptr<lp_solution_interface_t<i_t, f_t>> solve_lp(
                                              bool per_climber_constraint_bounds,                 \
                                              bool collect_solutions);                            \
                                                                                                  \
-  template optimization_problem_t<int, F_TYPE> mps_data_model_to_optimization_problem(           \
+  template CUOPT_EXPORT optimization_problem_t<int, F_TYPE>                                      \
+  mps_data_model_to_optimization_problem(                                                        \
     raft::handle_t const* handle_ptr,                                                            \
     const cuopt::mathematical_optimization::io::mps_data_model_t<int, F_TYPE>& data_model);      \
                                                                                                  \

@@ -14,7 +14,7 @@
 #include <mip_heuristics/diversity/population.cuh>
 #include <mip_heuristics/mip_constants.hpp>
 #include <mip_heuristics/utils.cuh>
-#include <utilities/seed_generator.cuh>
+#include <utilities/device_scalar_init.hpp>
 #include <utilities/timer.hpp>
 
 #include <raft/linalg/eltwise.cuh>
@@ -42,8 +42,12 @@ static constexpr int iterations_per_graph = 50;
 #endif
 
 template <typename i_t, typename f_t>
-fj_t<i_t, f_t>::fj_t(mip_solver_context_t<i_t, f_t>& context_, fj_settings_t in_settings)
-  : context(context_),
+fj_t<i_t, f_t>::fj_t(mip_solver_context_t<i_t, f_t>& context_,
+                     fj_settings_t in_settings,
+                     rng_id_t seed_component_id)
+  : rng(derive_seed(context_.base_seed, seed_component_id),
+        derive_stream(context_.base_seed, seed_component_id)),
+    context(context_),
     pb_ptr(context.problem_ptr),
     handle_ptr(const_cast<raft::handle_t*>(pb_ptr->handle_ptr)),
     settings(in_settings),
@@ -52,8 +56,8 @@ fj_t<i_t, f_t>::fj_t(mip_solver_context_t<i_t, f_t>& context_, fj_settings_t in_
     cstr_right_weights(pb_ptr->n_constraints, pb_ptr->handle_ptr->get_stream()),
     cstr_left_weights(pb_ptr->n_constraints, pb_ptr->handle_ptr->get_stream()),
     weight_update_increment(1.0),
-    objective_weight(0.0, pb_ptr->handle_ptr->get_stream()),
-    max_cstr_weight(0, pb_ptr->handle_ptr->get_stream()),
+    objective_weight(zero_v<f_t>, pb_ptr->handle_ptr->get_stream()),
+    max_cstr_weight(zero_v<f_t>, pb_ptr->handle_ptr->get_stream()),
     climber_views(0, pb_ptr->handle_ptr->get_stream()),
     objective_vars(0, pb_ptr->handle_ptr->get_stream()),
     constraint_lower_bounds_csr(pb_ptr->coefficients.size(), pb_ptr->handle_ptr->get_stream()),
@@ -134,12 +138,12 @@ void fj_t<i_t, f_t>::reset_weights(const rmm::cuda_stream_view& climber_stream, 
 template <typename i_t, typename f_t>
 void fj_t<i_t, f_t>::randomize_weights(const raft::handle_t* handle_ptr)
 {
-  std::mt19937 rng(cuopt::seed_generator::get_seed());
+  std::mt19937 host_rng(rng.next_i64());
   constexpr f_t min_weight = 10.;
   constexpr f_t max_weight = 30.;
   // generate a range of weights between 10. and 30.
   auto h_cstr_vec =
-    get_random_uniform_vector<i_t, f_t>(cstr_weights.size(), rng, min_weight, max_weight);
+    get_random_uniform_vector<i_t, f_t>(cstr_weights.size(), host_rng, min_weight, max_weight);
   f_t h_max_weight = *std::max_element(h_cstr_vec.begin(), h_cstr_vec.end());
   max_cstr_weight.set_value_async(h_max_weight, handle_ptr->get_stream());
   raft::copy(cstr_weights.data(), h_cstr_vec.data(), h_cstr_vec.size(), handle_ptr->get_stream());
@@ -671,7 +675,7 @@ void fj_t<i_t, f_t>::run_step_device(const rmm::cuda_stream_view& climber_stream
 
   auto& data    = *climbers[climber_idx];
   auto v        = data.view();
-  settings.seed = cuopt::seed_generator::get_seed();
+  settings.seed = rng.next_i64();
   // ensure an updated copy of the settings is used device-side
   raft::copy(v.settings, &settings, 1, climber_stream);
 
@@ -945,7 +949,7 @@ i_t fj_t<i_t, f_t>::host_loop(solution_t<i_t, f_t>& solution, i_t climber_idx)
       }
     }
   }
-#if CUOPT_LOG_ACTIVE_LEVEL == CUOPT_LOG_LEVEL_TRACE
+#if CUOPT_LOG_ACTIVE_LEVEL == RAPIDS_LOGGER_LOG_LEVEL_TRACE
   auto h_sol = cuopt::host_copy(solution.assignment, climber_stream);
   static std::set<std::vector<f_t>> solutions_set;
   bool same_sol = solutions_set.count(h_sol) > 0;
@@ -1036,9 +1040,20 @@ void fj_t<i_t, f_t>::resize_vectors(const raft::handle_t* handle_ptr)
   climbers[0]->grid_delta_buf.resize(update_weights_launch_dims.first.x, handle_ptr->get_stream());
 
   // FJ related vars
-  cstr_weights.resize(pb_ptr->n_constraints, handle_ptr->get_stream());
-  cstr_right_weights.resize(pb_ptr->n_constraints, handle_ptr->get_stream());
-  cstr_left_weights.resize(pb_ptr->n_constraints, handle_ptr->get_stream());
+  // the problem can gain constraints between two runs (e.g. the objective cutting plane added by
+  // the feasibility pump), and resize leaves the new elements uninitialized: give them the default
+  // weight
+  auto resize_weights = [&](rmm::device_uvector<f_t>& weights) {
+    const auto old_size = weights.size();
+    weights.resize(pb_ptr->n_constraints, handle_ptr->get_stream());
+    if (old_size < weights.size()) {
+      thrust::uninitialized_fill(
+        handle_ptr->get_thrust_policy(), weights.begin() + old_size, weights.end(), 1.);
+    }
+  };
+  resize_weights(cstr_weights);
+  resize_weights(cstr_right_weights);
+  resize_weights(cstr_left_weights);
   constraint_lower_bounds_csr.resize(pb_ptr->coefficients.size(), handle_ptr->get_stream());
   constraint_upper_bounds_csr.resize(pb_ptr->coefficients.size(), handle_ptr->get_stream());
   cstr_coeff_reciprocal.resize(pb_ptr->coefficients.size(), handle_ptr->get_stream());
@@ -1116,7 +1131,7 @@ i_t fj_t<i_t, f_t>::solve(solution_t<i_t, f_t>& solution)
 
     // if time limit exceeded: round all remaining fractionals if any by nearest rounding.
     if (climbers[0]->fractional_variables.set_size.value(handle_ptr->get_stream()) > 0) {
-      solution.round_nearest();
+      solution.round_nearest(rng.next_u64());
     }
   }
 
