@@ -1201,6 +1201,22 @@ third_party_presolve_status_t third_party_presolve_t<i_t, f_t>::apply_to_subprob
     }
   }
 
+  // Both endpoints are stored, and both are already in original (pre-presolve) column space --
+  // storeParallelCols pushes {origcol_mapping[col1], flags1, origcol_mapping[col2], flags2, -1}.
+  merged_original_columns_.clear();
+  const auto& postsolve = result.postsolve;
+  for (size_t k = 0; k < postsolve.types.size(); ++k) {
+    // ReductionType is declared at global scope by PaPILO, not inside namespace papilo.
+    if (postsolve.types[k] != ::ReductionType::kParallelCol) { continue; }
+    const auto begin = postsolve.start[k];
+    merged_original_columns_.push_back(postsolve.indices[begin]);
+    merged_original_columns_.push_back(postsolve.indices[begin + 2]);
+  }
+  std::sort(merged_original_columns_.begin(), merged_original_columns_.end());
+  merged_original_columns_.erase(
+    std::unique(merged_original_columns_.begin(), merged_original_columns_.end()),
+    merged_original_columns_.end());
+
   return status;
 }
 

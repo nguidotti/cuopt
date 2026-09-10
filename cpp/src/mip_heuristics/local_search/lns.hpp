@@ -98,8 +98,9 @@ class core_lns_t {
   enum destroy_operator_t : uint8_t {
     DESTROY_LP_GUIDED     = 0,
     DESTROY_NEIGHBOUR     = 1,
-    DESTROY_RANDOM        = 2,
-    NUM_DESTROY_OPERATORS = 3
+    DESTROY_INCUMBENT     = 2,
+    DESTROY_RANDOM        = 3,
+    NUM_DESTROY_OPERATORS = 4
   };
 
   // One destroy operator: seeds its share of the level sweep, then destroys and repairs until the
@@ -116,6 +117,14 @@ class core_lns_t {
   // Flood the adjacency from a random seed so the released groups compete for the same downstream
   // variables. Falls back to `destroy_random` when the core carries no edges.
   void destroy_neighbour(diving_worker_t<i_t, f_t>* worker,
+                         i_t num_to_release,
+                         std::vector<uint8_t>& released);
+
+  // Release groups the incumbent has active. Those are its committed decisions; the inactive ones
+  // are the default. Tops up with random groups when the incumbent holds too few to fill the
+  // radius.
+  void destroy_incumbent(diving_worker_t<i_t, f_t>* worker,
+                         const std::vector<uint8_t>& best,
                          i_t num_to_release,
                          std::vector<uint8_t>& released);
 

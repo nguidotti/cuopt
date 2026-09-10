@@ -2403,8 +2403,35 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
                submip_problem.num_cols,
                submip_problem.A.nnz());
 
-  probing_implied_bound_t<i_t, f_t> empty_probing(submip_problem.num_cols);
-  branch_and_bound_t submip_bnb(submip_problem, submip_settings, tic(), empty_probing);
+  const std::vector<i_t>& reduced_to_leaf = presolver.get_reduced_to_original_map();
+  const i_t n_parent_user_cols            = original_problem_.num_cols;
+  std::vector<i_t> sub_to_parent(submip_problem.num_cols, -1);
+  assert(reduced_to_leaf.size() == submip_problem.num_cols &&
+         "Presolve column map does not cover the reduced sub-MIP");
+  if (reduced_to_leaf.size() == submip_problem.num_cols) {
+    // Columns a parallel-column merge touched no longer mean what the parent proved things
+    // about: PaPILO replaces the pair by y = col2 + scale * col1 while keeping col2's index,
+    // and later reductions can pull y back to [0,1] integral.
+    const std::vector<i_t>& merged = presolver.get_merged_original_columns();
+    for (i_t k = 0; k < submip_problem.num_cols; k++) {
+      const i_t leaf_col = reduced_to_leaf[k];
+      if (leaf_col < 0 || leaf_col >= n_parent_user_cols) { continue; }
+      if (std::binary_search(merged.begin(), merged.end(), leaf_col)) { continue; }
+      // Presolve may only tighten a retained column. A wider domain means the index no longer
+      // denotes the same variable, so refuse to carry anything onto it.
+      const f_t tol = settings_.integer_tol;
+      if (submip_problem.lower[k] < worker->leaf_problem.lower[leaf_col] - tol) { continue; }
+      if (submip_problem.upper[k] > worker->leaf_problem.upper[leaf_col] + tol) { continue; }
+      sub_to_parent[k] = leaf_col;
+    }
+  }
+
+  // Held by const& in branch_and_bound_t, so it has to outlive submip_bnb.
+  probing_implied_bound_t<i_t, f_t> submip_probing(submip_problem.num_cols);
+  build_probing_implied_bounds_from_parent(
+    probing_implied_bound_, sub_to_parent, submip_problem, submip_probing);
+
+  branch_and_bound_t submip_bnb(submip_problem, submip_settings, tic(), submip_probing);
   mip_solution_t<i_t, f_t> submip_solution(submip_problem.num_cols);
 
   std::vector<f_t> presolved_incumbent;

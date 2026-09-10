@@ -22,7 +22,7 @@
 
 #define SUBMIP_VERBOSE true
 #if SUBMIP_VERBOSE
-#define DEBUG_SUBMIP(fmt, ...) settings_.log.print_format(fmt, __VA_ARGS__);
+#define DEBUG_SUBMIP(fmt, ...) branch_and_bound_ptr->settings_.log.print_format(fmt, __VA_ARGS__);
 #else
 #define DEBUG_SUBMIP(fmt, ...)
 #endif
@@ -371,7 +371,8 @@ bool core_lns_t<i_t, f_t>::evaluate(diving_worker_t<i_t, f_t>* worker,
   settings.submip_settings.level                        = 1;
   settings.benchmark_info_ptr                           = nullptr;
   settings.log.log                                      = SUBMIP_VERBOSE;
-  settings.log.log_prefix = std::format("[CORE LNS {}] ", worker->worker_id);
+  settings.log.log_prefix                    = std::format("[CORE LNS {}] ", worker->worker_id);
+  settings.submip_settings.node_limit_offset = 500;
 
   worker->leaf_problem.lower = worker->start_lower;
   worker->leaf_problem.upper = worker->start_upper;
@@ -393,6 +394,30 @@ bool core_lns_t<i_t, f_t>::evaluate(diving_worker_t<i_t, f_t>* worker,
     }
   }
   if (num_fixed == 0) return false;
+
+#if SUBMIP_VERBOSE
+  {
+    std::string released_list;
+    i_t num_released_groups = 0;
+    for (i_t k = 0; k < variable_groups_.m; ++k) {
+      const bool is_released = released != nullptr && (*released)[k];
+      num_released_groups += is_released;
+      for (i_t p = variable_groups_.row_start[k]; p < variable_groups_.row_start[k + 1]; ++p) {
+        const i_t col    = variable_groups_.j[p];
+        const int parity = variable_groups_.x[p] > 0.5 ? 1 : 0;
+        if (is_released) {
+          if (!released_list.empty()) { released_list += ' '; }
+          released_list +=
+            is_released ? std::format("{}", col) : std::format("{}={}", col, value[k] ^ parity);
+        }
+      }
+    }
+    DEBUG_SUBMIP("{}released {} groups: {}\n",
+                 settings.log.log_prefix,
+                 num_released_groups,
+                 released_list.empty() ? std::string{"(none)"} : released_list);
+  }
+#endif
 
   i_t total = 0, num_integer_fixed = 0;
   for (i_t j = 0; j < worker->var_types.size(); ++j) {
@@ -468,6 +493,32 @@ void core_lns_t<i_t, f_t>::destroy_neighbour(diving_worker_t<i_t, f_t>* worker,
 }
 
 template <typename i_t, typename f_t>
+void core_lns_t<i_t, f_t>::destroy_incumbent(diving_worker_t<i_t, f_t>* worker,
+                                             const std::vector<uint8_t>& best,
+                                             i_t num_to_release,
+                                             std::vector<uint8_t>& released)
+{
+  const i_t num_groups = variable_groups_.m;
+  std::vector<i_t> active;
+  active.reserve(num_groups);
+  for (i_t k = 0; k < num_groups; ++k) {
+    if (best[k]) { active.push_back(k); }
+  }
+
+  const i_t num_active = active.size();
+  const i_t take       = std::min(num_to_release, num_active);
+  // Partial Fisher-Yates: draw `take` distinct entries without shuffling the whole vector.
+  for (i_t r = 0; r < take; ++r) {
+    const i_t span = num_active - r;
+    const i_t pick = r + std::min<i_t>(worker->rng.next_double() * span, span - 1);
+    std::swap(active[r], active[pick]);
+    released[active[r]] = 1;
+  }
+
+  if (take < num_to_release) { destroy_random(worker, num_to_release - take, released); }
+}
+
+template <typename i_t, typename f_t>
 void core_lns_t<i_t, f_t>::destroy_random(diving_worker_t<i_t, f_t>* worker,
                                           i_t num_to_release,
                                           std::vector<uint8_t>& released)
@@ -534,6 +585,7 @@ void core_lns_t<i_t, f_t>::search(diving_worker_t<i_t, f_t>* worker,
     switch (destroy_operator) {
       case DESTROY_LP_GUIDED: destroy_lp_guided(worker, best, num_to_release, released); break;
       case DESTROY_NEIGHBOUR: destroy_neighbour(worker, num_to_release, released); break;
+      case DESTROY_INCUMBENT: destroy_incumbent(worker, best, num_to_release, released); break;
       case DESTROY_RANDOM: destroy_random(worker, num_to_release, released); break;
       case NUM_DESTROY_OPERATORS: break;
     }
@@ -582,7 +634,7 @@ void core_lns_t<i_t, f_t>::run(const simplex::lp_problem_t<i_t, f_t>& lp,
                              lp_mass_)
                    .c_str());
 
-  for (auto op : {DESTROY_LP_GUIDED, DESTROY_NEIGHBOUR, DESTROY_RANDOM}) {
+  for (auto op : {DESTROY_LP_GUIDED, DESTROY_NEIGHBOUR, DESTROY_INCUMBENT, DESTROY_RANDOM}) {
     diving_worker_t<i_t, f_t>* worker =
       create_submip_worker(lp, Arow, var_types, root_solution, root_edge_norm, pseudo_costs);
 #pragma omp task firstprivate(worker, op) depend(out : *worker)
