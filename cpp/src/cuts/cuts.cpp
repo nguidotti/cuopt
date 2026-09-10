@@ -1491,7 +1491,8 @@ template <typename i_t, typename f_t>
 bool flow_cover_is_zero_one_integer_variable(const flow_cover_context_t<i_t, f_t>& context, i_t j)
 {
   const f_t bound_tol = context.settings.primal_tol;
-  return context.var_types[j] == variable_type_t::BINARY &&
+  return (context.var_types[j] == variable_type_t::INTEGER ||
+          context.var_types[j] == variable_type_t::BINARY) &&
          std::abs(context.lp.lower[j]) <= bound_tol &&
          std::abs(context.lp.upper[j] - 1.0) <= bound_tol;
 }
@@ -1613,7 +1614,8 @@ knapsack_generation_t<i_t, f_t>::knapsack_generation_t(
         continue;
       }
       const f_t aj = inequality.coeff(p);
-      if (var_types[j] != variable_type_t::BINARY || lp.lower[j] != 0.0 || lp.upper[j] != 1.0) {
+      if ((var_types[j] != variable_type_t::INTEGER && var_types[j] != variable_type_t::BINARY) ||
+          lp.lower[j] != 0.0 || lp.upper[j] != 1.0) {
         is_knapsack = false;
         break;
       }

@@ -1070,6 +1070,7 @@ branch_variable_t<i_t> branch_and_bound_t<i_t, f_t>::variable_selection(
 
     case search_strategy_t::RINS:  // This is used for solving the DFS of the sub-MIP.
     case search_strategy_t::RENS:
+    case search_strategy_t::CORE_LNS:
       branch_var = worker->pseudo_costs.variable_selection(fractional, solution);
       round_dir  = martin_criteria(solution[branch_var], worker->root_solution[branch_var]);
       return {branch_var, round_dir};
@@ -1794,7 +1795,7 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
       }
     }
 
-    if (received_halt_signal()) {
+    if (settings_.received_halt_signal()) {
       solver_status_        = mip_status_t::HALT;
       node_concurrent_halt_ = true;
       stack.push_front(node_ptr);
@@ -2023,13 +2024,7 @@ void branch_and_bound_t<i_t, f_t>::best_first_search_with(bfs_worker_t<i_t, f_t>
       }
     }
 
-    if (received_halt_signal()) {
-      solver_status_        = mip_status_t::HALT;
-      node_concurrent_halt_ = true;
-      break;
-    }
-
-    if (received_halt_signal()) {
+    if (settings_.received_halt_signal()) {
       solver_status_        = mip_status_t::HALT;
       node_concurrent_halt_ = true;
       break;
@@ -2135,7 +2130,7 @@ void branch_and_bound_t<i_t, f_t>::dive_with(diving_worker_t<i_t, f_t>* worker,
 
   while (stack.size() > 0 && (solver_status_ == mip_status_t::UNSET && is_running_) &&
          rel_gap > settings.relative_mip_gap_tol && abs_gap > settings.absolute_mip_gap_tol &&
-         !(settings.concurrent_halt && settings.concurrent_halt->load(std::memory_order_acquire))) {
+         !settings.received_halt_signal()) {
     mip_node_t<i_t, f_t>* node_ptr = stack.front();
     stack.pop_front();
 
@@ -2313,50 +2308,34 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
                                                 i_t simplex_iter_used,
                                                 simplex_solver_settings_t<i_t, f_t> submip_settings)
 {
-  double start_time = tic();
+  double start_time           = tic();
+  std::string_view log_prefix = submip_settings.log.log_prefix;
+  bool is_root_heuristic      = submip_settings.inside_root_node;
+  i_t submip_level            = settings_.submip_settings.level + 1;
+  f_t user_lower              = compute_user_objective(worker->leaf_problem, get_lower_bound());
+  f_t user_obj                = compute_user_objective(worker->leaf_problem, upper_bound_.load());
+  f_t rel_gap                 = user_relative_gap(user_obj, user_lower);
+  i_t explored                = exploration_stats_.nodes_explored;
 
-  bool is_root_heuristic = submip_settings.inside_root_node;
-  i_t submip_level       = settings_.submip_settings.level + 1;
-  f_t user_lower         = compute_user_objective(worker->leaf_problem, get_lower_bound());
-  f_t user_obj           = compute_user_objective(worker->leaf_problem, upper_bound_.load());
-  f_t rel_gap            = user_relative_gap(user_obj, user_lower);
-  i_t explored           = exploration_stats_.nodes_explored;
-
-  submip_settings.print_presolve_stats                     = false;
-  submip_settings.num_threads                              = 1;
-  submip_settings.reliability_branching                    = 0;
-  submip_settings.clique_cuts                              = 0;
-  submip_settings.zero_half_cuts                           = 0;
-  submip_settings.inside_submip                            = 1;
-  submip_settings.strong_branching_simplex_iteration_limit = 50;
-  submip_settings.inside_root_node                         = 0;
-  submip_settings.submip_settings.level                    = submip_level;
-  submip_settings.benchmark_info_ptr                       = nullptr;
-  submip_settings.log.log                                  = SUBMIP_VERBOSE;
-  std::string_view log_prefix                              = submip_settings.log.log_prefix;
-
-  bool max_recursion                   = submip_level > settings_.submip_settings.max_level;
-  submip_settings.submip_settings.rins = settings_.submip_settings.rins != 0 && !max_recursion;
-  submip_settings.submip_settings.rens = settings_.submip_settings.rens != 0 && !max_recursion;
-
-  submip_settings.node_limit = settings_.submip_settings.node_limit_offset + explored / 20;
+  submip_settings.inside_root_node = 0;
+  submip_settings.node_limit = submip_settings.submip_settings.node_limit_offset + explored / 20;
 
   // Add offset only on the top call, we want number of simplex iteration to decay
   // as we go down the recursion to avoid spending too much time in the deeper levels.
   int64_t iter_offset =
-    settings_.inside_submip ? 0 : settings_.submip_settings.iteration_limit_offset;
+    settings_.inside_submip ? 0 : submip_settings.submip_settings.iteration_limit_offset;
   int64_t simplex_iter = exploration_stats_.total_simplex_iters;
-  f_t iter_ratio       = settings_.submip_settings.iteration_limit_ratio;
+  f_t iter_ratio       = submip_settings.submip_settings.iteration_limit_ratio;
 
   submip_settings.branch_and_bound_simplex_iteration_limit =
     iter_offset + simplex_iter * iter_ratio - simplex_iter_used;
   if (submip_settings.branch_and_bound_simplex_iteration_limit <= 0) { return; }
 
-  submip_settings.time_limit = settings_.time_limit - toc(exploration_stats_.start_time);
+  submip_settings.time_limit = submip_settings.time_limit - toc(exploration_stats_.start_time);
   if (submip_settings.time_limit <= 0) { return; }
 
   submip_settings.relative_mip_gap_tol =
-    std::min(settings_.submip_settings.target_mip_gap, rel_gap);
+    std::min(submip_settings.submip_settings.target_mip_gap, rel_gap);
 
   DEBUG_SUBMIP("{}Sub-MIP: fixrate={:.2f}", log_prefix, fixrate)
   DEBUG_SUBMIP(
@@ -2374,7 +2353,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
   // structural + slacks + cuts constraints/variables.
   user_problem_t<i_t, f_t> submip_problem(original_problem_.handle_ptr);
   simplex::convert_lp_to_user_problem(
-    worker->leaf_problem, worker->var_types, settings_, submip_problem);
+    worker->leaf_problem, worker->var_types, submip_settings, submip_problem);
 
   third_party_presolve_t<i_t, f_t> presolver;
   f_t presolve_time_limit = std::min(0.1 * submip_settings.time_limit, 60.0);
@@ -2406,10 +2385,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
     return;
   }
 
-  if (submip_settings.concurrent_halt &&
-      submip_settings.concurrent_halt->load(std::memory_order_acquire)) {
-    return;
-  }
+  if (submip_settings.received_halt_signal()) { return; }
 
   submip_settings.heuristic_preemption_callback   = nullptr;
   submip_settings.dual_simplex_objective_callback = nullptr;
@@ -2463,16 +2439,15 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
       bool is_cutoff = original_lp_.obj_scale > 0 ? submip_lower_bound > user_upper
                                                   : user_upper > submip_lower_bound;
       bool is_solver_running = this->solver_status_ == mip_status_t::UNSET && this->is_running_;
-      return is_cutoff || !is_solver_running || this->received_halt_signal();
+      return is_cutoff || !is_solver_running || this->settings_.received_halt_signal();
     });
   }
 
   fj_cpu_worker_t<i_t, f_t> submip_fj_cpu_worker;
 
   if (settings_.submip_settings.enable_cpufj) {
-    // Since we do not have an incumbent, use the LP solution of the last round of variable fixing
-    // in RENS.
-    if (worker->search_strategy == search_strategy_t::RENS) {
+    // Since we do not have an incumbent, use the LP solution of the last round of variable fixing.
+    if (worker->current_incumbent.empty()) {
       presolver.crush_primal_solution(submip_problem, worker->leaf_solution.x, presolved_incumbent);
     }
 
@@ -2717,7 +2692,23 @@ void branch_and_bound_t<i_t, f_t>::recursive_submip(
   if (worker->orbital_fixing) { worker->orbital_fixing->disable(); }
 
   i_t submip_level = settings_.submip_settings.level + 1;
-  submip_settings.log.log_prefix =
+
+  submip_settings.print_presolve_stats                     = false;
+  submip_settings.num_threads                              = 1;
+  submip_settings.reliability_branching                    = 0;
+  submip_settings.clique_cuts                              = 0;
+  submip_settings.zero_half_cuts                           = 0;
+  submip_settings.inside_submip                            = 1;
+  submip_settings.strong_branching_simplex_iteration_limit = 50;
+  submip_settings.submip_settings.level                    = submip_level;
+  submip_settings.benchmark_info_ptr                       = nullptr;
+  submip_settings.log.log                                  = SUBMIP_VERBOSE;
+
+  bool max_recursion                   = submip_level > settings_.submip_settings.max_level;
+  submip_settings.submip_settings.rins = settings_.submip_settings.rins != 0 && !max_recursion;
+  submip_settings.submip_settings.rens = settings_.submip_settings.rens != 0 && !max_recursion;
+
+  submip_settings.log.log_prefix +=
     std::format("[{} {}] ", search_strategy_to_string(worker->search_strategy), submip_level);
 
   assert((worker->search_strategy == search_strategy_t::RINS ||
@@ -2757,8 +2748,7 @@ void branch_and_bound_t<i_t, f_t>::recursive_submip(
   i_t round = 0;
 
   while (solver_status_ == mip_status_t::UNSET && is_running_ &&
-         !(submip_settings.concurrent_halt &&
-           submip_settings.concurrent_halt->load(std::memory_order::acquire))) {
+         !submip_settings.received_halt_signal()) {
     f_t prev_fixrate         = fixrate;
     f_t distance             = 1.0 - (1.0 - prev_fixrate) * close_ratio;
     f_t round_target_fixrate = std::min(distance, max_fixrate) - prev_fixrate;
@@ -3184,7 +3174,7 @@ lp_status_t branch_and_bound_t<i_t, f_t>::solve_root_relaxation(
   // Wait for the root relaxation solution to be sent by the diversity manager or dual simplex
   while (!root_crossover_solution_set_.load(std::memory_order_acquire) &&
          *get_root_concurrent_halt() == 0) {
-    if (received_halt_signal()) {
+    if (settings_.received_halt_signal()) {
       root_concurrent_halt_.store(true, std::memory_order_release);
 #pragma omp taskwait depend(in : root_status)
       return lp_status_t::CONCURRENT_LIMIT;
@@ -3871,6 +3861,10 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   }
 
   root_heuristics_t<i_t, f_t> root_heuristics(settings_.num_threads - 1);
+  root_structural_heuristics_t<i_t, f_t> root_structural_heuristics(this);
+
+  if (!settings_.inside_submip)
+    root_structural_heuristics.run_after_root_lp(root_relax_soln_.x, edge_norms_);
 
   f_t cut_generation_start_time = tic();
   i_t cut_pool_size             = 0;
@@ -3973,6 +3967,8 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 
   // Stops the root heuristics and clear the associated data
   root_heuristics.stop_and_sync();
+  root_structural_heuristics.stop();
+
   set_uninitialized_steepest_edge_norms(original_lp_, basic_list, edge_norms_);
 
   pc_.resize(original_lp_.num_cols);
@@ -3998,7 +3994,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                                pc_);
   }
 
-  if (received_halt_signal()) {
+  if (settings_.received_halt_signal()) {
     solver_status_ = mip_status_t::HALT;
     set_final_solution(solution, root_objective_);
     return solver_status_;
