@@ -486,10 +486,12 @@ i_t branch_and_bound_t<i_t, f_t>::find_reduced_cost_fixings(f_t upper_bound,
       f_t reduced_cost_lower_bound = lower_j;
       if (lower_j > -inf && reduced_costs[j] > 0) {
         const f_t new_upper_bound = lower_j + abs_gap / reduced_costs[j];
-        reduced_cost_upper_bound  = var_types_[j] == variable_type_t::INTEGER
-                                      ? std::floor(new_upper_bound + weaken)
-                                      : new_upper_bound;
-        if (reduced_cost_upper_bound < upper_j && var_types_[j] == variable_type_t::INTEGER) {
+        reduced_cost_upper_bound =
+          (var_types_[j] == variable_type_t::INTEGER || var_types_[j] == variable_type_t::BINARY)
+            ? std::floor(new_upper_bound + weaken)
+            : new_upper_bound;
+        if (reduced_cost_upper_bound < upper_j && (var_types_[j] == variable_type_t::INTEGER ||
+                                                   var_types_[j] == variable_type_t::BINARY)) {
           num_improved++;
           upper_bounds[j]   = reduced_cost_upper_bound;
           bounds_changed[j] = true;
@@ -497,16 +499,18 @@ i_t branch_and_bound_t<i_t, f_t>::find_reduced_cost_fixings(f_t upper_bound,
       }
       if (upper_j < inf && reduced_costs[j] < 0) {
         const f_t new_lower_bound = upper_j + abs_gap / reduced_costs[j];
-        reduced_cost_lower_bound  = var_types_[j] == variable_type_t::INTEGER
-                                      ? std::ceil(new_lower_bound - weaken)
-                                      : new_lower_bound;
-        if (reduced_cost_lower_bound > lower_j && var_types_[j] == variable_type_t::INTEGER) {
+        reduced_cost_lower_bound =
+          (var_types_[j] == variable_type_t::INTEGER || var_types_[j] == variable_type_t::BINARY)
+            ? std::ceil(new_lower_bound - weaken)
+            : new_lower_bound;
+        if (reduced_cost_lower_bound > lower_j && (var_types_[j] == variable_type_t::INTEGER ||
+                                                   var_types_[j] == variable_type_t::BINARY)) {
           num_improved++;
           lower_bounds[j]   = reduced_cost_lower_bound;
           bounds_changed[j] = true;
         }
       }
-      if (var_types_[j] == variable_type_t::INTEGER &&
+      if ((var_types_[j] == variable_type_t::INTEGER || var_types_[j] == variable_type_t::BINARY) &&
           reduced_cost_upper_bound <= reduced_cost_lower_bound + fixed_tol) {
         num_fixed++;
       }
@@ -716,7 +720,7 @@ bool branch_and_bound_t<i_t, f_t>::repair_solution(const std::vector<f_t>& edge_
 
   // Fix integer variables
   for (i_t j = 0; j < n; ++j) {
-    if (var_types_[j] == variable_type_t::INTEGER) {
+    if (var_types_[j] == variable_type_t::INTEGER || var_types_[j] == variable_type_t::BINARY) {
       const f_t fixed_val = std::round(potential_solution[j]);
       repair_lp.lower[j]  = fixed_val;
       repair_lp.upper[j]  = fixed_val;
@@ -1571,7 +1575,9 @@ dual_status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(
 #ifdef DEBUG_BRANCHING
   i_t num_integer_variables = 0;
   for (i_t j = 0; j < original_lp_.num_cols; j++) {
-    if (var_types_[j] == variable_type_t::INTEGER) { num_integer_variables++; }
+    if (var_types_[j] == variable_type_t::INTEGER || var_types_[j] == variable_type_t::BINARY) {
+      num_integer_variables++;
+    }
   }
   if (node_ptr->depth > num_integer_variables) {
     std::vector<i_t> branched_variables(original_lp_.num_cols, 0);

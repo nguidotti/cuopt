@@ -381,15 +381,19 @@ void build_user_problem(papilo::Problem<f_t> const& papilo_problem,
   problem.upper.resize(reduced_cols);
   problem.var_types.resize(reduced_cols);
   for (i_t j = 0; j < reduced_cols; ++j) {
-    problem.lower[j]     = col_flags[j].test(papilo::ColFlag::kLbInf)
-                             ? -std::numeric_limits<f_t>::infinity()
-                             : col_lower[j];
-    problem.upper[j]     = col_flags[j].test(papilo::ColFlag::kUbInf)
-                             ? std::numeric_limits<f_t>::infinity()
-                             : col_upper[j];
-    problem.var_types[j] = col_flags[j].test(papilo::ColFlag::kIntegral)
-                             ? simplex::variable_type_t::INTEGER
-                             : simplex::variable_type_t::CONTINUOUS;
+    problem.lower[j] = col_flags[j].test(papilo::ColFlag::kLbInf)
+                         ? -std::numeric_limits<f_t>::infinity()
+                         : col_lower[j];
+    problem.upper[j] = col_flags[j].test(papilo::ColFlag::kUbInf)
+                         ? std::numeric_limits<f_t>::infinity()
+                         : col_upper[j];
+    if (!col_flags[j].test(papilo::ColFlag::kIntegral)) {
+      problem.var_types[j] = simplex::variable_type_t::CONTINUOUS;
+    } else if (problem.lower[j] >= 0 && problem.upper[j] <= 1) {
+      problem.var_types[j] = simplex::variable_type_t::BINARY;
+    } else {
+      problem.var_types[j] = simplex::variable_type_t::INTEGER;
+    }
   }
 
   // Row sense / rhs / ranges -- inverse of the derivation in build_papilo_problem_mip.
