@@ -559,7 +559,8 @@ void core_lns_t<i_t, f_t>::search(diving_worker_t<i_t, f_t>* worker,
   }
 
   const i_t max_radius = std::min<i_t>(params_.max_radius, num_groups);
-  i_t radius           = std::min<i_t>(params_.min_radius, max_radius);
+  const i_t min_radius = std::min<i_t>(params_.min_radius, max_radius);
+  i_t radius           = min_radius;
   i_t failures         = 0;
 
   while (branch_and_bound_ptr->is_running() && !halt.load(std::memory_order::acquire)) {
@@ -593,7 +594,7 @@ void core_lns_t<i_t, f_t>::search(diving_worker_t<i_t, f_t>* worker,
     assignment = best;
     if (evaluate(worker, assignment, &released)) {
       failures = 0;
-      radius   = std::min(max_radius, radius + 2);
+      radius   = std::max(min_radius, radius - 2);
     } else if (++failures % 5 == 0) {
       radius = std::min(max_radius, radius + 5);
     }
