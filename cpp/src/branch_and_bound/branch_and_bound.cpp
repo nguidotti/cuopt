@@ -3998,6 +3998,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 
   // Stops the root heuristics and clear the associated data
   root_heuristics.stop_and_sync();
+  root_structural_heuristics.stop();
 
   set_uninitialized_steepest_edge_norms(original_lp_, basic_list, edge_norms_);
 
