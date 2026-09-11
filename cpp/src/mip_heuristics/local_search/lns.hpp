@@ -50,7 +50,6 @@ struct core_lns_params_t {
 
   // The destroy operators run concurrently, one sub-MIP each, with this many threads per solve.
   i_t threads_per_solve = 8;
-  i_t num_workers       = 8;
 };
 
 template <typename i_t, typename f_t>
@@ -83,7 +82,7 @@ class core_lns_t {
     }
   }
 
-  i_t num_workers() { return params_.num_workers; }
+  i_t num_workers() { return workers_.size(); }
 
  private:
   enum destroy_operator_t : uint8_t {

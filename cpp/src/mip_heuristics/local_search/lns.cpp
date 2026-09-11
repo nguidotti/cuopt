@@ -740,12 +740,20 @@ void core_lns_t<i_t, f_t>::run(const simplex::lp_problem_t<i_t, f_t>& lp,
   const i_t num_groups = variable_groups_.m;
   if (num_groups == 0) return;
 
-  // std::vector<destroy_operator_t> operators = {
-  //   DESTROY_RANDOM, DESTROY_CLOSED, DESTROY_BUDGET, DESTROY_LP_GUIDED, DESTROY_RANDOM};
+  std::vector<destroy_operator_t> operators = {
+    DESTROY_LP_GUIDED,
+    DESTROY_INCUMBENT,
+    DESTROY_CLOSED,
+    DESTROY_BUDGET,
+    DESTROY_INCUMBENT,
+    DESTROY_CLOSED,
+    DESTROY_BUDGET,
+    DESTROY_RANDOM,
+  };
   std::vector<f_t> lp_mass_levels = {0.75, 1.0, 1.15, 1.3, 1.5, 1.75};
 
   create_workers(
-    params_.num_workers, lp, Arow, var_types, root_solution, root_edge_norm, pseudo_costs);
+    operators.size(), lp, Arow, var_types, root_solution, root_edge_norm, pseudo_costs);
 
   lp_value_.assign(num_groups, 0);
   for (i_t k = 0; k < num_groups; ++k) {
@@ -768,7 +776,7 @@ void core_lns_t<i_t, f_t>::run(const simplex::lp_problem_t<i_t, f_t>& lp,
     "%s",
     std::format("Core LNS: {} groups, {} operators, {} threads per operator, LP mass={:.1f}",
                 num_groups,
-                params_.num_workers,
+                operators.size(),
                 params_.threads_per_solve,
                 lp_mass_)
       .c_str());
@@ -792,7 +800,7 @@ void core_lns_t<i_t, f_t>::run(const simplex::lp_problem_t<i_t, f_t>& lp,
 
   for (i_t k = 0; k < workers_.size(); ++k) {
     diving_worker_t<i_t, f_t>* worker = workers_[k].get();
-    const destroy_operator_t op       = static_cast<destroy_operator_t>(k % 5);
+    const destroy_operator_t op       = operators[k];
 #pragma omp task firstprivate(worker, op) depend(out : *worker)
     {
       search(worker, op);
