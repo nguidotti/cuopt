@@ -3033,8 +3033,10 @@ void branch_and_bound_t<i_t, f_t>::launch_root_heuristics(
   i_t cut_pass,
   root_heuristics_t<i_t, f_t>& root_heuristics)
 {
+  if (settings_.root_heuristics == 0) return;
   if (settings_.deterministic) return;
   if (settings_.num_threads < 2) return;
+  if (root_heuristics.max_workers_ < 2) return;
 
   // Using shared_ptr here, so the lifetime of the object is tied to the related task. This allows
   // the solver to send the stop signal and immediately continue the execution.
@@ -3887,11 +3889,13 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
       compute_user_objective(original_lp_, root_relax_objective);
   }
 
-  root_heuristics_t<i_t, f_t> root_heuristics(settings_.num_threads - 1);
   root_structural_heuristics_t<i_t, f_t> root_structural_heuristics(this);
 
   if (!settings_.inside_submip)
     root_structural_heuristics.run_after_root_lp(root_relax_soln_.x, edge_norms_);
+
+  root_heuristics_t<i_t, f_t> root_heuristics(settings_.num_threads - 1 -
+                                              root_structural_heuristics.num_workers_);
 
   f_t cut_generation_start_time = tic();
   i_t cut_pool_size             = 0;
@@ -3994,7 +3998,6 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 
   // Stops the root heuristics and clear the associated data
   root_heuristics.stop_and_sync();
-  root_structural_heuristics.stop();
 
   set_uninitialized_steepest_edge_norms(original_lp_, basic_list, edge_norms_);
 

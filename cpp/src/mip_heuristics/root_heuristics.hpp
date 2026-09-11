@@ -147,6 +147,8 @@ struct root_structural_heuristics_t {
 
   core_lns_t<i_t, f_t> core_lns_;
 
+  i_t num_workers_ = 0;
+
   root_structural_heuristics_t(branch_and_bound_t<i_t, f_t>* branch_and_bound_ptr)
     : lp_(branch_and_bound_ptr->original_lp_),
       Arow_(branch_and_bound_ptr->Arow_),
@@ -163,6 +165,7 @@ struct root_structural_heuristics_t {
     root_edge_norm_ = root_edge_norm;
     if (core_lns_.recognize()) {
       core_lns_.run(lp_, Arow_, var_types_, root_solution_, root_edge_norm_, pc_);
+      num_workers_ += core_lns_.num_workers();
     }
   }
 

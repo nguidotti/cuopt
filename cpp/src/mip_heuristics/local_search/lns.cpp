@@ -20,7 +20,7 @@
 #include <utility>
 #include <vector>
 
-#define SUBMIP_VERBOSE true
+#define SUBMIP_VERBOSE false
 #if SUBMIP_VERBOSE
 #define DEBUG_SUBMIP(fmt, ...) branch_and_bound_ptr->settings_.log.print_format(fmt, __VA_ARGS__);
 #else
@@ -103,9 +103,9 @@ int forced_partner(f_t source_coeff, int setting, f_t target_coeff, char sense, 
 template <typename i_t, typename f_t>
 bool core_lns_t<i_t, f_t>::recognize()
 {
+  if (branch_and_bound_ptr->settings_.core_lns == 0) return false;
+
   constexpr f_t tol = 1e-9;
-  // A target dominated by nearly every group carries no locality, so it contributes no edges.
-  constexpr size_t max_shared_owners = 64;
 
   const auto& problem = branch_and_bound_ptr->original_problem_;
   const i_t num_rows  = problem.num_rows;
@@ -297,65 +297,25 @@ bool core_lns_t<i_t, f_t>::recognize()
     variable_groups_.x[p] = column_parity[j];
   }
 
-  // ---- neighbours_groups_: two groups are adjacent when they dominate a common group ----
-  std::unordered_map<i_t, std::vector<i_t>> owners;
-  for (const i_t root : candidates) {
-    for (int value = 0; value < 2; ++value) {
-      const auto it = implies.find(2 * int64_t{root} + value);
-      if (it == implies.end()) continue;
-      for (const int64_t target : it->second) {
-        owners[target / 2].push_back(root_to_group[root]);
-      }
-    }
-  }
-
-  std::vector<std::pair<i_t, i_t>> edges;
-  for (auto& [target, list] : owners) {
-    std::sort(list.begin(), list.end());
-    list.erase(std::unique(list.begin(), list.end()), list.end());
-    if (list.size() < 2 || list.size() > max_shared_owners) continue;
-    for (const i_t a : list) {
-      for (const i_t b : list) {
-        if (a != b) edges.emplace_back(a, b);
-      }
-    }
-  }
-  std::sort(edges.begin(), edges.end());
-  edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
-
-  const i_t num_edges = edges.size();
-  neighbours_groups_  = csr_matrix_t<i_t, f_t>(num_groups, num_groups, num_edges);
-  std::fill(neighbours_groups_.row_start.begin(), neighbours_groups_.row_start.end(), 0);
-  for (const auto& [a, b] : edges) {
-    ++neighbours_groups_.row_start[a + 1];
-  }
-  for (i_t k = 0; k < num_groups; ++k) {
-    neighbours_groups_.row_start[k + 1] += neighbours_groups_.row_start[k];
-  }
-  // `edges` is sorted, so appending in order leaves every row sorted by neighbour index.
-  i_t position = 0;
-  for (const auto& [a, b] : edges) {
-    neighbours_groups_.j[position] = b;
-    neighbours_groups_.x[position] = 1;
-    ++position;
-  }
+  released_count_.assign(num_groups, 0);
+  changed_count_.assign(num_groups, 0);
 
   CUOPT_LOG_INFO("%s",
-                 std::format("Decision core: {} groups over {} variables, {} covered ({:.1f}%), "
-                             "{} adjacency edges",
+                 std::format("Decision core: {} groups over {} variables, {} covered ({:.1f}%)",
                              num_groups,
                              num_members,
                              covered,
-                             100.0 * covered / binaries,
-                             num_edges)
+                             100.0 * covered / binaries)
                    .c_str());
   return true;
 }
 
 template <typename i_t, typename f_t>
-bool core_lns_t<i_t, f_t>::evaluate(diving_worker_t<i_t, f_t>* worker,
-                                    const std::vector<uint8_t>& value,
-                                    const std::vector<uint8_t>* released)
+typename core_lns_t<i_t, f_t>::evaluate_result_t core_lns_t<i_t, f_t>::evaluate(
+  diving_worker_t<i_t, f_t>* worker,
+  const std::vector<uint8_t>& value,
+  const std::vector<uint8_t>* released,
+  f_t forced_slack_lb)
 {
   simplex::simplex_solver_settings_t<i_t, f_t> settings = branch_and_bound_ptr->settings_;
   settings.print_presolve_stats                         = false;
@@ -369,10 +329,13 @@ bool core_lns_t<i_t, f_t>::evaluate(diving_worker_t<i_t, f_t>* worker,
   settings.max_cut_passes                               = 5;
   settings.strong_branching_simplex_iteration_limit     = 50;
   settings.submip_settings.level                        = 1;
+  settings.core_lns                                     = 0;
+  settings.root_heuristics                              = 0;
+  settings.submip_settings.node_limit_offset            = 500;
+  settings.strong_branching_simplex_iteration_limit     = 50;
   settings.benchmark_info_ptr                           = nullptr;
   settings.log.log                                      = SUBMIP_VERBOSE;
-  settings.log.log_prefix                    = std::format("[CORE LNS {}] ", worker->worker_id);
-  settings.submip_settings.node_limit_offset = 500;
+  settings.log.log_prefix = std::format("[CORE LNS {}] ", worker->worker_id);
 
   worker->leaf_problem.lower = worker->start_lower;
   worker->leaf_problem.upper = worker->start_upper;
@@ -393,7 +356,19 @@ bool core_lns_t<i_t, f_t>::evaluate(diving_worker_t<i_t, f_t>* worker,
       ++num_fixed;
     }
   }
-  if (num_fixed == 0) return false;
+  // Force the cap open. The incumbent is then infeasible for the sub-MIP, so it has to cross the
+  // budget rather than choose to -- which is the one move no myopic score will take, since a
+  // control costs its full price up front and repays only once the cover it gates is bought.
+  if (forced_slack_lb >= 0 && budget_slack_col_ >= 0) {
+    const i_t col = budget_slack_col_;
+    const f_t lb  = std::min(forced_slack_lb, worker->leaf_problem.upper[col]);
+    if (lb > worker->leaf_problem.lower[col]) {
+      worker->leaf_problem.lower[col] = lb;
+      worker->bounds_changed[col]     = true;
+    }
+  }
+
+  if (num_fixed == 0) return evaluate_result_t::NO_IMPROVEMENT;
 
 #if SUBMIP_VERBOSE
   {
@@ -433,19 +408,51 @@ bool core_lns_t<i_t, f_t>::evaluate(diving_worker_t<i_t, f_t>* worker,
     settings, worker->bounds_changed, worker->leaf_problem.lower, worker->leaf_problem.upper);
   if (!is_feasible) {
     submip_stats_.save_infeasible(fixrate);
-    return false;
+    return evaluate_result_t::INFEASIBLE;
   }
 
   const f_t before = branch_and_bound_ptr->upper_bound_.load();
   ++submip_stats_.total_calls;
-
   branch_and_bound_ptr->solve_submip(worker, submip_stats_, fixrate, 0, settings);
-  return branch_and_bound_ptr->upper_bound_.load() < before - settings.zero_tol;
+  return branch_and_bound_ptr->upper_bound_.load() < before - settings.zero_tol
+           ? evaluate_result_t::IMPROVED
+           : evaluate_result_t::NO_IMPROVEMENT;
+}
+
+template <typename i_t, typename f_t>
+void core_lns_t<i_t, f_t>::snapshot_volatility(std::vector<f_t>& out)
+{
+  // Beta(1,2) prior, so a group nobody has released yet sits at 1/3 rather than at 0 or 1 -- it
+  // must not be excluded before there is evidence, nor preferred over one that has proven itself.
+  constexpr f_t alpha = 1.0;
+  constexpr f_t beta  = 2.0;
+  mutex_memory_.lock();
+  for (i_t k = 0; k < variable_groups_.m; ++k) {
+    const f_t released = released_count_[k];
+    const f_t changed  = changed_count_[k];
+    out[k]             = (changed + alpha) / (released + alpha + beta);
+  }
+  mutex_memory_.unlock();
+}
+
+template <typename i_t, typename f_t>
+void core_lns_t<i_t, f_t>::record_release(const std::vector<uint8_t>& released,
+                                          const std::vector<uint8_t>& before,
+                                          const std::vector<uint8_t>& after)
+{
+  mutex_memory_.lock();
+  for (i_t k = 0; k < variable_groups_.m; ++k) {
+    if (!released[k]) continue;
+    ++released_count_[k];
+    changed_count_[k] += before[k] != after[k];
+  }
+  mutex_memory_.unlock();
 }
 
 template <typename i_t, typename f_t>
 void core_lns_t<i_t, f_t>::destroy_lp_guided(diving_worker_t<i_t, f_t>* worker,
                                              const std::vector<uint8_t>& best,
+                                             const std::vector<f_t>& volatility,
                                              i_t num_to_release,
                                              std::vector<uint8_t>& released)
 {
@@ -454,7 +461,8 @@ void core_lns_t<i_t, f_t>::destroy_lp_guided(diving_worker_t<i_t, f_t>* worker,
   for (i_t k = 0; k < num_groups; ++k) {
     const f_t fractionality = std::min(lp_value_[k], 1.0 - lp_value_[k]);
     const f_t disagreement  = std::abs(lp_value_[k] - best[k]);
-    score[k] = {-(fractionality + disagreement + 1e-3 * worker->rng.next_double()), k};
+    score[k] = {-(fractionality + disagreement + volatility[k] + 1e-3 * worker->rng.next_double()),
+                k};
   }
   std::partial_sort(score.begin(), score.begin() + num_to_release, score.end());
   for (i_t r = 0; r < num_to_release; ++r) {
@@ -463,38 +471,9 @@ void core_lns_t<i_t, f_t>::destroy_lp_guided(diving_worker_t<i_t, f_t>* worker,
 }
 
 template <typename i_t, typename f_t>
-void core_lns_t<i_t, f_t>::destroy_neighbour(diving_worker_t<i_t, f_t>* worker,
-                                             i_t num_to_release,
-                                             std::vector<uint8_t>& released)
-{
-  if (neighbours_groups_.nz_max == 0) {
-    destroy_random(worker, num_to_release, released);
-    return;
-  }
-
-  const i_t num_groups = variable_groups_.m;
-  std::vector<i_t> stack;
-  i_t chosen = 0;
-  while (chosen < num_to_release) {
-    stack.push_back(worker->rng.next_double() * num_groups);
-    while (!stack.empty() && chosen < num_to_release) {
-      const i_t node = stack.back();
-      stack.pop_back();
-      if (node >= num_groups || released[node]) continue;
-      released[node] = 1;
-      ++chosen;
-      for (i_t p = neighbours_groups_.row_start[node]; p < neighbours_groups_.row_start[node + 1];
-           ++p) {
-        const i_t other = neighbours_groups_.j[p];
-        if (!released[other]) stack.push_back(other);
-      }
-    }
-  }
-}
-
-template <typename i_t, typename f_t>
 void core_lns_t<i_t, f_t>::destroy_incumbent(diving_worker_t<i_t, f_t>* worker,
                                              const std::vector<uint8_t>& best,
+                                             const std::vector<f_t>& volatility,
                                              i_t num_to_release,
                                              std::vector<uint8_t>& released)
 {
@@ -507,12 +486,50 @@ void core_lns_t<i_t, f_t>::destroy_incumbent(diving_worker_t<i_t, f_t>* worker,
 
   const i_t num_active = active.size();
   const i_t take       = std::min(num_to_release, num_active);
-  // Partial Fisher-Yates: draw `take` distinct entries without shuffling the whole vector.
+  // Weighted sampling without replacement (Efraimidis-Spirakis): draw u ~ U(0,1) per candidate and
+  // rank by u^(1/w). Taking the `take` largest keys samples proportionally to w in one pass, so a
+  // settled group is unlikely to be drawn but never permanently excluded.
+  std::vector<std::pair<f_t, i_t>> keys(num_active);
+  for (i_t r = 0; r < num_active; ++r) {
+    const i_t k      = active[r];
+    const f_t weight = std::max<f_t>(volatility[k], 1e-6);
+    const f_t u      = std::max<f_t>(worker->rng.next_double(), 1e-12);
+    keys[r]          = {-std::pow(u, 1.0 / weight), k};
+  }
+  std::partial_sort(keys.begin(), keys.begin() + take, keys.end());
   for (i_t r = 0; r < take; ++r) {
-    const i_t span = num_active - r;
-    const i_t pick = r + std::min<i_t>(worker->rng.next_double() * span, span - 1);
-    std::swap(active[r], active[pick]);
-    released[active[r]] = 1;
+    released[keys[r].second] = 1;
+  }
+
+  if (take < num_to_release) { destroy_random(worker, num_to_release - take, released); }
+}
+
+template <typename i_t, typename f_t>
+void core_lns_t<i_t, f_t>::destroy_closed(diving_worker_t<i_t, f_t>* worker,
+                                          const std::vector<uint8_t>& best,
+                                          const std::vector<f_t>& volatility,
+                                          i_t num_to_release,
+                                          std::vector<uint8_t>& released)
+{
+  const i_t num_groups = variable_groups_.m;
+  std::vector<i_t> closed;
+  closed.reserve(num_groups);
+  for (i_t k = 0; k < num_groups; ++k) {
+    if (!best[k]) { closed.push_back(k); }
+  }
+
+  const i_t num_closed = closed.size();
+  const i_t take       = std::min(num_to_release, num_closed);
+  std::vector<std::pair<f_t, i_t>> keys(num_closed);
+  for (i_t r = 0; r < num_closed; ++r) {
+    const i_t k      = closed[r];
+    const f_t weight = std::max<f_t>(volatility[k], 1e-6);
+    const f_t u      = std::max<f_t>(worker->rng.next_double(), 1e-12);
+    keys[r]          = {-std::pow(u, 1.0 / weight), k};
+  }
+  std::partial_sort(keys.begin(), keys.begin() + take, keys.end());
+  for (i_t r = 0; r < take; ++r) {
+    released[keys[r].second] = 1;
   }
 
   if (take < num_to_release) { destroy_random(worker, num_to_release - take, released); }
@@ -542,21 +559,12 @@ void core_lns_t<i_t, f_t>::search(diving_worker_t<i_t, f_t>* worker,
   std::vector<uint8_t> best(num_groups, 0);
   std::vector<uint8_t> assignment(num_groups, 0);
   std::vector<uint8_t> released(num_groups, 0);
-
-  // The relaxation ranks the core well but understates how many groups should be active, so the
-  // level is swept rather than trusted. The levels are dealt round-robin so the seed is parallel.
-  constexpr f_t levels[]   = {0.5, 0.75, 1.0, 1.25, 1.5};
-  constexpr i_t num_levels = 5;
-
-  for (i_t idx = worker->worker_id; idx < num_levels; idx += NUM_DESTROY_OPERATORS) {
-    if (!branch_and_bound_ptr->is_running() || halt.load(std::memory_order::acquire)) { return; }
-    const i_t level = std::clamp<i_t>(std::lround(levels[idx] * lp_mass_), 1, num_groups);
-    std::fill(assignment.begin(), assignment.end(), 0);
-    for (i_t r = 0; r < level; ++r) {
-      assignment[ranked_[r]] = 1;
-    }
-    evaluate(worker, assignment, nullptr);
-  }
+  std::vector<f_t> volatility(num_groups, 0);
+  // The previous round's release and the values it started from. The verdict on whether a released
+  // group was actually re-decided only arrives with the next incumbent read, one round later.
+  std::vector<uint8_t> prev_released(num_groups, 0);
+  std::vector<uint8_t> prev_best(num_groups, 0);
+  bool have_prev = false;
 
   const i_t max_radius = std::min<i_t>(params_.max_radius, num_groups);
   const i_t min_radius = std::min<i_t>(params_.min_radius, max_radius);
@@ -580,24 +588,144 @@ void core_lns_t<i_t, f_t>::search(diving_worker_t<i_t, f_t>* worker,
       }
     }
 
+    if (have_prev) { record_release(prev_released, prev_best, best); }
+    snapshot_volatility(volatility);
+
     std::fill(released.begin(), released.end(), 0);
     const i_t num_to_release = std::min(radius, num_groups);
 
     switch (destroy_operator) {
-      case DESTROY_LP_GUIDED: destroy_lp_guided(worker, best, num_to_release, released); break;
-      case DESTROY_NEIGHBOUR: destroy_neighbour(worker, num_to_release, released); break;
-      case DESTROY_INCUMBENT: destroy_incumbent(worker, best, num_to_release, released); break;
+      case DESTROY_LP_GUIDED:
+        destroy_lp_guided(worker, best, volatility, num_to_release, released);
+        break;
+      case DESTROY_INCUMBENT:
+        destroy_incumbent(worker, best, volatility, num_to_release, released);
+        break;
       case DESTROY_RANDOM: destroy_random(worker, num_to_release, released); break;
-      case NUM_DESTROY_OPERATORS: break;
+      case DESTROY_CLOSED:
+      case DESTROY_BUDGET:
+        destroy_closed(worker, best, volatility, num_to_release, released);
+        break;
     }
 
+    prev_released = released;
+    prev_best     = best;
+    have_prev     = true;
+
     assignment = best;
-    if (evaluate(worker, assignment, &released)) {
-      failures = 0;
-      radius   = std::max(min_radius, radius - 2);
-    } else if (++failures % 5 == 0) {
-      radius = std::min(max_radius, radius + 5);
+    // DESTROY_BUDGET pushes the cap past whatever the incumbent settled for; the others leave it
+    // where it is. -1 means "do not touch the slack".
+    f_t forced_slack = -1;
+    if (destroy_operator == DESTROY_BUDGET && budget_slack_col_ >= 0 &&
+        budget_slack_col_ < worker->current_incumbent.size()) {
+      forced_slack = worker->current_incumbent[budget_slack_col_] + params_.budget_push;
     }
+    const evaluate_result_t result = evaluate(worker, assignment, &released, forced_slack);
+    switch (result) {
+      case evaluate_result_t::IMPROVED:
+        // The neighbourhood paid: look harder near the new incumbent.
+        failures = 0;
+        radius   = std::max(min_radius, radius - params_.radius_step);
+        break;
+      case evaluate_result_t::NO_IMPROVEMENT:
+        // Valid but exhausted: widen. Same step and same frequency as the gain, so the radius
+        // tracks the success rate instead of ratcheting to one end of its range.
+        ++failures;
+        radius = std::min(max_radius, radius + params_.radius_step);
+        break;
+      case evaluate_result_t::INFEASIBLE:
+        // The groups left fixed are inconsistent, so the round never reached a sub-MIP. Releasing
+        // more fixes fewer and is strictly more permissive -- widen at once, and do not count this
+        // as evidence that the neighbourhood was exhausted.
+        radius = std::min(max_radius, radius + 5);
+        break;
+    }
+
+#if SUBMIP_VERBOSE
+    {
+      const char* outcome = result == evaluate_result_t::IMPROVED     ? "improved"
+                            : result == evaluate_result_t::INFEASIBLE ? "infeasible"
+                                                                      : "no-improvement";
+      DEBUG_SUBMIP("[CORE LNS {}] round: op={} outcome={} released={} radius->{} failures={}\n",
+                   worker->worker_id,
+                   (int)destroy_operator,
+                   outcome,
+                   num_to_release,
+                   radius,
+                   failures);
+    }
+#endif
+  }
+}
+
+template <typename i_t, typename f_t>
+void core_lns_t<i_t, f_t>::create_workers(i_t num_workers,
+                                          const simplex::lp_problem_t<i_t, f_t>& lp,
+                                          const csr_matrix_t<i_t, f_t>& Arow,
+                                          const std::vector<simplex::variable_type_t>& var_types,
+                                          const std::vector<f_t>& root_solution,
+                                          const std::vector<f_t>& root_edge_norm,
+                                          pseudo_costs_t<i_t, f_t>& pseudo_costs)
+{
+  workers_.resize(num_workers);
+  for (i_t k = 0; k < num_workers; ++k) {
+    workers_[k]                  = std::make_unique<diving_worker_t<i_t, f_t>>(k,
+                                                              lp,
+                                                              Arow,
+                                                              var_types,
+                                                              branch_and_bound_ptr->settings_,
+                                                              pseudo_costs,
+                                                              root_solution,
+                                                              root_edge_norm,
+                                                              5000);
+    workers_[k]->search_strategy = search_strategy_t::CORE_LNS;
+    workers_[k]->set_active();
+  }
+}
+template <typename i_t, typename f_t>
+void core_lns_t<i_t, f_t>::find_budget_slack(const std::vector<f_t>& root_solution)
+{
+  const auto& problem = branch_and_bound_ptr->original_problem_;
+  constexpr f_t tol   = 1e-6;
+
+  // Which row each singleton column sits in, and with what coefficient.
+  f_t best_cost = 0;
+  for (i_t j = 0; j < problem.num_cols; ++j) {
+    if (problem.var_types[j] != simplex::variable_type_t::CONTINUOUS) { continue; }
+    // Cost is read straight off `objective`: it is always in internal minimisation form, so
+    // scaling it by obj_scale would invert the test on a maximisation model.
+    if (problem.objective[j] <= 0) { continue; }
+    if (problem.A.col_start[j + 1] - problem.A.col_start[j] != 1) { continue; }
+
+    const i_t p      = problem.A.col_start[j];
+    const i_t row    = problem.A.i[p];
+    const f_t coef   = problem.A.x[p];
+    const char sense = problem.row_sense[row];
+    // Relaxing sign: the slack must widen the row, not tighten it.
+    if (sense == 'L' && coef >= 0) { continue; }
+    if (sense == 'G' && coef <= 0) { continue; }
+    if (sense != 'L' && sense != 'G') { continue; }
+
+    // The discriminator. Every inert penalty slack sits at its lower bound in the relaxation;
+    // only a cap the relaxation is willing to exceed takes a positive value. No test for an
+    // infinite upper bound -- presolve derives one, so there would be nothing left to find.
+    const f_t x = j < root_solution.size() ? root_solution[j] : f_t{0};
+    if (x <= problem.lower[j] + tol) { continue; }
+
+    if (problem.objective[j] > best_cost) {
+      best_cost         = problem.objective[j];
+      budget_slack_col_ = j;
+    }
+  }
+
+  if (budget_slack_col_ >= 0) {
+    CUOPT_LOG_INFO("%s",
+                   std::format("Core LNS: budget slack is column {} priced {:.0f}, relaxation buys "
+                               "{:.2f}",
+                               budget_slack_col_,
+                               best_cost,
+                               root_solution[budget_slack_col_])
+                     .c_str());
   }
 }
 
@@ -612,6 +740,13 @@ void core_lns_t<i_t, f_t>::run(const simplex::lp_problem_t<i_t, f_t>& lp,
   const i_t num_groups = variable_groups_.m;
   if (num_groups == 0) return;
 
+  // std::vector<destroy_operator_t> operators = {
+  //   DESTROY_RANDOM, DESTROY_CLOSED, DESTROY_BUDGET, DESTROY_LP_GUIDED, DESTROY_RANDOM};
+  std::vector<f_t> lp_mass_levels = {0.75, 1.0, 1.15, 1.3, 1.5, 1.75};
+
+  create_workers(
+    params_.num_workers, lp, Arow, var_types, root_solution, root_edge_norm, pseudo_costs);
+
   lp_value_.assign(num_groups, 0);
   for (i_t k = 0; k < num_groups; ++k) {
     const i_t p      = variable_groups_.row_start[k];
@@ -621,23 +756,43 @@ void core_lns_t<i_t, f_t>::run(const simplex::lp_problem_t<i_t, f_t>& lp,
     lp_value_[k]     = parity ? 1.0 - x : x;
   }
 
+  find_budget_slack(root_solution);
+
   ranked_.resize(num_groups);
   std::iota(ranked_.begin(), ranked_.end(), 0);
   std::sort(
     ranked_.begin(), ranked_.end(), [&](i_t a, i_t b) { return lp_value_[a] > lp_value_[b]; });
   lp_mass_ = std::accumulate(lp_value_.begin(), lp_value_.end(), f_t{0});
 
-  CUOPT_LOG_INFO("%s",
-                 std::format("Core LNS: {} groups, {} operators x {} threads, LP mass {:.1f}",
-                             num_groups,
-                             (i_t)NUM_DESTROY_OPERATORS,
-                             params_.threads_per_solve,
-                             lp_mass_)
-                   .c_str());
+  CUOPT_LOG_INFO(
+    "%s",
+    std::format("Core LNS: {} groups, {} operators, {} threads per operator, LP mass={:.1f}",
+                num_groups,
+                params_.num_workers,
+                params_.threads_per_solve,
+                lp_mass_)
+      .c_str());
 
-  for (auto op : {DESTROY_LP_GUIDED, DESTROY_NEIGHBOUR, DESTROY_INCUMBENT, DESTROY_RANDOM}) {
-    diving_worker_t<i_t, f_t>* worker =
-      create_submip_worker(lp, Arow, var_types, root_solution, root_edge_norm, pseudo_costs);
+#pragma omp taskloop num_tasks(workers_.size())
+  for (i_t i = 0; i < workers_.size(); ++i) {
+    auto* worker = workers_[i].get();
+
+    std::vector<uint8_t> assignment(num_groups, 0);
+
+    for (i_t k = i; k < lp_mass_levels.size(); k += workers_.size()) {
+      if (!branch_and_bound_ptr->is_running() || halt.load(std::memory_order::acquire)) { break; }
+      const i_t level = std::clamp<i_t>(std::lround(lp_mass_levels[k] * lp_mass_), 1, num_groups);
+      std::fill(assignment.begin(), assignment.end(), 0);
+      for (i_t r = 0; r < level; ++r) {
+        assignment[ranked_[r]] = 1;
+      }
+      evaluate(worker, assignment, nullptr);
+    }
+  }
+
+  for (i_t k = 0; k < workers_.size(); ++k) {
+    diving_worker_t<i_t, f_t>* worker = workers_[k].get();
+    const destroy_operator_t op       = static_cast<destroy_operator_t>(k % 5);
 #pragma omp task firstprivate(worker, op) depend(out : *worker)
     {
       search(worker, op);

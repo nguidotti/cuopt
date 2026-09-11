@@ -116,6 +116,8 @@ struct simplex_solver_settings_t {
       inside_mip(0),
       inside_submip(0),
       inside_root_node(0),
+      root_heuristics(-1),
+      core_lns(-1),
       solution_callback(nullptr),
       heuristic_preemption_callback(nullptr),
       dual_simplex_objective_callback(nullptr),
@@ -255,6 +257,9 @@ struct simplex_solver_settings_t {
   i_t inside_mip;  // 0 if outside MIP, 1 if inside MIP at root node, 2 if inside MIP at leaf node
   i_t inside_submip;     // 0 if in regular MIP solve, 1 if in sub-MIP solve
   i_t inside_root_node;  // 1 if this is running during the root node, 0 otherwise
+
+  i_t root_heuristics;
+  i_t core_lns;
 
   // Settings for the recursive sub-MIP
   mip_submip_hyper_params_t<i_t, f_t> submip_settings;
