@@ -374,15 +374,17 @@ class branch_and_bound_t {
 
   // Launch a new RINS worker
   bool launch_submip_worker(const std::vector<f_t>& sol);
-  void set_solution_from_submip(const simplex::lp_problem_t<i_t, f_t>& lp,
+
+  // Returns true when the sub-MIP found an improving solution.
+  bool set_solution_from_submip(const simplex::lp_problem_t<i_t, f_t>& lp,
                                 const std::vector<f_t>& solution,
                                 const third_party_presolve_t<i_t, f_t>& presolver,
                                 submip_stats_t& submip_stats,
                                 f_t fixrate,
                                 std::string_view log_prefix);
 
-  // Solve the RINS sub-MIP.
-  void solve_submip(diving_worker_t<i_t, f_t>* worker,
+  // Solve the RINS sub-MIP. Returns true when the sub-MIP found an improving solution.
+  bool solve_submip(diving_worker_t<i_t, f_t>* worker,
                     submip_stats_t& submip_stats,
                     f_t fixrate,
                     i_t simplex_iter_used,

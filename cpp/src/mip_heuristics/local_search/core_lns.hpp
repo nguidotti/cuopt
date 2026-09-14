@@ -9,6 +9,7 @@
 #include <branch_and_bound/worker.hpp>
 #include <linear_algebra/sparse_matrix.hpp>
 
+#include <limits>
 #include <list>
 #include <memory>
 #include <vector>
@@ -32,13 +33,6 @@ struct core_lns_params_t {
 
   // Minimum set of variables covered by the core to turn on this heuristic.
   f_t min_coverage = 0.25;
-
-  // How far above the incumbent's own value the budget slack is forced. Must be > 0 or the
-  // incumbent stays feasible and nothing compels the sub-MIP to cross the cap.
-  f_t budget_push = 1.0;
-
-  // Wall-clock cap on each seed sub-MIP, so the sweep cannot eat the solve.
-  f_t seed_time_limit = 5.0;
 
   // How many groups a destroy operator releases, and the bounds the controller keeps it within.
   // The controller steps by `radius_step` in both directions, every round, so the drift is
@@ -85,17 +79,7 @@ class core_lns_t {
   i_t num_threads_used() { return num_threads_used_; }
 
  private:
-  enum destroy_operator_t : uint8_t {
-    DESTROY_INCUMBENT = 0,
-    DESTROY_RANDOM    = 1,
-    DESTROY_CLOSED    = 2,
-    DESTROY_BUDGET    = 3,
-    DESTROY_LP_GUIDED = 4
-  };
-
-  // One destroy operator: seeds its share of the level sweep, then destroys and repairs until the
-  // solve is halted. Runs as its own task on its own worker.
-  void search(diving_worker_t<i_t, f_t>* worker, destroy_operator_t destroy_operator);
+  void search(diving_worker_t<i_t, f_t>* worker);
   void create_workers(i_t num_workers,
                       const simplex::lp_problem_t<i_t, f_t>& lp,
                       const csr_matrix_t<i_t, f_t>& Arow,
@@ -103,43 +87,6 @@ class core_lns_t {
                       const std::vector<f_t>& root_solution,
                       const std::vector<f_t>& root_edge_norm,
                       pseudo_costs_t<i_t, f_t>& pseudo_costs);
-
-  // Release the groups the relaxation is least certain about, and where it disagrees with the
-  // incumbent.
-  void destroy_lp_guided(diving_worker_t<i_t, f_t>* worker,
-                         const std::vector<uint8_t>& best,
-                         const std::vector<f_t>& volatility,
-                         i_t num_to_release,
-                         std::vector<uint8_t>& released);
-
-  // Release groups the incumbent has active. Those are its committed decisions; the inactive ones
-  // are the default. Tops up with random groups when the incumbent holds too few to fill the
-  // radius.
-  void destroy_incumbent(diving_worker_t<i_t, f_t>* worker,
-                         const std::vector<uint8_t>& best,
-                         const std::vector<f_t>& volatility,
-                         i_t num_to_release,
-                         std::vector<uint8_t>& released);
-
-  void destroy_random(diving_worker_t<i_t, f_t>* worker,
-                      i_t num_to_release,
-                      std::vector<uint8_t>& released);
-
-  // The mirror of destroy_incumbent: release only groups the incumbent has *closed*. Everything
-  // already open stays fixed at 1, so the residual solve cannot claw back the cap charge by
-  // closing a control elsewhere -- its only move is to open more, or to leave them shut. With the
-  // cutoff in force that makes the expensive step across the budget the one thing on offer.
-  // The soft budget row's slack: a positively-priced continuous singleton the relaxation is
-  // willing to buy, so the row is a cap that may be exceeded for a price rather than a hard limit.
-  // -1 when the model carries no such row.
-  void find_budget_slack(const std::vector<f_t>& root_solution);
-  i_t budget_slack_col_{-1};
-
-  void destroy_closed(diving_worker_t<i_t, f_t>* worker,
-                      const std::vector<uint8_t>& best,
-                      const std::vector<f_t>& volatility,
-                      i_t num_to_release,
-                      std::vector<uint8_t>& released);
 
   // Outcome of one destroy/repair round. INFEASIBLE and NO_IMPROVEMENT both mean "no better
   // solution", but they call for opposite responses from the radius controller, so they are kept
@@ -149,21 +96,7 @@ class core_lns_t {
   // Fix every group outside `released`, propagate, and hand the residual to solve_submip.
   evaluate_result_t evaluate(diving_worker_t<i_t, f_t>* worker,
                              const std::vector<uint8_t>& value,
-                             const std::vector<uint8_t>* released,
-                             f_t forced_slack_lb = -1);
-
-  // Long-term memory over the core: how often releasing a group led to the incumbent actually
-  // giving it a different value. A group the residual solve keeps putting back the same way is
-  // settled, and spending the radius on it buys nothing. Shared by every worker, so the three
-  // streams pool their evidence.
-  void snapshot_volatility(std::vector<f_t>& out);
-  void record_release(const std::vector<uint8_t>& released,
-                      const std::vector<uint8_t>& before,
-                      const std::vector<uint8_t>& after);
-
-  omp_mutex_t mutex_memory_;
-  std::vector<i_t> released_count_;
-  std::vector<i_t> changed_count_;
+                             const std::vector<uint8_t>* released);
 
   branch_and_bound_t<i_t, f_t>* branch_and_bound_ptr;
   std::atomic<int> halt{false};
