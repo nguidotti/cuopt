@@ -34,13 +34,16 @@ struct core_lns_params_t {
   // Minimum set of variables covered by the core to turn on this heuristic.
   f_t min_coverage = 0.25;
 
-  // How many groups a destroy operator releases, and the bounds the controller keeps it within.
-  // The controller steps by `radius_step` in both directions, every round, so the drift is
-  // (1 - 2p) * radius_step at success rate p -- neutral at p = 0.5 rather than collapsing onto
-  // the floor the way an every-round gain against an every-fifth-round loss does.
-  i_t radius_step = 2;
-  i_t min_radius  = 30;
-  i_t max_radius  = 60;
+  // How many groups a round releases before evidence says otherwise. The controller below keeps
+  // an interval around this and samples inside it, so the value only has to be a plausible
+  // starting point rather than a tuned one.
+  i_t base_radius = 30;
+
+  // Hard bounds on the sampled radius. The ceiling is what keeps the controller out of the band
+  // where the sub-MIP hits its node limit and a round's verdict stops distinguishing "nothing
+  // here" from "ran out of nodes".
+  i_t min_radius = 5;
+  i_t max_radius = 120;
 
   // The destroy operators run concurrently, one sub-MIP each, with this many threads per solve.
   i_t threads_per_solve = 4;
@@ -88,15 +91,19 @@ class core_lns_t {
                       const std::vector<f_t>& root_edge_norm,
                       pseudo_costs_t<i_t, f_t>& pseudo_costs);
 
-  // Outcome of one destroy/repair round. INFEASIBLE and NO_IMPROVEMENT both mean "no better
-  // solution", but they call for opposite responses from the radius controller, so they are kept
-  // apart: releasing more groups fixes fewer of them and is strictly more permissive.
-  enum class evaluate_result_t : uint8_t { IMPROVED, NO_IMPROVEMENT, INFEASIBLE };
+  // Fix every group outside `released`, propagate, and hand the residual to solve_submip. The
+  // outcome needs no return: solve_submip records it against the radius in submip_stats_, which
+  // is where next_radius reads it back from.
+  void evaluate(diving_worker_t<i_t, f_t>* worker,
+                const std::vector<uint8_t>& value,
+                const std::vector<uint8_t>* released);
 
-  // Fix every group outside `released`, propagate, and hand the residual to solve_submip.
-  evaluate_result_t evaluate(diving_worker_t<i_t, f_t>* worker,
-                             const std::vector<uint8_t>& value,
-                             const std::vector<uint8_t>* released);
+  // Draw the next radius. Ported from submip_get_max_fixrate (branch_and_bound.cpp): keep a
+  // [low, high] interval around the evidence and sample uniformly inside it rather than
+  // committing to a point estimate. The senses are mirrored because a larger radius fixes
+  // *fewer* variables where a larger fix rate fixes more -- an infeasible round says the radius
+  // was too small, not too large.
+  i_t next_radius(pcgenerator_t& rng) const;
 
   branch_and_bound_t<i_t, f_t>* branch_and_bound_ptr;
   std::atomic<int> halt{false};

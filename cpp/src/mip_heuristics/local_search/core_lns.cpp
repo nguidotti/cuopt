@@ -308,10 +308,9 @@ bool core_lns_t<i_t, f_t>::recognize()
 }
 
 template <typename i_t, typename f_t>
-typename core_lns_t<i_t, f_t>::evaluate_result_t core_lns_t<i_t, f_t>::evaluate(
-  diving_worker_t<i_t, f_t>* worker,
-  const std::vector<uint8_t>& value,
-  const std::vector<uint8_t>* released)
+void core_lns_t<i_t, f_t>::evaluate(diving_worker_t<i_t, f_t>* worker,
+                                    const std::vector<uint8_t>& value,
+                                    const std::vector<uint8_t>* released)
 {
   simplex::simplex_solver_settings_t<i_t, f_t> settings = branch_and_bound_ptr->settings_;
   settings.print_presolve_stats                         = false;
@@ -352,7 +351,7 @@ typename core_lns_t<i_t, f_t>::evaluate_result_t core_lns_t<i_t, f_t>::evaluate(
     }
   }
 
-  if (num_fixed == 0) return evaluate_result_t::NO_IMPROVEMENT;
+  if (num_fixed == 0) return;
 
 #if SUBMIP_VERBOSE
   {
@@ -378,27 +377,52 @@ typename core_lns_t<i_t, f_t>::evaluate_result_t core_lns_t<i_t, f_t>::evaluate(
   }
 #endif
 
-  i_t total = 0, num_integer_fixed = 0;
-  for (i_t j = 0; j < worker->var_types.size(); ++j) {
-    if (worker->var_types[j] == simplex::variable_type_t::CONTINUOUS) continue;
-    ++total;
-    num_integer_fixed +=
-      std::abs(worker->leaf_problem.lower[j] - worker->leaf_problem.upper[j]) <= settings.fixed_tol;
+  // submip_stats_ tags every outcome with the parameter that produced it, and for this heuristic
+  // that parameter is the radius rather than the sub-MIP's fix rate -- the radius is what
+  // next_radius has to choose. Nothing downstream reads the tag as a fix rate: solve_submip only
+  // forwards it to save_success/save_infeasible.
+  i_t radius = 0;
+  if (released != nullptr) {
+    for (i_t k = 0; k < variable_groups_.m; ++k) {
+      radius += (*released)[k];
+    }
   }
-  const f_t denominator = total;
-  const f_t fixrate     = total > 0 ? num_integer_fixed / denominator : f_t{0};
 
   bool is_feasible = worker->node_presolver.bounds_strengthening(
     settings, worker->bounds_changed, worker->leaf_problem.lower, worker->leaf_problem.upper);
   if (!is_feasible) {
-    submip_stats_.save_infeasible(fixrate);
-    return evaluate_result_t::INFEASIBLE;
+    submip_stats_.save_infeasible(radius);
+    return;
   }
 
   ++submip_stats_.total_calls;
-  const bool improved =
-    branch_and_bound_ptr->solve_submip(worker, submip_stats_, fixrate, 0, settings);
-  return improved ? evaluate_result_t::IMPROVED : evaluate_result_t::NO_IMPROVEMENT;
+  branch_and_bound_ptr->solve_submip(worker, submip_stats_, radius, 0, settings);
+}
+
+template <typename i_t, typename f_t>
+i_t core_lns_t<i_t, f_t>::next_radius(pcgenerator_t& rng) const
+{
+  f_t low  = params_.base_radius;
+  f_t high = params_.base_radius;
+
+  // An infeasible round means the groups left fixed were inconsistent, so the radius was too
+  // small. This is where the sense flips against submip_get_max_fixrate: there a failure caps the
+  // interval from above, here it lifts it from below.
+  if (submip_stats_.total_infeasible > 0) {
+    low  = std::max<f_t>(low, 1.1 * submip_stats_.average_infeasible_fixrate());
+    high = std::max(high, low);
+  }
+
+  if (submip_stats_.total_success > 0) {
+    const f_t success_avg = submip_stats_.average_success_fixrate();
+    low                   = std::min<f_t>(low, 0.9 * success_avg);
+    high                  = std::max<f_t>(high, 1.1 * success_avg);
+  }
+
+  low              = std::clamp<f_t>(low, params_.min_radius, params_.max_radius);
+  high             = std::clamp<f_t>(high, low, params_.max_radius);
+  const f_t radius = high > low ? rng.uniform(low, high) : low;
+  return std::lround(radius);
 }
 
 template <typename i_t, typename f_t>
@@ -408,11 +432,6 @@ void core_lns_t<i_t, f_t>::search(diving_worker_t<i_t, f_t>* worker)
   std::vector<uint8_t> best(num_groups, 0);
   std::vector<uint8_t> assignment(num_groups, 0);
   std::vector<uint8_t> released(num_groups, 0);
-
-  const i_t max_radius = std::min<i_t>(params_.max_radius, num_groups);
-  const i_t min_radius = std::min<i_t>(params_.min_radius, max_radius);
-  i_t radius           = min_radius;
-  i_t failures         = 0;
 
   while (branch_and_bound_ptr->is_running() && !halt.load(std::memory_order::acquire)) {
     // Picks up improvements from the other operators and from every other heuristic.
@@ -432,7 +451,7 @@ void core_lns_t<i_t, f_t>::search(diving_worker_t<i_t, f_t>* worker)
     }
 
     std::fill(released.begin(), released.end(), 0);
-    const i_t num_to_release = std::min(radius, num_groups);
+    const i_t num_to_release = std::min(next_radius(worker->rng), num_groups);
     i_t chosen               = 0;
     while (chosen < num_to_release) {
       const i_t k = worker->rng.uniform(0, num_groups);
@@ -444,40 +463,13 @@ void core_lns_t<i_t, f_t>::search(diving_worker_t<i_t, f_t>* worker)
 
     assignment = best;
 
-    const evaluate_result_t result = evaluate(worker, assignment, &released);
-    switch (result) {
-      case evaluate_result_t::IMPROVED:
-        // The neighbourhood paid: look harder near the new incumbent.
-        failures = 0;
-        radius   = std::max(min_radius, radius - params_.radius_step);
-        break;
-      case evaluate_result_t::NO_IMPROVEMENT:
-        // Valid but exhausted: widen. Same step and same frequency as the gain, so the radius
-        // tracks the success rate instead of ratcheting to one end of its range.
-        ++failures;
-        radius = std::min(max_radius, radius + params_.radius_step);
-        break;
-      case evaluate_result_t::INFEASIBLE:
-        // The groups left fixed are inconsistent, so the round never reached a sub-MIP. Releasing
-        // more fixes fewer and is strictly more permissive -- widen at once, and do not count this
-        // as evidence that the neighbourhood was exhausted.
-        radius = std::min(max_radius, radius + 5);
-        break;
-    }
+    evaluate(worker, assignment, &released);
 
-#if SUBMIP_VERBOSE
-    {
-      const char* outcome = result == evaluate_result_t::IMPROVED     ? "improved"
-                            : result == evaluate_result_t::INFEASIBLE ? "infeasible"
-                                                                      : "no-improvement";
-      DEBUG_SUBMIP("[CORE LNS {}] round: outcome={} released={} radius->{} failures={}\n",
-                   worker->worker_id,
-                   outcome,
-                   num_to_release,
-                   radius,
-                   failures);
-    }
-#endif
+    DEBUG_SUBMIP("[CORE LNS {}] round: released={} success={} infeasible={}\n",
+                 worker->worker_id,
+                 num_to_release,
+                 submip_stats_.total_success.load(),
+                 submip_stats_.total_infeasible.load());
   }
 }
 

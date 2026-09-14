@@ -676,7 +676,7 @@ void branch_and_bound_t<i_t, f_t>::set_solution_from_cpu_fj(f_t obj,
 // expects a solution on the user space. So we go from presolved space -> augmented space ->
 // user space.
 template <typename i_t, typename f_t>
-bool branch_and_bound_t<i_t, f_t>::set_solution_from_submip(
+void branch_and_bound_t<i_t, f_t>::set_solution_from_submip(
   const lp_problem_t<i_t, f_t>& lp,
   const std::vector<f_t>& solution,
   const third_party_presolve_t<i_t, f_t>& presolver,
@@ -703,7 +703,6 @@ bool branch_and_bound_t<i_t, f_t>::set_solution_from_submip(
     submip_stats.save_success(fixrate);
     if (settings_.solution_callback != nullptr) { settings_.solution_callback(user_sol, obj); }
   }
-  return success;
 }
 
 template <typename i_t, typename f_t>
@@ -2303,7 +2302,7 @@ bool branch_and_bound_t<i_t, f_t>::launch_submip_worker(const std::vector<f_t>& 
 }
 
 template <typename i_t, typename f_t>
-bool branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worker,
+void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worker,
                                                 submip_stats_t& submip_stats,
                                                 f_t fixrate,
                                                 i_t simplex_iter_used,
@@ -2330,10 +2329,10 @@ bool branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
 
   submip_settings.branch_and_bound_simplex_iteration_limit =
     iter_offset + simplex_iter * iter_ratio - simplex_iter_used;
-  if (submip_settings.branch_and_bound_simplex_iteration_limit <= 0) { return false; }
+  if (submip_settings.branch_and_bound_simplex_iteration_limit <= 0) { return; }
 
   submip_settings.time_limit = submip_settings.time_limit - toc(exploration_stats_.start_time);
-  if (submip_settings.time_limit <= 0) { return false; }
+  if (submip_settings.time_limit <= 0) { return; }
 
   submip_settings.relative_mip_gap_tol =
     std::min(submip_settings.submip_settings.target_mip_gap, rel_gap);
@@ -2368,7 +2367,7 @@ bool branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
       presolver_status == third_party_presolve_status_t::UNBOUNDED) {
     DEBUG_SUBMIP("{}Presolve detected infeasibility", log_prefix);
     submip_stats.save_infeasible(fixrate);
-    return false;
+    return;
   }
 
   // Also handle optimal
@@ -2378,15 +2377,15 @@ bool branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
                  submip_problem.num_rows,
                  submip_problem.num_cols);
     submip_stats.save_empty();
-    return false;
+    return;
   }
 
   if (toc(exploration_stats_.start_time) > settings_.time_limit) {
     solver_status_ = mip_status_t::TIME_LIMIT;
-    return false;
+    return;
   }
 
-  if (submip_settings.received_halt_signal()) { return false; }
+  if (submip_settings.received_halt_signal()) { return; }
 
   submip_settings.heuristic_preemption_callback   = nullptr;
   submip_settings.dual_simplex_objective_callback = nullptr;
@@ -2524,18 +2523,16 @@ bool branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
     exploration_stats_.total_simplex_iters += submip_solution.simplex_iterations;
   }
 
-  if (submip_status == mip_status_t::NUMERICAL) { return false; }
+  if (submip_status == mip_status_t::NUMERICAL) { return; }
   if (submip_status == mip_status_t::INFEASIBLE || submip_status == mip_status_t::UNBOUNDED) {
     submip_stats.save_infeasible(fixrate);
-    return false;
+    return;
   }
 
   if (submip_solution.has_incumbent) {
-    return set_solution_from_submip(
+    set_solution_from_submip(
       worker->leaf_problem, submip_solution.x, presolver, submip_stats, fixrate, log_prefix);
   }
-
-  return false;
 }
 
 template <typename i_t, typename f_t>
