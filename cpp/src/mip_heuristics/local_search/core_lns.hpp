@@ -49,17 +49,17 @@ struct core_lns_params_t {
   i_t max_radius  = 60;
 
   // The destroy operators run concurrently, one sub-MIP each, with this many threads per solve.
-  i_t threads_per_solve = 8;
+  i_t threads_per_solve = 4;
 };
 
 template <typename i_t, typename f_t>
 class core_lns_t {
  public:
-  // `csr_matrix_t` has no default constructor, so both start as empty matrices and are rebuilt by
-  // `recognize()` once the group count and edge count are known.
-  core_lns_t(branch_and_bound_t<i_t, f_t>* branch_and_bound)
+  core_lns_t(branch_and_bound_t<i_t, f_t>* branch_and_bound, i_t num_threads)
     : branch_and_bound_ptr(branch_and_bound), variable_groups_(0, 0, 0)
   {
+    num_threads_used_ =
+      std::floor(num_threads / params_.threads_per_solve) * params_.threads_per_solve;
   }
 
   ~core_lns_t() { stop_and_sync(); }
@@ -82,15 +82,15 @@ class core_lns_t {
     }
   }
 
-  i_t num_workers() { return workers_.size(); }
+  i_t num_threads_used() { return num_threads_used_; }
 
  private:
   enum destroy_operator_t : uint8_t {
-    DESTROY_LP_GUIDED = 0,
-    DESTROY_INCUMBENT = 1,
-    DESTROY_RANDOM    = 2,
-    DESTROY_CLOSED    = 3,
-    DESTROY_BUDGET    = 4
+    DESTROY_INCUMBENT = 0,
+    DESTROY_RANDOM    = 1,
+    DESTROY_CLOSED    = 2,
+    DESTROY_BUDGET    = 3,
+    DESTROY_LP_GUIDED = 4
   };
 
   // One destroy operator: seeds its share of the level sweep, then destroys and repairs until the
@@ -169,6 +169,7 @@ class core_lns_t {
   std::atomic<int> halt{false};
 
   std::vector<std::unique_ptr<diving_worker_t<i_t, f_t>>> workers_;
+  i_t num_threads_used_;
 
   submip_stats_t submip_stats_;
   core_lns_params_t<i_t, f_t> params_;
@@ -177,7 +178,6 @@ class core_lns_t {
   // for each of them as the value -- variable `j[p]` takes the group's bit XOR `x[p]`.
   csr_matrix_t<i_t, f_t> variable_groups_;  // m = groups, n = variables
 
-  // Filled once by run() before the operators launch, read-only thereafter.
   std::vector<f_t> lp_value_;
   std::vector<i_t> ranked_;
   f_t lp_mass_{0};

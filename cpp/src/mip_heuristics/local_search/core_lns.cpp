@@ -5,7 +5,7 @@
  */
 /* clang-format on */
 
-#include "lns.hpp"
+#include "core_lns.hpp"
 #include <branch_and_bound/branch_and_bound.hpp>
 
 #include <utilities/logger.hpp>
@@ -422,8 +422,6 @@ typename core_lns_t<i_t, f_t>::evaluate_result_t core_lns_t<i_t, f_t>::evaluate(
 template <typename i_t, typename f_t>
 void core_lns_t<i_t, f_t>::snapshot_volatility(std::vector<f_t>& out)
 {
-  // Beta(1,2) prior, so a group nobody has released yet sits at 1/3 rather than at 0 or 1 -- it
-  // must not be excluded before there is evidence, nor preferred over one that has proven itself.
   constexpr f_t alpha = 1.0;
   constexpr f_t beta  = 2.0;
   mutex_memory_.lock();
@@ -740,20 +738,18 @@ void core_lns_t<i_t, f_t>::run(const simplex::lp_problem_t<i_t, f_t>& lp,
   const i_t num_groups = variable_groups_.m;
   if (num_groups == 0) return;
 
-  std::vector<destroy_operator_t> operators = {
-    DESTROY_LP_GUIDED,
-    DESTROY_INCUMBENT,
-    DESTROY_CLOSED,
-    DESTROY_BUDGET,
-    DESTROY_INCUMBENT,
-    DESTROY_CLOSED,
-    DESTROY_BUDGET,
-    DESTROY_RANDOM,
-  };
   std::vector<f_t> lp_mass_levels = {0.75, 1.0, 1.15, 1.3, 1.5, 1.75};
 
-  create_workers(
-    operators.size(), lp, Arow, var_types, root_solution, root_edge_norm, pseudo_costs);
+  i_t num_operators = num_threads_used_ / params_.threads_per_solve;
+  std::vector<destroy_operator_t> operators(num_operators);
+
+  for (i_t j = 0; j < num_operators; ++j) {
+    // Skip LP-guided operator since two workers follows an identical search path
+    i_t k        = j / 5 > 0 ? j % 4 : j % 5;
+    operators[j] = static_cast<destroy_operator_t>(k);
+  }
+
+  create_workers(num_operators, lp, Arow, var_types, root_solution, root_edge_norm, pseudo_costs);
 
   lp_value_.assign(num_groups, 0);
   for (i_t k = 0; k < num_groups; ++k) {

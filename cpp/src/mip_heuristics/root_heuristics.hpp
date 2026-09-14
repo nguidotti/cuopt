@@ -10,7 +10,7 @@
 #include <branch_and_bound/worker.hpp>
 #include <dual_simplex/user_problem.hpp>
 #include "feasibility_jump/fj_cpu_worker.cuh"
-#include "local_search/lns.hpp"
+#include "local_search/core_lns.hpp"
 
 namespace cuopt::mathematical_optimization::mip {
 
@@ -147,14 +147,14 @@ struct root_structural_heuristics_t {
 
   core_lns_t<i_t, f_t> core_lns_;
 
-  i_t num_workers_ = 0;
+  i_t num_threads = 0;
 
-  root_structural_heuristics_t(branch_and_bound_t<i_t, f_t>* branch_and_bound_ptr)
+  root_structural_heuristics_t(branch_and_bound_t<i_t, f_t>* branch_and_bound_ptr, i_t num_threads)
     : lp_(branch_and_bound_ptr->original_lp_),
       Arow_(branch_and_bound_ptr->Arow_),
       var_types_(branch_and_bound_ptr->var_types_),
       pc_(branch_and_bound_ptr->pc_),
-      core_lns_(branch_and_bound_ptr)
+      core_lns_(branch_and_bound_ptr, num_threads)
   {
   }
 
@@ -165,7 +165,7 @@ struct root_structural_heuristics_t {
     root_edge_norm_ = root_edge_norm;
     if (core_lns_.recognize()) {
       core_lns_.run(lp_, Arow_, var_types_, root_solution_, root_edge_norm_, pc_);
-      num_workers_ += core_lns_.num_workers();
+      num_threads += core_lns_.num_threads_used();
     }
   }
 

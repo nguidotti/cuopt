@@ -29,7 +29,7 @@ set(MIP_NON_LP_FILES
         ${CMAKE_CURRENT_SOURCE_DIR}/diversity/multi_armed_bandit.cu
         ${CMAKE_CURRENT_SOURCE_DIR}/diversity/population.cu
         ${CMAKE_CURRENT_SOURCE_DIR}/relaxed_lp/relaxed_lp.cu
-        ${CMAKE_CURRENT_SOURCE_DIR}/local_search/lns.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/local_search/core_lns.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/local_search/local_search.cu
         ${CMAKE_CURRENT_SOURCE_DIR}/local_search/rounding/bounds_repair.cu
         ${CMAKE_CURRENT_SOURCE_DIR}/local_search/rounding/constraint_prop.cu
@@ -62,10 +62,10 @@ endif ()
 # Host-only members of mip_solver_settings_t (callbacks, tolerances). The gRPC client
 # needs them, so they build into cuopt_client; add_initial_solution stays in the .cu.
 set(MIP_CLIENT_SRC_FILES
-  ${CMAKE_CURRENT_SOURCE_DIR}/solver_settings.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/solver_settings.cpp
 )
 
 set(CUOPT_SRC_FILES ${CUOPT_SRC_FILES}
         ${MIP_SRC_FILES} PARENT_SCOPE)
 set(CUOPT_CLIENT_SRC_FILES ${CUOPT_CLIENT_SRC_FILES}
-  ${MIP_CLIENT_SRC_FILES} PARENT_SCOPE)
+        ${MIP_CLIENT_SRC_FILES} PARENT_SCOPE)

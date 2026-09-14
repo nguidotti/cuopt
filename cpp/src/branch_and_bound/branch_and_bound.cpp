@@ -3889,13 +3889,14 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
       compute_user_objective(original_lp_, root_relax_objective);
   }
 
-  root_structural_heuristics_t<i_t, f_t> root_structural_heuristics(this);
+  root_structural_heuristics_t<i_t, f_t> root_structural_heuristics(
+    this, settings_.num_threads * 0.9 - 1);
 
   if (!settings_.inside_submip)
     root_structural_heuristics.run_after_root_lp(root_relax_soln_.x, edge_norms_);
 
   root_heuristics_t<i_t, f_t> root_heuristics(settings_.num_threads - 1 -
-                                              root_structural_heuristics.num_workers_);
+                                              root_structural_heuristics.num_threads);
 
   f_t cut_generation_start_time = tic();
   i_t cut_pool_size             = 0;
