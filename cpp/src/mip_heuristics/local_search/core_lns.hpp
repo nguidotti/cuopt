@@ -34,16 +34,15 @@ struct core_lns_params_t {
   // Minimum set of variables covered by the core to turn on this heuristic.
   f_t min_coverage = 0.25;
 
-  // How many groups a round releases before evidence says otherwise. The controller below keeps
-  // an interval around this and samples inside it, so the value only has to be a plausible
-  // starting point rather than a tuned one.
+  // How many groups a round releases before any evidence has arrived.
   i_t base_radius = 30;
 
-  // Hard bounds on the sampled radius. The ceiling is what keeps the controller out of the band
-  // where the sub-MIP hits its node limit and a round's verdict stops distinguishing "nothing
-  // here" from "ran out of nodes".
-  i_t min_radius = 5;
+  // Safety rails only. The controller is expected to settle well inside these.
+  i_t min_radius = 10;
   i_t max_radius = 120;
+
+  // How far one round's outcome moves the radius.
+  i_t radius_step = 5;
 
   // The destroy operators run concurrently, one sub-MIP each, with this many threads per solve.
   i_t threads_per_solve = 4;
@@ -96,14 +95,29 @@ class core_lns_t {
   // is where next_radius reads it back from.
   void evaluate(diving_worker_t<i_t, f_t>* worker,
                 const std::vector<uint8_t>& value,
-                const std::vector<uint8_t>* released);
+                const std::vector<uint8_t>* released,
+                submip_stats_t& submip_stats);
 
-  // Draw the next radius. Ported from submip_get_max_fixrate (branch_and_bound.cpp): keep a
-  // [low, high] interval around the evidence and sample uniformly inside it rather than
-  // committing to a point estimate. The senses are mirrored because a larger radius fixes
-  // *fewer* variables where a larger fix rate fixes more -- an infeasible round says the radius
-  // was too small, not too large.
-  i_t next_radius(pcgenerator_t& rng) const;
+  // Choose this round's neighbourhood: `radius` groups drawn uniformly from the core.
+  void select_groups_to_release(diving_worker_t<i_t, f_t>* worker,
+                                const submip_stats_t& submip_stats,
+                                i_t radius,
+                                std::vector<uint8_t>& released);
+
+  // Counter values as of the previous round. `submip_stats` is per worker and only this worker
+  // writes it, so whichever counter moved since these were taken is the outcome of the round that
+  // just finished.
+  struct round_counts_t {
+    i_t success   = 0;
+    i_t exhausted = 0;
+    i_t truncated = 0;
+  };
+
+  // Step the radius by the last round's outcome: an exhausted round searched the whole
+  // neighbourhood and found nothing, so widen; a truncated one ran out of budget before it could,
+  // so narrow; a round that improved the incumbent leaves it where it is. `previous` is updated
+  // in place.
+  i_t next_radius(const submip_stats_t& submip_stats, round_counts_t& previous, i_t radius) const;
 
   branch_and_bound_t<i_t, f_t>* branch_and_bound_ptr;
   std::atomic<int> halt{false};
@@ -111,7 +125,6 @@ class core_lns_t {
   std::vector<std::unique_ptr<diving_worker_t<i_t, f_t>>> workers_;
   i_t num_threads_used_;
 
-  submip_stats_t submip_stats_;
   core_lns_params_t<i_t, f_t> params_;
 
   // The core, one group per row: row k holds the variables of group k, with the group's parity

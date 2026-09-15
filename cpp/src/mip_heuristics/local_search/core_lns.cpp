@@ -310,7 +310,8 @@ bool core_lns_t<i_t, f_t>::recognize()
 template <typename i_t, typename f_t>
 void core_lns_t<i_t, f_t>::evaluate(diving_worker_t<i_t, f_t>* worker,
                                     const std::vector<uint8_t>& value,
-                                    const std::vector<uint8_t>* released)
+                                    const std::vector<uint8_t>* released,
+                                    submip_stats_t& submip_stats)
 {
   simplex::simplex_solver_settings_t<i_t, f_t> settings = branch_and_bound_ptr->settings_;
   settings.print_presolve_stats                         = false;
@@ -391,47 +392,97 @@ void core_lns_t<i_t, f_t>::evaluate(diving_worker_t<i_t, f_t>* worker,
   bool is_feasible = worker->node_presolver.bounds_strengthening(
     settings, worker->bounds_changed, worker->leaf_problem.lower, worker->leaf_problem.upper);
   if (!is_feasible) {
-    submip_stats_.save_infeasible(radius);
+    submip_stats.save_infeasible(radius);
     return;
   }
 
-  ++submip_stats_.total_calls;
-  branch_and_bound_ptr->solve_submip(worker, submip_stats_, radius, 0, settings);
+  ++submip_stats.total_calls;
+  branch_and_bound_ptr->solve_submip(worker, submip_stats, radius, 0, settings);
 }
 
 template <typename i_t, typename f_t>
-i_t core_lns_t<i_t, f_t>::next_radius(pcgenerator_t& rng) const
+void core_lns_t<i_t, f_t>::select_groups_to_release(diving_worker_t<i_t, f_t>* worker,
+                                                    const submip_stats_t& submip_stats,
+                                                    i_t radius,
+                                                    std::vector<uint8_t>& released)
 {
-  f_t low  = params_.base_radius;
-  f_t high = params_.base_radius;
+  const i_t num_to_release = std::min(radius, variable_groups_.m);
 
-  // An infeasible round means the groups left fixed were inconsistent, so the radius was too
-  // small. This is where the sense flips against submip_get_max_fixrate: there a failure caps the
-  // interval from above, here it lifts it from below.
-  if (submip_stats_.total_infeasible > 0) {
-    low  = std::max<f_t>(low, 1.1 * submip_stats_.average_infeasible_fixrate());
-    high = std::max(high, low);
+  DEBUG_SUBMIP(
+    "[CORE LNS {}] round: released={} success={} exhausted={} truncated={} infeasible={}\n",
+    worker->worker_id,
+    num_to_release,
+    submip_stats.total_success.load(),
+    submip_stats.total_exhausted.load(),
+    submip_stats.total_truncated.load(),
+    submip_stats.total_infeasible.load());
+
+  std::fill(released.begin(), released.end(), 0);
+  i_t chosen = 0;
+  while (chosen < num_to_release) {
+    const i_t k = worker->rng.uniform(0, variable_groups_.m);
+    if (!released[k]) {
+      released[k] = 1;
+      ++chosen;
+    }
+  }
+}
+
+template <typename i_t, typename f_t>
+i_t core_lns_t<i_t, f_t>::next_radius(const submip_stats_t& submip_stats,
+                                      round_counts_t& previous,
+                                      i_t radius) const
+{
+  const i_t forced = branch_and_bound_ptr->settings_.core_lns_radius;
+  if (forced > 0) { return std::min(forced, variable_groups_.m); }
+
+  const i_t success   = submip_stats.total_success;
+  const i_t exhausted = submip_stats.total_exhausted;
+  const i_t truncated = submip_stats.total_truncated;
+
+  i_t next = radius;
+  if (success > previous.success) {
+    next = radius;
+  } else if (truncated > previous.truncated) {
+    next = radius - params_.radius_step;
+  } else if (exhausted > previous.exhausted) {
+    next = radius + params_.radius_step;
   }
 
-  if (submip_stats_.total_success > 0) {
-    const f_t success_avg = submip_stats_.average_success_fixrate();
-    low                   = std::min<f_t>(low, 0.9 * success_avg);
-    high                  = std::max<f_t>(high, 1.1 * success_avg);
-  }
+  previous.success   = success;
+  previous.exhausted = exhausted;
+  previous.truncated = truncated;
 
-  low              = std::clamp<f_t>(low, params_.min_radius, params_.max_radius);
-  high             = std::clamp<f_t>(high, low, params_.max_radius);
-  const f_t radius = high > low ? rng.uniform(low, high) : low;
-  return std::lround(radius);
+  const i_t ceiling = std::min(params_.max_radius, variable_groups_.m);
+  return std::clamp(next, std::min(params_.min_radius, ceiling), ceiling);
 }
 
 template <typename i_t, typename f_t>
 void core_lns_t<i_t, f_t>::search(diving_worker_t<i_t, f_t>* worker)
 {
   const i_t num_groups = variable_groups_.m;
-  std::vector<uint8_t> best(num_groups, 0);
-  std::vector<uint8_t> assignment(num_groups, 0);
+  std::vector<uint8_t> active_groups(num_groups, 0);
   std::vector<uint8_t> released(num_groups, 0);
+
+  submip_stats_t submip_stats;
+  round_counts_t previous;
+  i_t radius = params_.base_radius;
+
+  std::vector<f_t> lp_mass_levels = {0.75, 1.0, 1.15, 1.3, 1.5, 1.75};
+  for (i_t k = worker->worker_id; k < lp_mass_levels.size(); k += workers_.size()) {
+    if (!branch_and_bound_ptr->is_running() || halt.load(std::memory_order::acquire)) { break; }
+    const i_t level = std::clamp<i_t>(std::lround(lp_mass_levels[k] * lp_mass_), 1, num_groups);
+    std::fill(active_groups.begin(), active_groups.end(), 0);
+    for (i_t r = 0; r < level; ++r) {
+      active_groups[ranked_[r]] = 1;
+    }
+    evaluate(worker, active_groups, nullptr, submip_stats);
+  }
+
+  // The seed rounds release nothing, so their outcome says nothing about the radius.
+  previous.success   = submip_stats.total_success;
+  previous.exhausted = submip_stats.total_exhausted;
+  previous.truncated = submip_stats.total_truncated;
 
   while (branch_and_bound_ptr->is_running() && !halt.load(std::memory_order::acquire)) {
     // Picks up improvements from the other operators and from every other heuristic.
@@ -446,30 +497,13 @@ void core_lns_t<i_t, f_t>::search(diving_worker_t<i_t, f_t>* worker)
       const i_t col    = variable_groups_.j[p];
       const int parity = variable_groups_.x[p] > 0.5 ? 1 : 0;
       if (col < worker->current_incumbent.size()) {
-        best[k] = (worker->current_incumbent[col] > 0.5 ? 1 : 0) ^ parity;
+        active_groups[k] = (worker->current_incumbent[col] > 0.5 ? 1 : 0) ^ parity;
       }
     }
 
-    std::fill(released.begin(), released.end(), 0);
-    const i_t num_to_release = std::min(next_radius(worker->rng), num_groups);
-    i_t chosen               = 0;
-    while (chosen < num_to_release) {
-      const i_t k = worker->rng.uniform(0, num_groups);
-      if (!released[k]) {
-        released[k] = 1;
-        ++chosen;
-      }
-    }
-
-    assignment = best;
-
-    evaluate(worker, assignment, &released);
-
-    DEBUG_SUBMIP("[CORE LNS {}] round: released={} success={} infeasible={}\n",
-                 worker->worker_id,
-                 num_to_release,
-                 submip_stats_.total_success.load(),
-                 submip_stats_.total_infeasible.load());
+    radius = next_radius(submip_stats, previous, radius);
+    select_groups_to_release(worker, submip_stats, radius, released);
+    evaluate(worker, active_groups, &released, submip_stats);
   }
 }
 
@@ -508,10 +542,7 @@ void core_lns_t<i_t, f_t>::run(const simplex::lp_problem_t<i_t, f_t>& lp,
   const i_t num_groups = variable_groups_.m;
   if (num_groups == 0) return;
 
-  std::vector<f_t> lp_mass_levels = {0.75, 1.0, 1.15, 1.3, 1.5, 1.75};
-
   const i_t num_workers = num_threads_used_ / params_.threads_per_solve;
-
   create_workers(num_workers, lp, Arow, var_types, root_solution, root_edge_norm, pseudo_costs);
 
   lp_value_.assign(num_groups, 0);
@@ -537,23 +568,6 @@ void core_lns_t<i_t, f_t>::run(const simplex::lp_problem_t<i_t, f_t>& lp,
                 params_.threads_per_solve,
                 lp_mass_)
       .c_str());
-
-#pragma omp taskloop num_tasks(workers_.size())
-  for (i_t i = 0; i < workers_.size(); ++i) {
-    auto* worker = workers_[i].get();
-
-    std::vector<uint8_t> assignment(num_groups, 0);
-
-    for (i_t k = i; k < lp_mass_levels.size(); k += workers_.size()) {
-      if (!branch_and_bound_ptr->is_running() || halt.load(std::memory_order::acquire)) { break; }
-      const i_t level = std::clamp<i_t>(std::lround(lp_mass_levels[k] * lp_mass_), 1, num_groups);
-      std::fill(assignment.begin(), assignment.end(), 0);
-      for (i_t r = 0; r < level; ++r) {
-        assignment[ranked_[r]] = 1;
-      }
-      evaluate(worker, assignment, nullptr);
-    }
-  }
 
   for (i_t k = 0; k < workers_.size(); ++k) {
     diving_worker_t<i_t, f_t>* worker = workers_[k].get();

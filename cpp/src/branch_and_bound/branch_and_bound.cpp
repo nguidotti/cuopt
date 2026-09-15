@@ -2376,7 +2376,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
                  log_prefix,
                  submip_problem.num_rows,
                  submip_problem.num_cols);
-    submip_stats.save_empty();
+    submip_stats.save_exhausted(fixrate);
     return;
   }
 
@@ -2445,10 +2445,12 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
     submip_bnb.set_initial_guess(presolved_incumbent);
   }
 
+  f_t prev_upper_bound = upper_bound_.load();
+
   // Even if we do not have a valid incumbent now, the upper bound can still be set by the early
   // heuristics.
-  if (std::isfinite(upper_bound_.load())) {
-    const f_t user_upper    = compute_user_objective(worker->leaf_problem, upper_bound_.load());
+  if (std::isfinite(prev_upper_bound)) {
+    const f_t user_upper    = compute_user_objective(worker->leaf_problem, prev_upper_bound);
     const f_t submip_cutoff = compute_presolved_objective(submip_bnb.original_lp_, user_upper);
     submip_bnb.set_initial_upper_bound(submip_cutoff);
   }
@@ -2523,8 +2525,8 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
     exploration_stats_.total_simplex_iters += submip_solution.simplex_iterations;
   }
 
-  if (submip_status == mip_status_t::NUMERICAL) { return; }
-  if (submip_status == mip_status_t::INFEASIBLE || submip_status == mip_status_t::UNBOUNDED) {
+  if (submip_status == mip_status_t::NUMERICAL || submip_status == mip_status_t::INFEASIBLE ||
+      submip_status == mip_status_t::UNBOUNDED) {
     submip_stats.save_infeasible(fixrate);
     return;
   }
@@ -2532,6 +2534,12 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
   if (submip_solution.has_incumbent) {
     set_solution_from_submip(
       worker->leaf_problem, submip_solution.x, presolver, submip_stats, fixrate, log_prefix);
+  }
+
+  if (submip_status == mip_status_t::OPTIMAL || submip_status == mip_status_t::HALT) {
+    submip_stats.save_exhausted(fixrate);
+  } else {
+    submip_stats.save_truncated(fixrate);
   }
 }
 
@@ -4202,16 +4210,18 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     if (!std::isfinite(lower_bound)) { lower_bound = search_tree_.root.lower_bound; }
   }
 
-  DEBUG_SUBMIP("RINS: success={}, infeasible={}, empty={}, calls={}",
+  DEBUG_SUBMIP("RINS: success={}, infeasible={}, exhausted={}, truncated={}, calls={}",
                rins_stats_.total_success.load(),
                rins_stats_.total_infeasible.load(),
-               rins_stats_.total_empty.load(),
+               rins_stats_.total_exhausted.load(),
+               rins_stats_.total_truncated.load(),
                rins_stats_.total_calls.load());
 
-  DEBUG_SUBMIP("RENS: success={}, infeasible={}, empty={}, calls={}",
+  DEBUG_SUBMIP("RENS: success={}, infeasible={}, exhausted={}, truncated={}, calls={}",
                rens_stats_.total_success.load(),
                rens_stats_.total_infeasible.load(),
-               rens_stats_.total_empty.load(),
+               rens_stats_.total_exhausted.load(),
+               rens_stats_.total_truncated.load(),
                rens_stats_.total_calls.load());
 
   set_final_solution(solution, lower_bound);
