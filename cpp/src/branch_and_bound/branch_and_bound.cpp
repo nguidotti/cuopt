@@ -2520,11 +2520,6 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
     presolve_time,
     submip_time);
 
-  // Accumulate simplex iterations to determine when to stop exploring the sub-MIP
-  if (settings_.inside_submip) {
-    exploration_stats_.total_simplex_iters += submip_solution.simplex_iterations;
-  }
-
   if (submip_status == mip_status_t::NUMERICAL || submip_status == mip_status_t::INFEASIBLE ||
       submip_status == mip_status_t::UNBOUNDED) {
     submip_stats.save_infeasible(fixrate);
@@ -2540,6 +2535,11 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
     submip_stats.save_exhausted(fixrate);
   } else {
     submip_stats.save_truncated(fixrate);
+  }
+
+  // Accumulate simplex iterations to determine when to stop exploring the sub-MIP
+  if (settings_.inside_submip) {
+    exploration_stats_.total_simplex_iters += submip_solution.simplex_iterations;
   }
 }
 

@@ -297,13 +297,11 @@ bool core_lns_t<i_t, f_t>::recognize()
     variable_groups_.x[p] = column_parity[j];
   }
 
-  CUOPT_LOG_INFO("%s",
-                 std::format("Decision core: {} groups over {} variables, {} covered ({:.1f}%)",
-                             num_groups,
-                             num_members,
-                             covered,
-                             100.0 * covered / binaries)
-                   .c_str());
+  DEBUG_SUBMIP("Decision core: {} groups over {} variables, {} covered ({:.1f}%)\n",
+               num_groups,
+               num_members,
+               covered,
+               100.0 * covered / binaries);
   return true;
 }
 
@@ -433,9 +431,6 @@ i_t core_lns_t<i_t, f_t>::next_radius(const submip_stats_t& submip_stats,
                                       round_counts_t& previous,
                                       i_t radius) const
 {
-  const i_t forced = branch_and_bound_ptr->settings_.core_lns_radius;
-  if (forced > 0) { return std::min(forced, variable_groups_.m); }
-
   const i_t success   = submip_stats.total_success;
   const i_t exhausted = submip_stats.total_exhausted;
   const i_t truncated = submip_stats.total_truncated;
@@ -560,14 +555,11 @@ void core_lns_t<i_t, f_t>::run(const simplex::lp_problem_t<i_t, f_t>& lp,
     ranked_.begin(), ranked_.end(), [&](i_t a, i_t b) { return lp_value_[a] > lp_value_[b]; });
   lp_mass_ = std::accumulate(lp_value_.begin(), lp_value_.end(), f_t{0});
 
-  CUOPT_LOG_INFO(
-    "%s",
-    std::format("Core LNS: {} groups, {} workers, {} threads per workers, LP mass={:.1f}",
-                num_groups,
-                num_workers,
-                params_.threads_per_solve,
-                lp_mass_)
-      .c_str());
+  DEBUG_SUBMIP("Core LNS: {} groups, {} workers, {} threads per workers, LP mass={:.1f}\n",
+               num_groups,
+               num_workers,
+               params_.threads_per_solve,
+               lp_mass_);
 
   for (i_t k = 0; k < workers_.size(); ++k) {
     diving_worker_t<i_t, f_t>* worker = workers_[k].get();
