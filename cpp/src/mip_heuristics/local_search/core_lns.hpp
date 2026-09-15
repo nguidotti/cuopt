@@ -45,7 +45,7 @@ struct core_lns_params_t {
   i_t radius_step = 5;
 
   // The destroy operators run concurrently, one sub-MIP each, with this many threads per solve.
-  i_t threads_per_solve = 4;
+  i_t threads_per_solve = 8;
 };
 
 template <typename i_t, typename f_t>
