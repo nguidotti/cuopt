@@ -20,7 +20,7 @@
 #include <utility>
 #include <vector>
 
-#define SUBMIP_VERBOSE true
+#define SUBMIP_VERBOSE false
 #if SUBMIP_VERBOSE
 #define DEBUG_SUBMIP(fmt, ...) branch_and_bound_ptr->settings_.log.print_format(fmt, __VA_ARGS__);
 #else
