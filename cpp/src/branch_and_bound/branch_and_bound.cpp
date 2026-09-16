@@ -2319,8 +2319,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
   submip_settings.print_presolve_stats                     = false;
   submip_settings.num_threads                              = 1;
   submip_settings.reliability_branching                    = 0;
-  submip_settings.clique_cuts                              = 0;
-  submip_settings.zero_half_cuts                           = 0;
+  submip_settings.max_cut_passes                           = std::min(settings_.max_cut_passes, 5);
   submip_settings.inside_submip                            = 1;
   submip_settings.strong_branching_simplex_iteration_limit = 50;
   submip_settings.inside_root_node                         = 0;
@@ -2421,8 +2420,56 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
                submip_problem.num_cols,
                submip_problem.A.nnz());
 
-  probing_implied_bound_t<i_t, f_t> empty_probing(submip_problem.num_cols);
-  branch_and_bound_t submip_bnb(submip_problem, submip_settings, tic(), empty_probing);
+  // Map every presolved sub-MIP column back to the column of *this* solver's user problem it
+  // came from, so the conflict graph and the probing implications can be inherited
+  const std::vector<i_t>& reduced_to_original_map = presolver.get_reduced_to_original_map();
+  std::vector<i_t> sub_to_parent(submip_problem.num_cols, -1);
+
+  // Columns a parallel-column merge touched no longer mean what the parent proved things
+  // about: PaPILO replaces the pair by y = col2 + scale * col1 while keeping col2's index,
+  // and later reductions can pull y back to [0,1] integral.
+  const std::vector<i_t>& merged = presolver.get_merged_original_columns();
+  for (i_t k = 0; k < submip_problem.num_cols; k++) {
+    const i_t leaf_col = reduced_to_original_map[k];
+    if (leaf_col < 0 || leaf_col >= original_problem_.num_cols) { continue; }
+    if (std::binary_search(merged.begin(), merged.end(), leaf_col)) { continue; }
+    // Presolve may only tighten a retained column. A wider domain means the index no longer
+    // denotes the same variable, so refuse to carry anything onto it.
+    const f_t tol = settings_.integer_tol;
+    if (submip_problem.lower[k] < worker->leaf_problem.lower[leaf_col] - tol) { continue; }
+    if (submip_problem.upper[k] > worker->leaf_problem.upper[leaf_col] + tol) { continue; }
+    sub_to_parent[k] = leaf_col;
+  }
+
+  std::shared_ptr<mip::clique_table_t<i_t, f_t>> submip_clique_table;
+  if (clique_table_ != nullptr && clique_table_ready_.load(std::memory_order_acquire) &&
+      !clique_table_->empty()) {
+    const f_t clique_start_time = tic();
+    typename mip_solver_settings_t<i_t, f_t>::tolerances_t tolerances_for_clique{};
+    tolerances_for_clique.presolve_absolute_tolerance = settings_.primal_tol;
+    tolerances_for_clique.absolute_tolerance          = settings_.primal_tol;
+    tolerances_for_clique.relative_tolerance          = settings_.zero_tol;
+    tolerances_for_clique.integrality_tolerance       = settings_.integer_tol;
+    tolerances_for_clique.absolute_mip_gap            = settings_.absolute_mip_gap_tol;
+    tolerances_for_clique.relative_mip_gap            = settings_.relative_mip_gap_tol;
+    timer_t clique_timer(submip_settings.time_limit);
+    submip_clique_table = mip::build_clique_table_from_parent(
+      *clique_table_, submip_problem, sub_to_parent, tolerances_for_clique, clique_timer);
+    DEBUG_SUBMIP(
+      "{}Sub-MIP: inherited clique table in {:.3f}s ({} cliques, {} additional, {} edges)",
+      log_prefix,
+      toc(clique_start_time),
+      submip_clique_table->first.size(),
+      submip_clique_table->addtl_cliques.size(),
+      submip_clique_table->small_clique_adj.indices.size());
+  }
+
+  probing_implied_bound_t<i_t, f_t> submip_implied_bounds(submip_problem.num_cols);
+  build_probing_implied_bounds_from_parent(
+    probing_implied_bound_, sub_to_parent, submip_problem, submip_implied_bounds);
+
+  branch_and_bound_t submip_bnb(
+    submip_problem, submip_settings, tic(), submip_implied_bounds, submip_clique_table);
   mip_solution_t<i_t, f_t> submip_solution(submip_problem.num_cols);
 
   std::vector<f_t> presolved_incumbent;
@@ -3668,6 +3715,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   omp_atomic_t<bool>* clique_signal = &signal_extend_cliques_;
 
   if ((settings_.clique_cuts != 0 || settings_.zero_half_cuts != 0) && clique_table_ == nullptr &&
+      !settings_.inside_submip &&
       omp_get_num_threads() >= CUOPT_MIP_CLIQUE_CUTS_REQUIRED_THREAD_COUNT &&
       !settings_.deterministic) {
     signal_extend_cliques_.store(false, std::memory_order_release);
@@ -3844,7 +3892,8 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                                             original_problem_,
                                             probing_implied_bound_,
                                             clique_table_,
-                                            clique_signal);
+                                            clique_signal,
+                                            &clique_table_ready_);
 
   std::vector<f_t> saved_solution;
 #ifdef CHECK_CUTS_AGAINST_SAVED_SOLUTION

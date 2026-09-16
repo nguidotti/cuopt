@@ -226,12 +226,14 @@ void fill_knapsack_constraints(const user_problem_t<i_t, f_t>& problem,
 }
 
 template <typename i_t, typename f_t>
-void remove_small_cliques(clique_table_t<i_t, f_t>& clique_table, cuopt::timer_t& timer)
+void remove_small_cliques(clique_table_t<i_t, f_t>& clique_table,
+                          cuopt::timer_t& timer,
+                          std::vector<std::pair<i_t, i_t>> seed_edges = {})
 {
   i_t num_removed_first = 0;
   i_t num_removed_addtl = 0;
   std::vector<bool> to_delete(clique_table.first.size(), false);
-  std::vector<std::pair<i_t, i_t>> small_edges;
+  std::vector<std::pair<i_t, i_t>> small_edges = std::move(seed_edges);
 
   // Demote sub-threshold first-cliques into pairwise edges.
   for (size_t clique_idx = 0; clique_idx < clique_table.first.size(); clique_idx++) {
@@ -761,6 +763,123 @@ void find_initial_cliques(user_problem_t<i_t, f_t>& problem,
 #endif
 }
 
+template <typename i_t, typename f_t>
+std::shared_ptr<clique_table_t<i_t, f_t>> build_clique_table_from_parent(
+  const clique_table_t<i_t, f_t>& parent,
+  const user_problem_t<i_t, f_t>& sub_problem,
+  const std::vector<i_t>& sub_to_parent,
+  typename mip_solver_settings_t<i_t, f_t>::tolerances_t tolerances,
+  cuopt::timer_t& timer)
+{
+  const i_t n_parent_vars = parent.n_variables;
+  const i_t n_sub_vars    = sub_problem.num_cols;
+  cuopt_assert(sub_to_parent.size() == sub_problem.var_types.size(),
+               "Sub-problem column map size mismatch");
+
+  clique_config_t clique_config;
+  auto table = std::make_shared<clique_table_t<i_t, f_t>>(
+    2 * n_sub_vars, clique_config.min_clique_size, clique_config.max_clique_size_for_extension);
+  table->tolerances = tolerances;
+
+  // Only exactly-binary sub columns can carry a parent literal.
+  std::vector<i_t> parent_to_sub(n_parent_vars, -1);
+  for (i_t k = 0; k < n_sub_vars; k++) {
+    const i_t p = sub_to_parent[k];
+    if (p < 0 || p >= n_parent_vars) { continue; }
+    const bool is_binary = sub_problem.var_types[k] != simplex::variable_type_t::CONTINUOUS &&
+                           sub_problem.lower[k] == 0.0 && sub_problem.upper[k] == 1.0;
+    if (!is_binary) { continue; }
+    parent_to_sub[p] = k;
+  }
+
+  // Vertices encode literals: v < n_variables is the positive literal of column v, and
+  // v + n_variables its complement. The complement has to be re-encoded against the sub
+  // problem's own column count.
+  auto translate = [&](i_t vertex) -> i_t {
+    const bool complement = vertex >= n_parent_vars;
+    const i_t var         = complement ? vertex - n_parent_vars : vertex;
+    cuopt_assert(var >= 0 && var < n_parent_vars, "Clique literal outside the parent columns");
+    const i_t sub_var = parent_to_sub[var];
+    if (sub_var < 0) { return -1; }
+    return complement ? sub_var + n_sub_vars : sub_var;
+  };
+
+  // Flat old-position -> new-position map over all parent first-cliques, needed to rebase the
+  // additional cliques' start positions after members are dropped.
+  const size_t n_parent_cliques = parent.first.size();
+  std::vector<i_t> member_offsets(n_parent_cliques + 1, 0);
+  for (size_t c = 0; c < n_parent_cliques; c++) {
+    member_offsets[c + 1] = member_offsets[c] + parent.first[c].size();
+  }
+  std::vector<i_t> new_member_position(member_offsets.back(), -1);
+  std::vector<i_t> clique_map(n_parent_cliques, -1);
+
+  std::vector<i_t> translated;
+  for (size_t c = 0; c < n_parent_cliques; c++) {
+    if (timer.check_time_limit()) { break; }
+    const auto& clique = parent.first[c];
+    translated.clear();
+    for (size_t idx = 0; idx < clique.size(); idx++) {
+      const i_t v = translate(clique[idx]);
+      if (v < 0) { continue; }
+      const i_t new_position                       = translated.size();
+      new_member_position[member_offsets[c] + idx] = new_position;
+      translated.push_back(v);
+    }
+    // A single surviving literal states nothing; drop the clique and its position map.
+    if (translated.size() < 2) {
+      std::fill(new_member_position.begin() + member_offsets[c],
+                new_member_position.begin() + member_offsets[c + 1],
+                -1);
+      continue;
+    }
+    const i_t new_clique_idx = table->first.size();
+    clique_map[c]            = new_clique_idx;
+    table->first.push_back(translated);
+  }
+
+  for (const auto& addtl_clique : parent.addtl_cliques) {
+    const i_t base_idx = clique_map[addtl_clique.clique_idx];
+    if (base_idx < 0) { continue; }
+    const i_t vertex = translate(addtl_clique.vertex_idx);
+    if (vertex < 0) { continue; }
+    // The extension vertex conflicts with the base suffix [start_pos, end). After filtering,
+    // the new start is the new position of the first surviving member at or after start_pos.
+    const auto& base_clique = parent.first[addtl_clique.clique_idx];
+    i_t new_start           = -1;
+    for (i_t idx = addtl_clique.start_pos_on_clique; idx < (i_t)base_clique.size(); idx++) {
+      const i_t position = new_member_position[member_offsets[addtl_clique.clique_idx] + idx];
+      if (position >= 0) {
+        new_start = position;
+        break;
+      }
+    }
+    if (new_start < 0) { continue; }
+    table->addtl_cliques.push_back({vertex, base_idx, new_start});
+  }
+
+  // The parent's demoted pairwise edges have to come across too: with min_clique_size at 64
+  // most of the conflict graph lives in small_clique_adj rather than in `first`.
+  std::vector<std::pair<i_t, i_t>> small_edges;
+  const i_t n_parent_vertices = 2 * n_parent_vars;
+  if (parent.small_clique_adj.n_keys() == n_parent_vertices) {
+    small_edges.reserve(parent.small_clique_adj.indices.size());
+    for (i_t v = 0; v < n_parent_vertices; v++) {
+      const i_t sub_v = translate(v);
+      if (sub_v < 0) { continue; }
+      for (i_t w : parent.small_clique_adj.slice(v)) {
+        const i_t sub_w = translate(w);
+        if (sub_w < 0) { continue; }
+        small_edges.emplace_back(sub_v, sub_w);
+      }
+    }
+  }
+
+  remove_small_cliques(*table, timer, std::move(small_edges));
+  fill_var_clique_maps(*table);
+  return table;
+}
+
 #define INSTANTIATE(F_TYPE)                                                                    \
   template void find_initial_cliques<int, F_TYPE>(                                             \
     user_problem_t<int, F_TYPE> & problem,                                                     \
@@ -776,6 +895,13 @@ void find_initial_cliques(user_problem_t<i_t, f_t>& problem,
     bool fill_var_clique_maps_flag,                                                            \
     cuopt::timer_t& timer);                                                                    \
   template void fill_var_clique_maps<int, F_TYPE>(clique_table_t<int, F_TYPE> & clique_table); \
+  template std::shared_ptr<clique_table_t<int, F_TYPE>>                                        \
+  build_clique_table_from_parent<int, F_TYPE>(                                                 \
+    const clique_table_t<int, F_TYPE>& parent,                                                 \
+    const user_problem_t<int, F_TYPE>& sub_problem,                                            \
+    const std::vector<int>& sub_to_parent,                                                     \
+    typename mip_solver_settings_t<int, F_TYPE>::tolerances_t tolerances,                      \
+    cuopt::timer_t& timer);                                                                    \
   template class clique_table_t<int, F_TYPE>;
 
 #if MIP_INSTANTIATE_FLOAT

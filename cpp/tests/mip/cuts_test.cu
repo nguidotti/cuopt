@@ -34,6 +34,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <span>
 #include <sstream>
 #include <string>
@@ -1082,6 +1083,232 @@ TEST(cuts, clique_phase1_remove_small_cliques_preserves_addtl_conflicts)
   EXPECT_TRUE(clique_table.check_adjacency(2, 3));
   EXPECT_TRUE(clique_table.check_adjacency(3, 2));
   EXPECT_FALSE(clique_table.check_adjacency(0, 3));
+}
+
+// Chain of packing rows over five binaries. Conflict edges:
+//   {0,1}, {0,2}, {1,2} from c1, {2,3} from c2, {3,4} from c3.
+io::mps_data_model_t<int, double> create_clique_chain_problem()
+{
+  return cuopt::test::parse_inline_lp(R"LP(
+Minimize
+  obj: 0 x0 + 0 x1 + 0 x2 + 0 x3 + 0 x4
+Subject To
+  c1: x0 + x1 + x2 <= 1
+  c2: x2 + x3 <= 1
+  c3: x3 + x4 <= 1
+Binaries
+  x0
+  x1
+  x2
+  x3
+  x4
+End
+)LP");
+}
+
+// A sub-problem over `sub_to_parent.size()` binaries, all free in [0,1]. Only the column
+// count and the type/bound vectors matter to build_clique_table_from_parent.
+simplex::user_problem_t<int, double> make_all_binary_sub_problem(const raft::handle_t& handle,
+                                                                 int num_cols)
+{
+  simplex::user_problem_t<int, double> sub_problem(&handle);
+  sub_problem.num_cols = num_cols;
+  sub_problem.num_rows = 0;
+  sub_problem.var_types.assign(num_cols, simplex::variable_type_t::INTEGER);
+  sub_problem.lower.assign(num_cols, 0.0);
+  sub_problem.upper.assign(num_cols, 1.0);
+  return sub_problem;
+}
+
+// Positive-literal conflict pairs of a table, as an unordered set of (i, j) with i < j.
+std::set<std::pair<int, int>> collect_conflict_pairs(const mip::clique_table_t<int, double>& table,
+                                                     int num_vars)
+{
+  std::set<std::pair<int, int>> pairs;
+  for (int i = 0; i < num_vars; ++i) {
+    for (int j = i + 1; j < num_vars; ++j) {
+      if (table.check_adjacency(i, j)) { pairs.emplace(i, j); }
+    }
+  }
+  return pairs;
+}
+
+std::shared_ptr<mip::clique_table_t<int, double>> inherit_table(
+  const mip::clique_table_t<int, double>& parent,
+  const simplex::user_problem_t<int, double>& sub_problem,
+  const std::vector<int>& sub_to_parent)
+{
+  mip_solver_settings_t<int, double> settings;
+  cuopt::timer_t timer(std::numeric_limits<double>::infinity());
+  return mip::build_clique_table_from_parent(
+    parent, sub_problem, sub_to_parent, settings.tolerances, timer);
+}
+
+// Dropping x1 must carry every conflict among the surviving columns and invent none.
+TEST(cuts, clique_inherit_translates_conflicts_and_drops_missing_columns)
+{
+  const raft::handle_t handle{};
+  auto problem      = create_clique_chain_problem();
+  auto parent_table = build_clique_table_for_model_with_min_size(handle, problem, 1);
+
+  ASSERT_EQ(collect_conflict_pairs(parent_table, 5),
+            (std::set<std::pair<int, int>>{{0, 1}, {0, 2}, {1, 2}, {2, 3}, {3, 4}}));
+
+  // Sub columns 0..3 are parent columns 0, 2, 3, 4; parent column 1 has no image.
+  const std::vector<int> sub_to_parent{0, 2, 3, 4};
+  auto sub_problem = make_all_binary_sub_problem(handle, sub_to_parent.size());
+  auto inherited   = inherit_table(parent_table, sub_problem, sub_to_parent);
+
+  ASSERT_NE(inherited, nullptr);
+  EXPECT_EQ(inherited->n_variables, 4);
+  // {0,2} -> {0,1}, {2,3} -> {1,2}, {3,4} -> {2,3}. The two edges touching x1 are gone.
+  EXPECT_EQ(collect_conflict_pairs(*inherited, 4),
+            (std::set<std::pair<int, int>>{{0, 1}, {1, 2}, {2, 3}}));
+}
+
+// The parent's demoted pairwise edges live in small_clique_adj rather than in `first`;
+// they have to be translated too, or almost the whole conflict graph is lost.
+TEST(cuts, clique_inherit_carries_parent_demoted_edges)
+{
+  const raft::handle_t handle{};
+  auto problem = create_clique_chain_problem();
+  // min_clique_size 8 demotes every clique here into explicit pairwise edges.
+  auto parent_table = build_clique_table_for_model_with_min_size(handle, problem, 8);
+  ASSERT_TRUE(parent_table.first.empty());
+  ASSERT_FALSE(parent_table.small_clique_adj.indices.empty());
+
+  const std::vector<int> sub_to_parent{0, 2, 3, 4};
+  auto sub_problem = make_all_binary_sub_problem(handle, sub_to_parent.size());
+  auto inherited   = inherit_table(parent_table, sub_problem, sub_to_parent);
+
+  ASSERT_NE(inherited, nullptr);
+  EXPECT_EQ(collect_conflict_pairs(*inherited, 4),
+            (std::set<std::pair<int, int>>{{0, 1}, {1, 2}, {2, 3}}));
+}
+
+// A column the caller refuses (-1) or that is no longer binary must carry nothing.
+TEST(cuts, clique_inherit_rejects_non_binary_and_unmapped_columns)
+{
+  const raft::handle_t handle{};
+  auto problem      = create_clique_chain_problem();
+  auto parent_table = build_clique_table_for_model_with_min_size(handle, problem, 1);
+
+  const std::vector<int> sub_to_parent{0, 1, 2, 3, 4};
+  auto sub_problem = make_all_binary_sub_problem(handle, sub_to_parent.size());
+  // x2 is the hub of the chain: widening it past [0,1] must strand every edge through it.
+  sub_problem.upper[2] = 2.0;
+  // x4 is refused outright by the caller.
+  std::vector<int> filtered = sub_to_parent;
+  filtered[4]               = -1;
+
+  auto inherited = inherit_table(parent_table, sub_problem, filtered);
+  ASSERT_NE(inherited, nullptr);
+  EXPECT_EQ(collect_conflict_pairs(*inherited, 5), (std::set<std::pair<int, int>>{{0, 1}}));
+}
+
+// Probing implications are inherited alongside the clique table. The antecedent must still be
+// exactly binary in the sub-problem; the implied variable only needs an image, since it may be
+// continuous.
+TEST(cuts, probing_implied_bounds_inherit_translates_and_filters)
+{
+  const raft::handle_t handle{};
+
+  // Parent over 4 columns. x0 = 0 => y2 in [0, 3]; x0 = 1 => y3 in [1, 5];
+  // x1 = 0 => y2 in [1, 2] (x1 has no image in the sub-problem).
+  mip::probing_implied_bound_t<int, double> parent(4);
+  parent.zero_offsets     = {0, 1, 2, 2, 2};
+  parent.zero_variables   = {2, 2};
+  parent.zero_lower_bound = {0.0, 1.0};
+  parent.zero_upper_bound = {3.0, 2.0};
+  parent.one_offsets      = {0, 1, 1, 1, 1};
+  parent.one_variables    = {3};
+  parent.one_lower_bound  = {1.0};
+  parent.one_upper_bound  = {5.0};
+
+  // Sub columns 0,1,2 are parent columns 0,2,3. Parent column 1 is gone.
+  const std::vector<int> sub_to_parent{0, 2, 3};
+  auto sub_problem = make_all_binary_sub_problem(handle, sub_to_parent.size());
+  // The implied variable y2 is continuous in the sub-problem -- still inheritable.
+  sub_problem.var_types[1] = simplex::variable_type_t::CONTINUOUS;
+  sub_problem.upper[1]     = 10.0;
+
+  mip::probing_implied_bound_t<int, double> out;
+  mip::build_probing_implied_bounds_from_parent(parent, sub_to_parent, sub_problem, out);
+
+  ASSERT_EQ(out.zero_offsets.size(), sub_to_parent.size() + 1);
+  ASSERT_EQ(out.one_offsets.size(), sub_to_parent.size() + 1);
+
+  // Sub column 0 keeps both implications, with the implied variable renumbered 2 -> 1, 3 -> 2.
+  ASSERT_EQ(out.zero_offsets[1] - out.zero_offsets[0], 1);
+  EXPECT_EQ(out.zero_variables[out.zero_offsets[0]], 1);
+  EXPECT_DOUBLE_EQ(out.zero_lower_bound[out.zero_offsets[0]], 0.0);
+  EXPECT_DOUBLE_EQ(out.zero_upper_bound[out.zero_offsets[0]], 3.0);
+  ASSERT_EQ(out.one_offsets[1] - out.one_offsets[0], 1);
+  EXPECT_EQ(out.one_variables[out.one_offsets[0]], 2);
+  EXPECT_DOUBLE_EQ(out.one_lower_bound[out.one_offsets[0]], 1.0);
+  EXPECT_DOUBLE_EQ(out.one_upper_bound[out.one_offsets[0]], 5.0);
+
+  // The continuous sub column 1 cannot be an antecedent, and sub column 2 has no implications.
+  EXPECT_EQ(out.zero_offsets[2] - out.zero_offsets[1], 0);
+  EXPECT_EQ(out.zero_offsets[3] - out.zero_offsets[2], 0);
+  // Parent column 1's implication was dropped with it: only one zero-side entry survives.
+  EXPECT_EQ(out.zero_variables.size(), 1u);
+}
+
+// A general integer antecedent yields an invalid cut in the x_j = 1 family, so it must be refused.
+TEST(cuts, probing_implied_bounds_inherit_refuses_non_binary_antecedent)
+{
+  const raft::handle_t handle{};
+
+  mip::probing_implied_bound_t<int, double> parent(2);
+  parent.zero_offsets     = {0, 1, 1};
+  parent.zero_variables   = {1};
+  parent.zero_lower_bound = {0.0};
+  parent.zero_upper_bound = {3.0};
+  parent.one_offsets      = {0, 0, 0};
+
+  const std::vector<int> sub_to_parent{0, 1};
+  auto sub_problem     = make_all_binary_sub_problem(handle, sub_to_parent.size());
+  sub_problem.upper[0] = 2.0;  // x0 is no longer binary
+
+  mip::probing_implied_bound_t<int, double> out;
+  mip::build_probing_implied_bounds_from_parent(parent, sub_to_parent, sub_problem, out);
+
+  EXPECT_TRUE(out.zero_variables.empty());
+  EXPECT_TRUE(out.one_variables.empty());
+  EXPECT_EQ(out.zero_offsets.back(), 0);
+}
+
+// Soundness on a real model: every conflict the inherited table reports must be a conflict
+// the parent already proved. This is the property clique-cut validity rests on.
+TEST(cuts, clique_inherit_invents_no_conflicts_on_neos8)
+{
+  auto& parent_table = get_neos8_clique_table_cached();
+  const raft::handle_t handle{};
+  const int n_parent = parent_table.n_variables;
+  const int n_probe  = std::min(n_parent, 200);
+
+  // Keep every other parent column, so plenty of cliques are punctured.
+  std::vector<int> sub_to_parent;
+  for (int p = 0; p < n_parent; p += 2) {
+    sub_to_parent.push_back(p);
+  }
+  auto sub_problem = make_all_binary_sub_problem(handle, sub_to_parent.size());
+  auto inherited   = inherit_table(parent_table, sub_problem, sub_to_parent);
+  ASSERT_NE(inherited, nullptr);
+
+  int inherited_edges = 0;
+  for (int i = 0; i < n_probe; ++i) {
+    for (int j = i + 1; j < n_probe; ++j) {
+      if (!inherited->check_adjacency(i, j)) { continue; }
+      ++inherited_edges;
+      EXPECT_TRUE(parent_table.check_adjacency(sub_to_parent[i], sub_to_parent[j]))
+        << "inherited conflict (" << i << ", " << j << ") maps to parent pair (" << sub_to_parent[i]
+        << ", " << sub_to_parent[j] << ") which is not a parent conflict";
+    }
+  }
+  // Guard against a translation that is sound only because it dropped everything.
+  EXPECT_GT(inherited_edges, 0);
 }
 
 TEST(cuts, clique_phase2_no_cut_off_optimal_solution_validation)

@@ -3276,6 +3276,8 @@ void cut_generation_t<i_t, f_t>::prepare_fractional_sub_conflict_graph(
 #pragma omp taskwait depend(in : *signal_extend_)
   }
 
+  if (clique_table_ready_) { clique_table_ready_->store(true, std::memory_order_release); }
+
   if (clique_table_ == nullptr) { return; }
   const bool has_probing_conflicts =
     !probing_implied_bound_.zero_variables.empty() || !probing_implied_bound_.one_variables.empty();

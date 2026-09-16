@@ -165,6 +165,18 @@ class third_party_presolve_t {
   const std::vector<i_t>& get_reduced_to_original_map() const { return reduced_to_original_map_; }
   const std::vector<i_t>& get_original_to_reduced_map() const { return original_to_reduced_map_; }
 
+  // Original-space columns whose surviving image no longer represents the same variable.
+  //
+  // PaPILO's parallel-column detection replaces a pair (col1, col2) by a single column
+  // y = col2 + scale * col1, keeping col2's index. Later reductions can pull y's domain
+  // back to [0,1] integral, at which point nothing about the reduced column distinguishes
+  // it from the original col2. Anything derived from the *parent* model -- clique-table
+  // literals, probing implications -- is therefore unsound on these columns and must not
+  // be inherited onto them.
+  //
+  // Only populated by apply_to_subproblem; empty otherwise.
+  const std::vector<i_t>& get_merged_original_columns() const { return merged_original_columns_; }
+
   const std::vector<f_t>& get_original_objective_coefficients() const
   {
     return original_objective_coefficients_;
@@ -214,6 +226,7 @@ class third_party_presolve_t {
 
   std::vector<i_t> reduced_to_original_map_{};
   std::vector<i_t> original_to_reduced_map_{};
+  std::vector<i_t> merged_original_columns_{};
 
   std::vector<f_t> original_objective_coefficients_{};
   f_t original_objective_offset_{0};

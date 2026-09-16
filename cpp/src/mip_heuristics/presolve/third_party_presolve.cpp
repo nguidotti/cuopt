@@ -30,6 +30,7 @@
 #endif
 #include <papilo/core/Presolve.hpp>
 #include <papilo/core/ProblemBuilder.hpp>
+#include <papilo/core/postsolve/ReductionType.hpp>
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #else
@@ -1196,6 +1197,30 @@ third_party_presolve_status_t third_party_presolve_t<i_t, f_t>::apply_to_subprob
     if (original_idx >= 0 && original_idx < original_to_reduced_map_.size()) {
       original_to_reduced_map_[original_idx] = i;
     }
+  }
+
+  // Record the columns a parallel-column merge touched, so callers know not to carry
+  // parent-derived structure (cliques, probing implications) onto them.
+  // Both endpoints are stored, and both are already
+  // in original (pre-presolve) column space.
+  merged_original_columns_.clear();
+  const auto& postsolve = result.postsolve;
+  for (size_t k = 0; k < postsolve.types.size(); ++k) {
+    // ReductionType is declared at global scope by PaPILO, not inside namespace papilo.
+    if (postsolve.types[k] != ::ReductionType::kParallelCol) { continue; }
+    const auto begin = postsolve.start[k];
+    merged_original_columns_.push_back(postsolve.indices[begin]);
+    merged_original_columns_.push_back(postsolve.indices[begin + 2]);
+  }
+  std::sort(merged_original_columns_.begin(), merged_original_columns_.end());
+  merged_original_columns_.erase(
+    std::unique(merged_original_columns_.begin(), merged_original_columns_.end()),
+    merged_original_columns_.end());
+  if (!merged_original_columns_.empty()) {
+    const i_t num_merged = merged_original_columns_.size();
+    settings.log.debug(
+      "Presolve merged %d parallel columns; parent structure will not be inherited onto them",
+      num_merged);
   }
 
   return status;

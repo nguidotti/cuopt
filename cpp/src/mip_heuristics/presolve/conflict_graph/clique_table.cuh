@@ -225,6 +225,21 @@ void build_clique_table(const simplex::user_problem_t<i_t, f_t>& problem,
 template <typename i_t, typename f_t>
 void fill_var_clique_maps(clique_table_t<i_t, f_t>& clique_table);
 
+// Translate `parent`'s cliques into the column space of a sub-problem.
+// The extension phase is not re-run as it needs the knapsack constraints.
+//
+// `sub_to_parent[k]` is the parent column of sub column k, or -1 when the literal must not
+// be inherited. The caller owns the checks it alone can make (bound containment against the
+// pre-presolve problem, PaPILO parallel-column merges); this function additionally drops any
+// column that is not exactly binary in `sub_problem`.
+template <typename i_t, typename f_t>
+std::shared_ptr<clique_table_t<i_t, f_t>> build_clique_table_from_parent(
+  const clique_table_t<i_t, f_t>& parent,
+  const simplex::user_problem_t<i_t, f_t>& sub_problem,
+  const std::vector<i_t>& sub_to_parent,
+  typename mip_solver_settings_t<i_t, f_t>::tolerances_t tolerances,
+  cuopt::timer_t& timer);
+
 }  // namespace cuopt::mathematical_optimization::mip
 
 // Possible application to rounding procedure, keeping it as reference
