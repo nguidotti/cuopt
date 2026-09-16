@@ -10,6 +10,7 @@
 #include <mip_heuristics/structural/early_structural.cuh>
 
 #include <utilities/omp_helpers.hpp>
+#include <utilities/timer.hpp>
 
 #include <atomic>
 #include <cstdint>
@@ -231,14 +232,15 @@ class markshare_t : public structural_heuristic_t<i_t, f_t> {
   i_t hash_depth_{0};  // zero means the terminal is disabled
 
   const std::atomic<bool>* preemption_{nullptr};
-  double start_{0.0};
+  // Restarted at the top of solve(). Read concurrently by the seed tasks, which only call the
+  // const elapsed_time().
+  timer_t timer_{std::numeric_limits<double>::infinity()};
   bool budget_exhausted_{false};
 
   // Progress state, written from the seed tasks as well as the driver.
   omp_atomic_t<int64_t> live_nodes_{0};
   omp_atomic_t<double> next_report_{0.0};
   omp_atomic_t<i_t> levels_exhausted_{0};
-  omp_atomic_t<int64_t> targets_{0};
   f_t incumbent_{0};
 };
 

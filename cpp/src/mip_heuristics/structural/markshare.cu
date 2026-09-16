@@ -9,6 +9,7 @@
 
 #include <linear_algebra/sparse_matrix.hpp>
 #include <mip_heuristics/mip_constants.hpp>
+#include <mip_heuristics/utils.cuh>
 #include <utilities/copy_helpers.hpp>
 #include <utilities/logger.hpp>
 #include <utilities/scope_guard.hpp>
@@ -30,12 +31,6 @@
 namespace cuopt::mathematical_optimization::mip {
 
 namespace {
-
-double steady_seconds()
-{
-  const auto now = std::chrono::steady_clock::now().time_since_epoch();
-  return std::chrono::duration<double>(now).count();
-}
 
 // Shifts `src` left by `shift` bits into `dst`, truncated to `bits` significant bits.
 // `dst` must not alias `src`.
@@ -59,16 +54,6 @@ void shift_left_into(const uint64_t* src, uint64_t* dst, size_t words, size_t sh
 }
 
 // Mirrors branch_and_bound.cpp so the two progress tables read the same.
-template <typename f_t>
-f_t user_relative_gap(f_t user_obj, f_t user_lower_bound)
-{
-  f_t user_mip_gap = user_obj == 0.0
-                       ? (user_lower_bound == 0.0 ? 0.0 : std::numeric_limits<f_t>::infinity())
-                       : std::abs(user_obj - user_lower_bound) / std::abs(user_obj);
-  if (std::isnan(user_mip_gap)) { return std::numeric_limits<f_t>::infinity(); }
-  return user_mip_gap;
-}
-
 template <typename f_t>
 std::string to_percentage(f_t value)
 {
@@ -264,7 +249,9 @@ void markshare_t<i_t, f_t>::report(char symbol, bool have_incumbent)
   if (have_incumbent) {
     const f_t user_obj = user_objective(incumbent_);
     objective_text     = std::format("{:+.6e}", user_obj);
-    gap                = user_relative_gap(user_obj, user_bound);
+    // The same gap solution_t::get_solution derives the Optimal status from, so the table agrees
+    // with the status the solve ends up reporting.
+    gap = compute_rel_mip_gap(user_obj, user_bound);
   }
 
   const std::string line = std::format("{:^1} {:>12} {:^19} {:^+15.6e} {:^11} {:>8.2f}",
@@ -273,7 +260,7 @@ void markshare_t<i_t, f_t>::report(char symbol, bool have_incumbent)
                                        objective_text,
                                        user_bound,
                                        to_percentage(gap),
-                                       steady_seconds() - start_);
+                                       timer_.elapsed_time());
   CUOPT_LOG_INFO("%s", line.c_str());
 }
 
@@ -784,7 +771,7 @@ typename markshare_t<i_t, f_t>::dfs_result_t markshare_t<i_t, f_t>::run_dfs_from
       next_check = ctx.nodes + settings_.node_report_interval;
       live_nodes_.fetch_add(ctx.nodes - ctx.accounted, std::memory_order_relaxed);
       ctx.accounted    = ctx.nodes;
-      const double now = steady_seconds();
+      const double now = timer_.elapsed_time();
       if (stop != nullptr && stop->load(std::memory_order_relaxed)) { return dfs_result_t::BUDGET; }
       if (preemption_ != nullptr && preemption_->load(std::memory_order_relaxed)) {
         return dfs_result_t::BUDGET;
@@ -975,7 +962,6 @@ bool markshare_t<i_t, f_t>::enumerate_level(i_t level,
     }
     if (joint_at(target_[joint_row0_], target_[joint_row1_]) > model_.n) { return false; }
 
-    targets_.fetch_add(1, std::memory_order_relaxed);
     const dfs_result_t result = run_dfs(target_);
     if (result == dfs_result_t::FOUND) {
       found        = true;
@@ -1030,7 +1016,7 @@ bool markshare_t<i_t, f_t>::reconstruct(std::vector<f_t>& assignment) const
       return false;
     }
     if (h_.var_types[j] != var_t::CONTINUOUS &&
-        std::abs(x - std::round(x)) > settings_.integrality_tolerance) {
+        !is_integer<double>(x, settings_.integrality_tolerance)) {
       CUOPT_LOG_ERROR("markshare: reconstructed column %d is fractional", j);
       return false;
     }
@@ -1058,12 +1044,11 @@ bool markshare_t<i_t, f_t>::solve(
 
   settings_.integrality_tolerance = tolerances.integrality_tolerance;
   preemption_                     = &preemption;
-  start_                          = steady_seconds();
+  timer_                          = timer_t(std::numeric_limits<double>::infinity());
   budget_exhausted_               = false;
   live_nodes_.store(0, std::memory_order_relaxed);
-  targets_.store(0, std::memory_order_relaxed);
   levels_exhausted_.store(0, std::memory_order_relaxed);
-  next_report_.store(start_ + settings_.report_interval, std::memory_order_relaxed);
+  next_report_.store(settings_.report_interval, std::memory_order_relaxed);
   // We run under `omp masked` inside the solver's parallel region, so the rest of the team is
   // parked at the barrier and available to pick up tasks.
   num_threads_ = omp_get_num_threads();
@@ -1099,10 +1084,8 @@ bool markshare_t<i_t, f_t>::solve(
   if (solution_level < 0) {
     CUOPT_LOG_INFO("%s",
                    std::format("Heuristic stopped after exploring {} nodes in {:.2f}s",
-                               levels_exhausted_.load(std::memory_order_relaxed),
-                               targets_.load(std::memory_order_relaxed),
                                live_nodes_.load(std::memory_order_relaxed),
-                               steady_seconds() - start_)
+                               timer_.elapsed_time())
                      .c_str());
     return false;
   }
@@ -1121,7 +1104,7 @@ bool markshare_t<i_t, f_t>::solve(
   CUOPT_LOG_INFO("%s",
                  std::format("\nExplored {} nodes in {:.2f}s.",
                              live_nodes_.load(std::memory_order_relaxed),
-                             steady_seconds() - start_)
+                             timer_.elapsed_time())
                    .c_str());
   // Every level below the one that produced this point was exhausted, so it is optimal outright
   // rather than within a gap tolerance.
