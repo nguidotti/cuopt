@@ -543,17 +543,27 @@ mip_solution_t<i_t, f_t> solve_mip_helper(
     std::unique_ptr<mip::early_gpufj_t<i_t, f_t>> early_gpufj;
     std::unique_ptr<mip::early_structural_t<i_t, f_t>> early_structural;
 
+    // Filled either by an exclusive structural heuristic below or by the normal pipeline.
+    mip_solution_t<i_t, f_t> sol(mip_termination_status_t::TimeLimit,
+                                 solver_stats_t<i_t, f_t>{},
+                                 op_problem.get_handle_ptr()->get_stream());
+    bool solved_exclusively = false;
+
     bool run_early_fj = run_presolve && settings.determinism_mode != CUOPT_MODE_DETERMINISTIC &&
                         op_problem.get_n_integers() > 0 && op_problem.get_n_constraints() > 0;
     f_t no_bound = problem.presolve_data.objective_scaling_factor >= 0 ? (f_t)-1e20 : (f_t)1e20;
     if (run_early_fj) {
       auto early_fj_start = std::chrono::steady_clock::now();
+      // An exclusive structural heuristic publishes its own progress table, so the generic
+      // incumbent line below would just repeat the row it already printed.
+      bool structural_prints_own_progress = false;
       auto early_fj_callback =
         [&early_best_objective,
          &early_best_user_obj,
          &early_best_user_assignment,
          &early_incumbent_pool,
          &early_callback_mutex,
+         &structural_prints_own_progress,
          early_fj_start,
          mip_callbacks = settings.get_mip_callbacks(),
          has_semi_continuous_callback_translation =
@@ -575,11 +585,13 @@ mip_solution_t<i_t, f_t> solve_mip_helper(
           double elapsed =
             std::chrono::duration<double>(std::chrono::steady_clock::now() - early_fj_start)
               .count();
-          CUOPT_LOG_INFO(
-            "New solution from early primal heuristics (%s). Objective %+.6e. Time %.2f",
-            heuristic_name,
-            user_obj,
-            elapsed);
+          if (!structural_prints_own_progress) {
+            CUOPT_LOG_INFO(
+              "New solution from early primal heuristics (%s). Objective %+.6e. Time %.2f",
+              heuristic_name,
+              user_obj,
+              elapsed);
+          }
           auto user_assignment = assignment;
           invoke_solution_callbacks(mip_callbacks,
                                     has_semi_continuous_callback_translation,
@@ -589,229 +601,261 @@ mip_solution_t<i_t, f_t> solve_mip_helper(
                                     no_bound);
         };
 
-      // Start early CPUFJ on original problem (will restart on presolved problem after Papilo)
-      const uint64_t early_fj_base_seed = mip::get_base_seed(settings.seed);
-      early_cpufj                       = std::make_unique<mip::early_cpufj_t<i_t, f_t>>(
-        op_problem,
-        settings.get_tolerances(),
-        early_fj_callback,
-        mip::derive_seed(early_fj_base_seed, mip::rng_id_t::early_cpufj));
-      early_cpufj->start();
-      CUOPT_LOG_DEBUG("Started early CPUFJ on original problem");
-
-      // Start early GPU FJ (uses GPU while CPU is busy with Papilo)
-      early_gpufj =
-        std::make_unique<mip::early_gpufj_t<i_t, f_t>>(op_problem, settings, early_fj_callback);
-      early_gpufj->start();
-      CUOPT_LOG_DEBUG("Started early GPUFJ during presolve");
       early_structural = mip::early_structural_t<i_t, f_t>::create(
         op_problem, settings.get_tolerances(), early_fj_callback);
-      if (early_structural) { early_structural->start(); }
-    }
-
-    auto constexpr const dual_postsolve = false;
-    if (run_presolve) {
-      sort_csr(op_problem);
-      const auto& hp             = settings.heuristic_params;
-      const auto papilo_features = mip::papilo_presolve_features(op_problem);
-      const auto papilo_budget   = mip::evaluate_presolve_budget(hp, papilo_features);
-      mip::log_presolve_budget("PAPILO", papilo_features, papilo_budget);
-
-      const double presolve_time_limit = settings.determinism_mode == CUOPT_MODE_DETERMINISTIC
-                                           ? std::numeric_limits<double>::infinity()
-                                           : timer.remaining_time();
-
-      presolver   = std::make_unique<mip::third_party_presolve_t<i_t, f_t>>();
-      auto result = presolver->apply_presolve_from_op_problem(
-        op_problem,
-        cuopt::mathematical_optimization::problem_category_t::MIP,
-        settings.presolver,
-        dual_postsolve,
-        settings.tolerances.absolute_tolerance,
-        settings.tolerances.relative_tolerance,
-        presolve_time_limit,
-        settings.num_cpu_threads,
-        papilo_budget.papilo_max_rounds,
-        papilo_budget.papilo_max_badgesize);
-
-      if (result.status == mip::third_party_presolve_status_t::INFEASIBLE) {
-        return mip_solution_t<i_t, f_t>(mip_termination_status_t::Infeasible,
-                                        solver_stats_t<i_t, f_t>{},
-                                        op_problem.get_handle_ptr()->get_stream());
-      }
-      if (result.status == mip::third_party_presolve_status_t::UNBNDORINFEAS) {
-        return mip_solution_t<i_t, f_t>(mip_termination_status_t::UnboundedOrInfeasible,
-                                        solver_stats_t<i_t, f_t>{},
-                                        op_problem.get_handle_ptr()->get_stream());
-      }
-      if (result.status == mip::third_party_presolve_status_t::UNBOUNDED) {
-        return mip_solution_t<i_t, f_t>(mip_termination_status_t::Unbounded,
-                                        solver_stats_t<i_t, f_t>{},
-                                        op_problem.get_handle_ptr()->get_stream());
-      }
-      presolve_result_opt.emplace(std::move(result));
-
-      problem = mip::problem_t<i_t, f_t>(presolve_result_opt->reduced_problem);
-      problem.set_papilo_presolve_data(presolver.get(),
-                                       presolve_result_opt->reduced_to_original_map,
-                                       presolve_result_opt->original_to_reduced_map,
-                                       op_problem.get_n_variables());
-      problem.set_implied_integers(presolve_result_opt->implied_integer_indices);
-      presolve_time = timer.elapsed_time();
-      if (presolve_result_opt->implied_integer_indices.size() > 0) {
-        CUOPT_LOG_INFO("%d implied integers", presolve_result_opt->implied_integer_indices.size());
-      }
-      CUOPT_LOG_INFO("Papilo presolve time: %.2f", presolve_time);
-      // What the round cap actually bought, logged here rather than inferred from the probing stage
-      // so it is still recorded when the run never gets that far.
-      CUOPT_LOG_DEBUG(
-        "PRESOLVE_PAPILO_REDUCED nvars=%d ncons=%d nnz=%d nint=%d nbin=%d from_nvars=%.0f "
-        "from_ncons=%.0f from_nnz=%.0f",
-        problem.n_variables,
-        problem.n_constraints,
-        problem.nnz,
-        problem.n_integer_vars,
-        problem.n_binary_vars,
-        papilo_features.n_vars,
-        papilo_features.n_cons,
-        papilo_features.nnz);
-
-      if (result.status == mip::third_party_presolve_status_t::OPTIMAL) {
-        CUOPT_LOG_INFO("Optimal solution found during presolve.");
-      }
-    }
-
-    // Stop early GPU FJ now that Papilo presolve is complete
-    if (early_gpufj) {
-      early_gpufj->stop();
-      if (early_gpufj->solution_found()) {
-        CUOPT_LOG_DEBUG("Early GPU FJ found incumbent with objective %.6e during presolve",
-                        early_gpufj->get_best_objective());
-      }
-      early_gpufj.reset();  // Free GPU memory
-    }
-
-    if (early_cpufj && run_presolve && presolve_result_opt.has_value()) {
-      early_cpufj->stop();
-      if (early_cpufj->solution_found()) {
-        CUOPT_LOG_DEBUG(
-          "Early CPUFJ (original) found incumbent with objective %.6e during presolve",
-          early_cpufj->get_best_objective());
-      }
-      early_cpufj.reset();
-    }
-
-    if (early_structural) {
-      early_structural->stop();
-      if (early_structural->solution_found()) {
-        CUOPT_LOG_DEBUG(
-          "Early structural heuristic (original) found incumbent with objective %.6e "
-          "during presolve",
-          early_structural->get_best_objective());
-      }
-      early_structural.reset();
-    }
-
-    // Add early-heuristic incumbents (original-space) to initial_solutions.
-    // PaPILO crushing + validation happens downstream in add_user_given_solutions().
-    if (!early_incumbent_pool.empty()) {
-      auto stream = op_problem.get_handle_ptr()->get_stream();
-      for (const auto& inc : early_incumbent_pool) {
-        auto d = std::make_shared<rmm::device_uvector<f_t>>(device_copy(inc.assignment, stream));
-        settings.initial_solutions.emplace_back(std::move(d));
-      }
-      CUOPT_LOG_DEBUG("Added %zu early-heuristic incumbents to initial solutions",
-                      early_incumbent_pool.size());
-    }
-
-    if (settings.user_problem_file != "") {
-      CUOPT_LOG_INFO("Writing user problem to file: %s", settings.user_problem_file.c_str());
-      op_problem.write_to_mps(settings.user_problem_file);
-    }
-    if (run_presolve && presolve_result_opt.has_value() && settings.presolve_file != "") {
-      CUOPT_LOG_INFO("Writing presolved problem to file: %s", settings.presolve_file.c_str());
-      presolve_result_opt->reduced_problem.write_to_mps(settings.presolve_file);
-    }
-    // early_best_user_obj is in user-space.
-    // run_mip_solver stores it in context.initial_upper_bound and converts to target spaces as
-    // needed.
-    auto sol = run_mip_solver(problem,
-                              settings,
-                              timer,
-                              early_best_user_obj,
-                              early_best_user_assignment,
-                              std::move(symmetry));
-
-    const f_t cuopt_presolve_time = sol.get_stats().presolve_time;
-
-    if (run_presolve) {
-      auto status_to_skip = sol.get_termination_status() == mip_termination_status_t::TimeLimit ||
-                            sol.get_termination_status() == mip_termination_status_t::WorkLimit ||
-                            sol.get_termination_status() == mip_termination_status_t::Infeasible;
-      auto primal_solution =
-        cuopt::device_copy(sol.get_solution(), op_problem.get_handle_ptr()->get_stream());
-      rmm::device_uvector<f_t> dual_solution(0, op_problem.get_handle_ptr()->get_stream());
-      rmm::device_uvector<f_t> reduced_costs(0, op_problem.get_handle_ptr()->get_stream());
-      presolver->undo_from_device(primal_solution,
-                                  dual_solution,
-                                  reduced_costs,
-                                  cuopt::mathematical_optimization::problem_category_t::MIP,
-                                  status_to_skip,
-                                  dual_postsolve,
-                                  op_problem.get_handle_ptr()->get_stream());
-      if (!status_to_skip) {
-        thrust::fill(rmm::exec_policy(op_problem.get_handle_ptr()->get_stream()),
-                     dual_solution.data(),
-                     dual_solution.data() + dual_solution.size(),
-                     std::numeric_limits<f_t>::signaling_NaN());
-        thrust::fill(rmm::exec_policy(op_problem.get_handle_ptr()->get_stream()),
-                     reduced_costs.data(),
-                     reduced_costs.data() + reduced_costs.size(),
-                     std::numeric_limits<f_t>::signaling_NaN());
-        mip::problem_t<i_t, f_t> full_problem(op_problem);
-        mip::solution_t<i_t, f_t> full_sol(full_problem);
-        full_sol.copy_new_assignment(
-          cuopt::host_copy(primal_solution, op_problem.get_handle_ptr()->get_stream()));
-        full_sol.compute_feasibility();
-        if (!full_sol.get_feasible()) {
-          CUOPT_LOG_WARN("The solution is not feasible after post solve");
+      // An exclusive recognizer has an exact method for this model class, so it takes the whole
+      // solve: no presolve, no feasibility jump, no branch and bound.
+      if (early_structural && early_structural->exclusive()) {
+        structural_prints_own_progress = true;
+        early_structural->run_exclusive(timer.remaining_time());
+        if (early_structural->solution_found()) {
+          mip::problem_t<i_t, f_t> exclusive_problem(op_problem);
+          mip::solution_t<i_t, f_t> exclusive_sol(exclusive_problem);
+          exclusive_sol.copy_new_assignment(early_structural->get_best_assignment());
+          // Independent confirmation on the device before the bound is allowed to claim
+          // optimality: a wrong claim here returns a suboptimal answer as Optimal.
+          if (exclusive_sol.compute_feasibility()) {
+            solver_stats_t<i_t, f_t> exclusive_stats{};
+            exclusive_stats.total_solve_time = timer.elapsed_time();
+            exclusive_stats.set_solution_bound(exclusive_sol.get_user_objective());
+            exclusive_sol.post_process_completed = true;
+            sol                = exclusive_sol.get_solution(true, exclusive_stats, false);
+            solved_exclusively = true;
+          }
         }
+        early_structural.reset();
+        // If it came back empty the feasibility jump below still runs, and its incumbents are the
+        // only progress there is to report.
+        structural_prints_own_progress = false;
+      } else if (early_structural) {
+        early_structural->start();
+      }
 
-        auto full_stats = sol.get_stats();
-        // add third party presolve time to cuopt presolve time
-        full_stats.presolve_time = cuopt_presolve_time + presolve_time;
+      if (!solved_exclusively) {
+        // Start early CPUFJ on original problem (will restart on presolved problem after Papilo)
+        const uint64_t early_fj_base_seed = mip::get_base_seed(settings.seed);
+        early_cpufj                       = std::make_unique<mip::early_cpufj_t<i_t, f_t>>(
+          op_problem,
+          settings.get_tolerances(),
+          early_fj_callback,
+          mip::derive_seed(early_fj_base_seed, mip::rng_id_t::early_cpufj));
+        early_cpufj->start();
+        CUOPT_LOG_DEBUG("Started early CPUFJ on original problem");
 
-        // FIXME:: reduced_solution.get_stats() is not correct, we need to compute the stats for
-        // the full problem
-        full_sol.post_process_completed = true;  // hack
-        sol                             = full_sol.get_solution(true, full_stats, false);
+        // Start early GPU FJ (uses GPU while CPU is busy with Papilo)
+        early_gpufj =
+          std::make_unique<mip::early_gpufj_t<i_t, f_t>>(op_problem, settings, early_fj_callback);
+        early_gpufj->start();
+        CUOPT_LOG_DEBUG("Started early GPUFJ during presolve");
       }
     }
 
-    // Use the early heuristic OG-space incumbent if it is better than what the solver-space
-    // pipeline returned (or if the pipeline returned no feasible solution at all).
-    if (!early_best_user_assignment.empty()) {
-      bool sol_has_incumbent =
-        sol.get_termination_status() == mip_termination_status_t::FeasibleFound ||
-        sol.get_termination_status() == mip_termination_status_t::Optimal;
-      bool is_maximization = problem.presolve_data.objective_scaling_factor < 0;
-      bool early_heuristic_is_better =
-        !sol_has_incumbent || (is_maximization ? early_best_user_obj > sol.get_objective_value()
-                                               : early_best_user_obj < sol.get_objective_value());
-      if (early_heuristic_is_better) {
-        mip::problem_t<i_t, f_t> full_problem(op_problem);
-        mip::solution_t<i_t, f_t> fallback_sol(full_problem);
-        fallback_sol.copy_new_assignment(early_best_user_assignment);
-        fallback_sol.compute_feasibility();
-        if (fallback_sol.get_feasible()) {
-          auto stats                          = sol.get_stats();
-          stats.presolve_time                 = cuopt_presolve_time + presolve_time;
-          fallback_sol.post_process_completed = true;
-          sol                                 = fallback_sol.get_solution(true, stats, false);
-          CUOPT_LOG_DEBUG("Using early heuristic incumbent (objective %g)", early_best_user_obj);
+    if (!solved_exclusively) {
+      auto constexpr const dual_postsolve = false;
+      if (run_presolve) {
+        sort_csr(op_problem);
+        const auto& hp             = settings.heuristic_params;
+        const auto papilo_features = mip::papilo_presolve_features(op_problem);
+        const auto papilo_budget   = mip::evaluate_presolve_budget(hp, papilo_features);
+        mip::log_presolve_budget("PAPILO", papilo_features, papilo_budget);
+
+        const double presolve_time_limit = settings.determinism_mode == CUOPT_MODE_DETERMINISTIC
+                                             ? std::numeric_limits<double>::infinity()
+                                             : timer.remaining_time();
+
+        presolver   = std::make_unique<mip::third_party_presolve_t<i_t, f_t>>();
+        auto result = presolver->apply_presolve_from_op_problem(
+          op_problem,
+          cuopt::mathematical_optimization::problem_category_t::MIP,
+          settings.presolver,
+          dual_postsolve,
+          settings.tolerances.absolute_tolerance,
+          settings.tolerances.relative_tolerance,
+          presolve_time_limit,
+          settings.num_cpu_threads,
+          papilo_budget.papilo_max_rounds,
+          papilo_budget.papilo_max_badgesize);
+
+        if (result.status == mip::third_party_presolve_status_t::INFEASIBLE) {
+          return mip_solution_t<i_t, f_t>(mip_termination_status_t::Infeasible,
+                                          solver_stats_t<i_t, f_t>{},
+                                          op_problem.get_handle_ptr()->get_stream());
+        }
+        if (result.status == mip::third_party_presolve_status_t::UNBNDORINFEAS) {
+          return mip_solution_t<i_t, f_t>(mip_termination_status_t::UnboundedOrInfeasible,
+                                          solver_stats_t<i_t, f_t>{},
+                                          op_problem.get_handle_ptr()->get_stream());
+        }
+        if (result.status == mip::third_party_presolve_status_t::UNBOUNDED) {
+          return mip_solution_t<i_t, f_t>(mip_termination_status_t::Unbounded,
+                                          solver_stats_t<i_t, f_t>{},
+                                          op_problem.get_handle_ptr()->get_stream());
+        }
+        presolve_result_opt.emplace(std::move(result));
+
+        problem = mip::problem_t<i_t, f_t>(presolve_result_opt->reduced_problem);
+        problem.set_papilo_presolve_data(presolver.get(),
+                                         presolve_result_opt->reduced_to_original_map,
+                                         presolve_result_opt->original_to_reduced_map,
+                                         op_problem.get_n_variables());
+        problem.set_implied_integers(presolve_result_opt->implied_integer_indices);
+        presolve_time = timer.elapsed_time();
+        if (presolve_result_opt->implied_integer_indices.size() > 0) {
+          CUOPT_LOG_INFO("%d implied integers",
+                         presolve_result_opt->implied_integer_indices.size());
+        }
+        CUOPT_LOG_INFO("Papilo presolve time: %.2f", presolve_time);
+        // What the round cap actually bought, logged here rather than inferred from the probing
+        // stage so it is still recorded when the run never gets that far.
+        CUOPT_LOG_DEBUG(
+          "PRESOLVE_PAPILO_REDUCED nvars=%d ncons=%d nnz=%d nint=%d nbin=%d from_nvars=%.0f "
+          "from_ncons=%.0f from_nnz=%.0f",
+          problem.n_variables,
+          problem.n_constraints,
+          problem.nnz,
+          problem.n_integer_vars,
+          problem.n_binary_vars,
+          papilo_features.n_vars,
+          papilo_features.n_cons,
+          papilo_features.nnz);
+
+        if (result.status == mip::third_party_presolve_status_t::OPTIMAL) {
+          CUOPT_LOG_INFO("Optimal solution found during presolve.");
         }
       }
-    }
+
+      // Stop early GPU FJ now that Papilo presolve is complete
+      if (early_gpufj) {
+        early_gpufj->stop();
+        if (early_gpufj->solution_found()) {
+          CUOPT_LOG_DEBUG("Early GPU FJ found incumbent with objective %.6e during presolve",
+                          early_gpufj->get_best_objective());
+        }
+        early_gpufj.reset();  // Free GPU memory
+      }
+
+      if (early_cpufj && run_presolve && presolve_result_opt.has_value()) {
+        early_cpufj->stop();
+        if (early_cpufj->solution_found()) {
+          CUOPT_LOG_DEBUG(
+            "Early CPUFJ (original) found incumbent with objective %.6e during presolve",
+            early_cpufj->get_best_objective());
+        }
+        early_cpufj.reset();
+      }
+
+      if (early_structural) {
+        early_structural->stop();
+        if (early_structural->solution_found()) {
+          CUOPT_LOG_DEBUG(
+            "Early structural heuristic (original) found incumbent with objective %.6e "
+            "during presolve",
+            early_structural->get_best_objective());
+        }
+        early_structural.reset();
+      }
+
+      // Add early-heuristic incumbents (original-space) to initial_solutions.
+      // PaPILO crushing + validation happens downstream in add_user_given_solutions().
+      if (!early_incumbent_pool.empty()) {
+        auto stream = op_problem.get_handle_ptr()->get_stream();
+        for (const auto& inc : early_incumbent_pool) {
+          auto d = std::make_shared<rmm::device_uvector<f_t>>(device_copy(inc.assignment, stream));
+          settings.initial_solutions.emplace_back(std::move(d));
+        }
+        CUOPT_LOG_DEBUG("Added %zu early-heuristic incumbents to initial solutions",
+                        early_incumbent_pool.size());
+      }
+
+      if (settings.user_problem_file != "") {
+        CUOPT_LOG_INFO("Writing user problem to file: %s", settings.user_problem_file.c_str());
+        op_problem.write_to_mps(settings.user_problem_file);
+      }
+      if (run_presolve && presolve_result_opt.has_value() && settings.presolve_file != "") {
+        CUOPT_LOG_INFO("Writing presolved problem to file: %s", settings.presolve_file.c_str());
+        presolve_result_opt->reduced_problem.write_to_mps(settings.presolve_file);
+      }
+      // early_best_user_obj is in user-space.
+      // run_mip_solver stores it in context.initial_upper_bound and converts to target spaces as
+      // needed.
+      sol = run_mip_solver(problem,
+                           settings,
+                           timer,
+                           early_best_user_obj,
+                           early_best_user_assignment,
+                           std::move(symmetry));
+
+      const f_t cuopt_presolve_time = sol.get_stats().presolve_time;
+
+      if (run_presolve) {
+        auto status_to_skip = sol.get_termination_status() == mip_termination_status_t::TimeLimit ||
+                              sol.get_termination_status() == mip_termination_status_t::WorkLimit ||
+                              sol.get_termination_status() == mip_termination_status_t::Infeasible;
+        auto primal_solution =
+          cuopt::device_copy(sol.get_solution(), op_problem.get_handle_ptr()->get_stream());
+        rmm::device_uvector<f_t> dual_solution(0, op_problem.get_handle_ptr()->get_stream());
+        rmm::device_uvector<f_t> reduced_costs(0, op_problem.get_handle_ptr()->get_stream());
+        presolver->undo_from_device(primal_solution,
+                                    dual_solution,
+                                    reduced_costs,
+                                    cuopt::mathematical_optimization::problem_category_t::MIP,
+                                    status_to_skip,
+                                    dual_postsolve,
+                                    op_problem.get_handle_ptr()->get_stream());
+        if (!status_to_skip) {
+          thrust::fill(rmm::exec_policy(op_problem.get_handle_ptr()->get_stream()),
+                       dual_solution.data(),
+                       dual_solution.data() + dual_solution.size(),
+                       std::numeric_limits<f_t>::signaling_NaN());
+          thrust::fill(rmm::exec_policy(op_problem.get_handle_ptr()->get_stream()),
+                       reduced_costs.data(),
+                       reduced_costs.data() + reduced_costs.size(),
+                       std::numeric_limits<f_t>::signaling_NaN());
+          mip::problem_t<i_t, f_t> full_problem(op_problem);
+          mip::solution_t<i_t, f_t> full_sol(full_problem);
+          full_sol.copy_new_assignment(
+            cuopt::host_copy(primal_solution, op_problem.get_handle_ptr()->get_stream()));
+          full_sol.compute_feasibility();
+          if (!full_sol.get_feasible()) {
+            CUOPT_LOG_WARN("The solution is not feasible after post solve");
+          }
+
+          auto full_stats = sol.get_stats();
+          // add third party presolve time to cuopt presolve time
+          full_stats.presolve_time = cuopt_presolve_time + presolve_time;
+
+          // FIXME:: reduced_solution.get_stats() is not correct, we need to compute the stats for
+          // the full problem
+          full_sol.post_process_completed = true;  // hack
+          sol                             = full_sol.get_solution(true, full_stats, false);
+        }
+      }
+
+      // Use the early heuristic OG-space incumbent if it is better than what the solver-space
+      // pipeline returned (or if the pipeline returned no feasible solution at all).
+      if (!early_best_user_assignment.empty()) {
+        bool sol_has_incumbent =
+          sol.get_termination_status() == mip_termination_status_t::FeasibleFound ||
+          sol.get_termination_status() == mip_termination_status_t::Optimal;
+        bool is_maximization = problem.presolve_data.objective_scaling_factor < 0;
+        bool early_heuristic_is_better =
+          !sol_has_incumbent || (is_maximization ? early_best_user_obj > sol.get_objective_value()
+                                                 : early_best_user_obj < sol.get_objective_value());
+        if (early_heuristic_is_better) {
+          mip::problem_t<i_t, f_t> full_problem(op_problem);
+          mip::solution_t<i_t, f_t> fallback_sol(full_problem);
+          fallback_sol.copy_new_assignment(early_best_user_assignment);
+          fallback_sol.compute_feasibility();
+          if (fallback_sol.get_feasible()) {
+            auto stats                          = sol.get_stats();
+            stats.presolve_time                 = cuopt_presolve_time + presolve_time;
+            fallback_sol.post_process_completed = true;
+            sol                                 = fallback_sol.get_solution(true, stats, false);
+            CUOPT_LOG_DEBUG("Using early heuristic incumbent (objective %g)", early_best_user_obj);
+          }
+        }
+      }
+    }  // !solved_exclusively
 
     // Strip auxiliary binary variables that were injected by SC reformulation.
     // The caller only knows about the original n_orig_before_sc variables.

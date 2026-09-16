@@ -9,12 +9,17 @@
 
 #include <mip_heuristics/mip_constants.hpp>
 #include <mip_heuristics/structural/arc_flow.cuh>
+#include <mip_heuristics/structural/markshare.cuh>
 #include <mip_heuristics/utils.cuh>
 
 #include <utilities/macros.cuh>
 
 #include <omp.h>
 
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <thread>
 #include <vector>
 
 namespace cuopt::mathematical_optimization::mip {
@@ -39,6 +44,8 @@ template <typename i_t, typename f_t, typename model_t>
 static std::unique_ptr<structural_heuristic_t<i_t, f_t>> make_structural_heuristic(
   const model_t& model, const typename mip_solver_settings_t<i_t, f_t>::tolerances_t& tolerances)
 {
+  auto markshare = std::make_unique<markshare_t<i_t, f_t>>();
+  if (markshare->recognize(model, tolerances)) { return markshare; }
   auto heuristic = std::make_unique<arc_flow_t<i_t, f_t>>();
   if (!heuristic->recognize(model, tolerances)) { return nullptr; }
   return heuristic;
@@ -106,6 +113,43 @@ void early_structural_t<i_t, f_t>::stop()
   task_launched_ = false;
 
   CUOPT_LOG_DEBUG("[Early Structural] Stopped, solution_found=%d", (int)this->solution_found_);
+}
+
+template <typename i_t, typename f_t>
+void early_structural_t<i_t, f_t>::run_exclusive(f_t time_limit)
+{
+  cuopt_assert(active_ != nullptr, "run_exclusive without a recognized structure");
+
+  preemption_flag_.store(false);
+  this->start_time_ = std::chrono::steady_clock::now();
+
+  // The budget can only reach the heuristic through the preemption flag its solve() already
+  // takes, so a sibling task flips it when the clock runs out.
+  std::atomic<bool> finished{false};
+  if (std::isfinite(time_limit)) {
+#pragma omp task default(shared) priority(CUOPT_DEFAULT_TASK_PRIORITY)
+    {
+      const auto deadline =
+        this->start_time_ + std::chrono::duration<double>(std::max(f_t{0}, time_limit));
+      while (!finished.load(std::memory_order_relaxed)) {
+        if (std::chrono::steady_clock::now() >= deadline) {
+          preemption_flag_.store(true);
+          break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      }
+    }
+  }
+
+  // Inline on the calling thread: it is the master of the solver's parallel region, so the
+  // heuristic's own taskloops are picked up by the workers parked at the barrier.
+  run();
+  finished.store(true, std::memory_order_relaxed);
+#pragma omp taskwait
+
+  CUOPT_LOG_DEBUG("[Early Structural] %s ran exclusively, solution_found=%d",
+                  active_->name(),
+                  (int)this->solution_found_);
 }
 
 template <typename i_t, typename f_t>
