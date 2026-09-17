@@ -10,8 +10,9 @@
 #include <linear_algebra/sparse_matrix.hpp>
 #include <mip_heuristics/mip_constants.hpp>
 #include <mip_heuristics/utils.cuh>
-#include <utilities/copy_helpers.hpp>
+#include <pdlp/translate.hpp>
 #include <utilities/logger.hpp>
+#include <utilities/macros.cuh>
 #include <utilities/scope_guard.hpp>
 
 #include <omp.h>
@@ -304,29 +305,29 @@ bool markshare_t<i_t, f_t>::recognize(
   if (op_problem.get_nnz() > n_constraints * n_variables) { return false; }
   if (op_problem.get_n_integers() <= 0) { return false; }
   if ((i_t)op_problem.get_variable_upper_bounds().size() != n_variables) { return false; }
-
-  auto stream = op_problem.get_handle_ptr()->get_stream();
-
-  host_problem_t h;
-  h.n_variables   = n_variables;
-  h.n_constraints = n_constraints;
-  h.csr_values    = cuopt::host_copy(op_problem.get_constraint_matrix_values(), stream);
-  h.csr_cols      = cuopt::host_copy(op_problem.get_constraint_matrix_indices(), stream);
-  h.csr_offsets   = cuopt::host_copy(op_problem.get_constraint_matrix_offsets(), stream);
-  h.row_lb        = cuopt::host_copy(op_problem.get_constraint_lower_bounds(), stream);
-  h.row_ub        = cuopt::host_copy(op_problem.get_constraint_upper_bounds(), stream);
-  h.obj           = cuopt::host_copy(op_problem.get_objective_coefficients(), stream);
-  h.var_lb.assign(n_variables, f_t{0});
-  if (!op_problem.get_variable_lower_bounds().is_empty()) {
-    h.var_lb = cuopt::host_copy(op_problem.get_variable_lower_bounds(), stream);
+  if (!op_problem.get_variable_lower_bounds().is_empty() &&
+      (i_t)op_problem.get_variable_lower_bounds().size() != n_variables) {
+    return false;
   }
-  h.var_ub    = cuopt::host_copy(op_problem.get_variable_upper_bounds(), stream);
-  h.var_types = cuopt::host_copy(op_problem.get_variable_types(), stream);
+  // The conversion maps every non-continuous type onto INTEGER, so a semi-continuous column would
+  // reach the search as a plain binary.
+  if (op_problem.has_semi_continuous_variables()) { return false; }
+  // A quadratic constraint makes the conversion expand the model into second order cones.
+  if (op_problem.has_quadratic_objective() || op_problem.has_quadratic_constraints()) {
+    return false;
+  }
+
+  auto problem = cuopt_problem_to_user_problem<i_t, f_t>(op_problem.get_handle_ptr(), op_problem);
+  // The variable lower bounds are optional on the model and pass through the conversion as they
+  // are.
+  if (problem.lower.empty()) { problem.lower.assign(n_variables, f_t{0}); }
 
   obj_scale_  = op_problem.get_objective_scaling_factor();
   obj_offset_ = op_problem.get_objective_offset();
+  // The conversion records a maximization in obj_scale and leaves the coefficients alone, while
+  // the classification below reads their signs.
   if (op_problem.get_sense()) {
-    for (auto& coefficient : h.obj) {
+    for (auto& coefficient : problem.objective) {
       coefficient = -coefficient;
     }
     obj_scale_  = -obj_scale_;
@@ -335,23 +336,15 @@ bool markshare_t<i_t, f_t>::recognize(
 
   settings_.integrality_tolerance = tolerances.integrality_tolerance;
 
-  detected_ = recognize_impl(h);
-  if (!detected_) {
-    model_ = model_t{};
-    return false;
-  }
-  h_ = std::move(h);
-  return true;
-}
+  auto discard_model = cuopt::scope_guard([&]() {
+    if (!detected_) { model_ = normalized_model_t{}; }
+  });
 
-template <typename i_t, typename f_t>
-bool markshare_t<i_t, f_t>::recognize_impl(const host_problem_t& h)
-{
-  const i_t m        = h.n_constraints;
-  const i_t num_cols = h.n_variables;
+  const i_t m        = problem.num_rows;
+  const i_t num_cols = problem.num_cols;
 
   const f_t int_tol      = settings_.integrality_tolerance;
-  const double exact_tol = settings_.exactness_tolerance;
+  const double exact_tol = settings_.normalization_tolerance;
   auto to_integer        = [&](double value, coefficient_type& out) -> bool {
     const double rounded = std::round(value);
     if (std::abs(value - rounded) > exact_tol * std::max(1.0, std::abs(value))) { return false; }
@@ -360,28 +353,28 @@ bool markshare_t<i_t, f_t>::recognize_impl(const host_problem_t& h)
     return true;
   };
 
+  // A range row is carried as sense 'E' at its lower bound plus an entry in range_rows.
+  if (problem.num_range_rows != 0) {
+    CUOPT_LOG_DEBUG("markshare: the model has %d range rows", problem.num_range_rows);
+    return false;
+  }
+
   // Every row must be an equality with a small non-negative integer right hand side.
   std::vector<coefficient_type> b(m, 0);
   for (i_t k = 0; k < m; ++k) {
-    if (!std::isfinite(h.row_lb[k]) || !std::isfinite(h.row_ub[k]) || h.row_lb[k] != h.row_ub[k]) {
+    if (problem.row_sense[k] != 'E' || !std::isfinite(problem.rhs[k])) {
       CUOPT_LOG_DEBUG("markshare: row %d is not a finite equality", k);
       return false;
     }
-    if (!to_integer(h.row_ub[k], b[k]) || b[k] < 0) {
+    if (!to_integer(problem.rhs[k], b[k]) || b[k] < 0) {
       CUOPT_LOG_DEBUG("markshare: rhs of row %d is not a small non-negative integer", k);
       return false;
     }
   }
 
-  // Classification is per column, so transpose once. After the shape gate this is at most
-  // 8 x ~100, and it puts the model in the same layout the search reconstructs from.
-  const i_t nz = h.csr_values.size();
-  csr_matrix_t<i_t, f_t> row_major(m, num_cols, nz);
-  row_major.row_start = h.csr_offsets;
-  row_major.j         = h.csr_cols;
-  row_major.x         = h.csr_values;
-  csc_matrix_t<i_t, f_t> column(m, num_cols, nz);
-  row_major.to_compressed_col(column);
+  // Classification is per column, and the conversion already left the model in the compressed
+  // column layout the search reconstructs from.
+  const auto& column = problem.A;
 
   std::vector<i_t> core_col;
   std::vector<i_t> fixed_col;
@@ -395,15 +388,10 @@ bool markshare_t<i_t, f_t>::recognize_impl(const host_problem_t& h)
   std::vector<coefficient_type> entry(m, 0);
 
   for (i_t j = 0; j < num_cols; ++j) {
-    if (h.var_types[j] == var_t::SEMI_CONTINUOUS) {
-      CUOPT_LOG_DEBUG("markshare: column %d is semi-continuous", j);
-      return false;
-    }
-
     // A column pinned at a single value carries no decision. This is what absorbs the second half
     // of the slack pairs that markshare1 and markshare2 spell out with an MPS FX bound.
-    if (h.var_lb[j] == h.var_ub[j]) {
-      const f_t value = h.var_lb[j];
+    if (problem.lower[j] == problem.upper[j]) {
+      const f_t value = problem.lower[j];
       if (!std::isfinite(value)) { return false; }
       if (value != f_t{0}) {
         for (i_t e = column.col_start[j]; e < column.col_start[j + 1]; ++e) {
@@ -411,14 +399,14 @@ bool markshare_t<i_t, f_t>::recognize_impl(const host_problem_t& h)
           if (!to_integer(column.x[e] * value, scaled)) { return false; }
           b[column.i[e]] -= scaled;
         }
-        fixed_cost += h.obj[j] * value;
+        fixed_cost += problem.objective[j] * value;
       }
       fixed_col.push_back(j);
       fixed_val.push_back(value);
       continue;
     }
 
-    if (h.var_types[j] == var_t::CONTINUOUS) {
+    if (problem.var_types[j] == simplex::variable_type_t::CONTINUOUS) {
       // The only continuous column the form allows is a row's slack. An explicitly stored zero is
       // not a constraint role, so count the entries that actually carry one.
       i_t k          = -1;
@@ -434,7 +422,7 @@ bool markshare_t<i_t, f_t>::recognize_impl(const host_problem_t& h)
         CUOPT_LOG_DEBUG("markshare: continuous column %d is not a row singleton", j);
         return false;
       }
-      if (slack_coef != f_t{1} || h.var_lb[j] != f_t{0}) {
+      if (slack_coef != f_t{1} || problem.lower[j] != f_t{0}) {
         CUOPT_LOG_DEBUG("markshare: column %d is not a unit slack at zero", j);
         return false;
       }
@@ -442,7 +430,7 @@ bool markshare_t<i_t, f_t>::recognize_impl(const host_problem_t& h)
         CUOPT_LOG_DEBUG("markshare: row %d has more than one slack", k);
         return false;
       }
-      const f_t cost = h.obj[j];
+      const f_t cost = problem.objective[j];
       if (!(cost > 0)) {
         CUOPT_LOG_DEBUG("markshare: slack of row %d does not carry a positive cost", k);
         return false;
@@ -461,11 +449,11 @@ bool markshare_t<i_t, f_t>::recognize_impl(const host_problem_t& h)
     }
 
     // Everything else must be a binary with no direct objective cost.
-    if (h.var_lb[j] != f_t{0} || h.var_ub[j] != f_t{1}) {
+    if (problem.lower[j] != f_t{0} || problem.upper[j] != f_t{1}) {
       CUOPT_LOG_DEBUG("markshare: integer column %d is not binary", j);
       return false;
     }
-    if (std::abs(h.obj[j]) > int_tol) {
+    if (std::abs(problem.objective[j]) > int_tol) {
       CUOPT_LOG_DEBUG("markshare: binary column %d carries objective cost", j);
       return false;
     }
@@ -488,7 +476,7 @@ bool markshare_t<i_t, f_t>::recognize_impl(const host_problem_t& h)
     if (sum == 0) {
       // No constraint role, so it can simply be written at its lower bound.
       fixed_col.push_back(j);
-      fixed_val.push_back(h.var_lb[j]);
+      fixed_val.push_back(problem.lower[j]);
       continue;
     }
 
@@ -508,7 +496,7 @@ bool markshare_t<i_t, f_t>::recognize_impl(const host_problem_t& h)
     }
     // The slack has to be able to absorb the whole right hand side, otherwise a level is not
     // reachable and the enumeration would prove the wrong thing.
-    if (h.var_ub[slack_col[k]] < b[k]) {
+    if (problem.upper[slack_col[k]] < b[k]) {
       CUOPT_LOG_DEBUG("markshare: slack of row %d cannot reach its rhs", k);
       return false;
     }
@@ -539,15 +527,15 @@ bool markshare_t<i_t, f_t>::recognize_impl(const host_problem_t& h)
   model_.weight      = weight;
   model_.n_variables = num_cols;
   model_.core_col.resize(n);
-  model_.a_row.assign(size_t(m) * n, 0);
-  model_.a_col.assign(size_t(n) * m, 0);
+  model_.Arow.assign(size_t(m) * n, 0);
+  model_.Acol.assign(size_t(n) * m, 0);
   for (i_t p = 0; p < n; ++p) {
     const i_t source   = order[p];
     model_.core_col[p] = core_col[source];
     for (i_t k = 0; k < m; ++k) {
-      const coefficient_type value    = gathered[size_t(source) * m + k];
-      model_.a_row[size_t(k) * n + p] = value;
-      model_.a_col[size_t(p) * m + k] = value;
+      const coefficient_type value   = gathered[size_t(source) * m + k];
+      model_.Arow[size_t(k) * n + p] = value;
+      model_.Acol[size_t(p) * m + k] = value;
     }
   }
 
@@ -557,7 +545,7 @@ bool markshare_t<i_t, f_t>::recognize_impl(const host_problem_t& h)
     coefficient_type running = 0;
     coefficient_type divisor = 0;
     for (i_t p = 0; p < n; ++p) {
-      const coefficient_type value = model_.a_row[size_t(k) * n + p];
+      const coefficient_type value = model_.Arow[size_t(k) * n + p];
       running += value;
       model_.prefix_max[size_t(k) * (n + 1) + p + 1] = running;
       divisor                                        = std::gcd(divisor, value);
@@ -598,6 +586,9 @@ bool markshare_t<i_t, f_t>::recognize_impl(const host_problem_t& h)
                               joint_row1_,
                               joint_bytes / (1024.0 * 1024.0))
                     .c_str());
+
+  detected_ = true;
+  problem_  = std::make_unique<simplex::user_problem_t<i_t, f_t>>(std::move(problem));
   return true;
 }
 
@@ -616,7 +607,7 @@ void markshare_t<i_t, f_t>::build_tables()
   std::vector<coefficient_type> coefficients(n);
   for (i_t k = 0; k < m; ++k) {
     for (i_t p = 0; p < n; ++p) {
-      coefficients[p] = model_.a_row[size_t(k) * n + p];
+      coefficients[p] = model_.Arow[size_t(k) * n + p];
     }
     build_row_table(coefficients, model_.b[k], row_tables_[k]);
     if (k != joint_row0_ && k != joint_row1_) { extra_rows_.push_back(k); }
@@ -624,8 +615,8 @@ void markshare_t<i_t, f_t>::build_tables()
 
   std::vector<coefficient_type> c0(n), c1(n);
   for (i_t p = 0; p < n; ++p) {
-    c0[p] = model_.a_row[size_t(joint_row0_) * n + p];
-    c1[p] = model_.a_row[size_t(joint_row1_) * n + p];
+    c0[p] = model_.Arow[size_t(joint_row0_) * n + p];
+    c1[p] = model_.Arow[size_t(joint_row1_) * n + p];
   }
   build_joint_table(c0, c1, model_.b[joint_row0_], model_.b[joint_row1_], joint_);
   joint_stride_ = size_t(model_.b[joint_row1_]) + 1;
@@ -676,7 +667,7 @@ void markshare_t<i_t, f_t>::build_hash()
     std::vector<coefficient_type> sum(m, 0);
     for (i_t t = 0; t < top; ++t) {
       if ((block >> t & 1) != 0) {
-        const coefficient_type* col = &model_.a_col[size_t(low + t) * m];
+        const coefficient_type* col = &model_.Acol[size_t(low + t) * m];
         for (i_t k = 0; k < m; ++k) {
           sum[k] += col[k];
         }
@@ -695,7 +686,7 @@ void markshare_t<i_t, f_t>::build_hash()
       const uint64_t code         = g ^ (g >> 1);
       const uint64_t diff         = code ^ previous;
       const i_t j                 = std::countr_zero(diff);
-      const coefficient_type* col = &model_.a_col[size_t(j) * m];
+      const coefficient_type* col = &model_.Acol[size_t(j) * m];
       if ((code & diff) != 0) {
         for (i_t k = 0; k < m; ++k) {
           sum[k] += col[k];
@@ -780,7 +771,7 @@ typename markshare_t<i_t, f_t>::dfs_result_t markshare_t<i_t, f_t>::run_dfs_from
     }
 
     const i_t p                      = j - 1;
-    const coefficient_type* column   = &model_.a_col[size_t(p) * m];
+    const coefficient_type* column   = &model_.Acol[size_t(p) * m];
     const coefficient_type* previous = &ctx.residual[size_t(j) * m];
     coefficient_type* current        = &ctx.residual[size_t(p) * m];
 
@@ -817,9 +808,9 @@ typename markshare_t<i_t, f_t>::dfs_result_t markshare_t<i_t, f_t>::run_dfs_from
 }
 
 template <typename i_t, typename f_t>
-void markshare_t<i_t, f_t>::collect_seeds(const std::vector<coefficient_type>& target,
-                                          i_t depth,
-                                          std::vector<seed_t>& seeds)
+void markshare_t<i_t, f_t>::collect_subtrees(const std::vector<coefficient_type>& target,
+                                             i_t depth,
+                                             std::vector<subtree_t>& seeds)
 {
   const i_t m          = model_.m;
   const i_t n          = model_.n;
@@ -833,7 +824,7 @@ void markshare_t<i_t, f_t>::collect_seeds(const std::vector<coefficient_type>& t
   i_t j = n;
   for (;;) {
     if (j == stop_depth) {
-      seed_t seed;
+      subtree_t seed;
       seed.value = value;
       seed.residual.assign(residual.begin() + size_t(j) * m, residual.begin() + size_t(j) * m + m);
       seeds.push_back(std::move(seed));
@@ -851,7 +842,7 @@ void markshare_t<i_t, f_t>::collect_seeds(const std::vector<coefficient_type>& t
     ++branch[j];
 
     const i_t p                      = j - 1;
-    const coefficient_type* column   = &model_.a_col[size_t(p) * m];
+    const coefficient_type* column   = &model_.Acol[size_t(p) * m];
     const coefficient_type* previous = &residual[size_t(j) * m];
     coefficient_type* current        = &residual[size_t(p) * m];
 
@@ -899,11 +890,11 @@ typename markshare_t<i_t, f_t>::dfs_result_t markshare_t<i_t, f_t>::run_dfs(
 
   // Split the trailing columns into independent subtrees. Subtree sizes are wildly uneven, so aim
   // for several tasks per thread and let the scheduler balance them.
-  std::vector<seed_t> seeds;
+  std::vector<subtree_t> seeds;
   i_t depth = 1;
   while (depth < n - 1) {
     seeds.clear();
-    collect_seeds(target, depth, seeds);
+    collect_subtrees(target, depth, seeds);
     if (seeds.empty()) { return dfs_result_t::EXHAUSTED; }
     if (i_t(seeds.size()) >= 8 * num_threads_) { break; }
     ++depth;
@@ -1003,6 +994,8 @@ bool markshare_t<i_t, f_t>::reconstruct(std::vector<f_t>& assignment) const
   // Independent verification against the untouched problem. This is the last line of defence
   // against every assumption recognition made, and it is deliberately written in terms of the
   // original data rather than the normalized model.
+  cuopt_assert(problem_ != nullptr, "reconstruct called without a successful recognize");
+  const auto& column = problem_->A;
   std::vector<double> activity(m, 0.0);
   for (i_t j = 0; j < num_cols; ++j) {
     const double x = assignment[j];
@@ -1010,23 +1003,24 @@ bool markshare_t<i_t, f_t>::reconstruct(std::vector<f_t>& assignment) const
       CUOPT_LOG_ERROR("markshare: reconstructed column %d is not finite", j);
       return false;
     }
-    if (x < h_.var_lb[j] - settings_.integrality_tolerance ||
-        x > h_.var_ub[j] + settings_.integrality_tolerance) {
+    if (x < problem_->lower[j] - settings_.integrality_tolerance ||
+        x > problem_->upper[j] + settings_.integrality_tolerance) {
       CUOPT_LOG_ERROR("markshare: reconstructed column %d violates its bounds", j);
       return false;
     }
-    if (h_.var_types[j] != var_t::CONTINUOUS &&
+    if (problem_->var_types[j] != simplex::variable_type_t::CONTINUOUS &&
         !is_integer<double>(x, settings_.integrality_tolerance)) {
       CUOPT_LOG_ERROR("markshare: reconstructed column %d is fractional", j);
       return false;
     }
+    for (i_t e = column.col_start[j]; e < column.col_start[j + 1]; ++e) {
+      activity[column.i[e]] += column.x[e] * x;
+    }
   }
   for (i_t k = 0; k < m; ++k) {
-    for (i_t e = h_.csr_offsets[k]; e < h_.csr_offsets[k + 1]; ++e) {
-      activity[k] += h_.csr_values[e] * assignment[h_.csr_cols[e]];
-    }
-    const double tolerance = 1e-6 * std::max(1.0, std::abs(double(h_.row_ub[k])));
-    if (std::abs(activity[k] - h_.row_ub[k]) > tolerance) {
+    const double rhs       = problem_->rhs[k];
+    const double tolerance = 1e-6 * std::max(1.0, std::abs(rhs));
+    if (std::abs(activity[k] - rhs) > tolerance) {
       CUOPT_LOG_ERROR("markshare: reconstructed row %d is violated", k);
       return false;
     }

@@ -9,32 +9,31 @@
 
 #include <mip_heuristics/structural/early_structural.cuh>
 
+#include <dual_simplex/user_problem.hpp>
 #include <utilities/omp_helpers.hpp>
 #include <utilities/timer.hpp>
 
 #include <atomic>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <vector>
 
 namespace cuopt::mathematical_optimization::mip {
 
 /**
- * @brief Exact special case solver for markshare / market split models.
+ * @brief Solver for markshare / market split models.
  *
  * Recognizes `min w * sum_k s_k  s.t.  sum_j a_kj x_j + s_k = b_k, x binary, s_k >= 0` with small
- * integer data, and solves it by subset sum dynamic programming plus a pruned backward
- * enumeration, ascending through objective levels.
+ * integer data, and solves it by dynamic programming.
  *
- * `solve()` returns true only when the point it produces is proven optimal: the level loop stops
- * at the first level that yields a solution, and it can only get there when every lower level was
- * exhausted without one.
+ * `solve()` returns true when it find and prove an optimal solution.
  */
 template <typename i_t, typename f_t>
 class markshare_t : public structural_heuristic_t<i_t, f_t> {
  public:
   // Normalized coefficients, right hand sides and residuals. All search arithmetic is exact
-  // integer arithmetic in this type; nothing in the proof path touches floating point.
+  // integer arithmetic in this type.
   using coefficient_type = int32_t;
 
   markshare_t() = default;
@@ -55,8 +54,7 @@ class markshare_t : public structural_heuristic_t<i_t, f_t> {
 
  private:
   struct settings_t {
-    // Structural caps. These are the cheap rejects, so keep them tight: they are what makes the
-    // recognizer free on every model that is not a market split.
+    // Structural caps. These are the cheap rejects, so keep them tight.
     i_t max_rows{8};
     i_t max_core_cols{64};
     coefficient_type max_normalized_rhs{1 << 20};
@@ -74,9 +72,7 @@ class markshare_t : public structural_heuristic_t<i_t, f_t> {
     // optimum sits near n/2.
     i_t hash_depth_offset{1};
     i_t hash_max_depth{30};
-    // Pinned budget for the terminal table. Deeper pays off where the search dominates -- 16 GB
-    // takes markshare2 from 45.9 s to 36.8 s -- but the table is allocated unconditionally, so
-    // the ceiling is a fixed promise rather than a guess at what the machine can spare.
+    // Pinned budget for the terminal table.
     size_t hash_bytes{size_t{8} << 30};
     // Above this the search cannot finish even with the terminal. markshare2 has 60 core columns.
     i_t max_search_cols{62};
@@ -84,11 +80,11 @@ class markshare_t : public structural_heuristic_t<i_t, f_t> {
     f_t integrality_tolerance{1e-6};
     // Round trip check on the row normalization. Deliberately far tighter than the integrality
     // tolerance: exact row scaling passes it with room, an inexact model does not.
-    double exactness_tolerance{1e-9};
+    double normalization_tolerance{1e-9};
   };
 
   // The normalized integer model the search runs on. Built by recognize(), read only afterwards.
-  struct model_t {
+  struct normalized_model_t {
     i_t m{0};  // rows
     i_t n{0};  // core binaries kept in the search
 
@@ -97,8 +93,8 @@ class markshare_t : public structural_heuristic_t<i_t, f_t> {
     std::vector<i_t> fixed_col;  // columns pinned at a single value
     std::vector<f_t> fixed_val;  // the value each pinned column takes
 
-    std::vector<coefficient_type> a_row;       // m x n, for the table builders
-    std::vector<coefficient_type> a_col;       // n x m, the DFS hot layout
+    std::vector<coefficient_type> Arow;        // m x n, for the table builders
+    std::vector<coefficient_type> Acol;        // n x m, the DFS hot layout
     std::vector<coefficient_type> b;           // row -> normalized rhs
     std::vector<coefficient_type> prefix_max;  // m x (n + 1), running column sums
     std::vector<coefficient_type> row_gcd;     // row -> gcd of its coefficients
@@ -109,11 +105,8 @@ class markshare_t : public structural_heuristic_t<i_t, f_t> {
   enum class dfs_result_t { FOUND, EXHAUSTED, BUDGET };
 
   /**
-   * @brief Open addressed set of 64 bit fingerprints of partial sum vectors.
+   * @brief Fingerprints of partial sum vectors.
    *
-   * A collision can only report a residual as reachable when it is not, which costs one wasted
-   * verification. It can never report a reachable residual as unreachable, so it cannot prune a
-   * subtree that contains a solution -- the optimality proof stays exact.
    */
   struct fingerprint_set_t {
     std::vector<uint64_t> slot;  // zero marks an empty slot
@@ -147,45 +140,24 @@ class markshare_t : public structural_heuristic_t<i_t, f_t> {
   };
 
   // One partially fixed subtree: the values of the trailing columns plus the residual they leave.
-  struct seed_t {
+  struct subtree_t {
     std::vector<uint8_t> value;
     std::vector<coefficient_type> residual;
   };
 
-  // Host copy of the model recognize() read, kept for the independent verification in
-  // reconstruct().
-  struct host_problem_t {
-    i_t n_variables{0};
-    i_t n_constraints{0};
-    std::vector<f_t> csr_values;
-    std::vector<i_t> csr_cols;
-    std::vector<i_t> csr_offsets;
-    std::vector<f_t> row_lb;
-    std::vector<f_t> row_ub;
-    std::vector<f_t> obj;
-    std::vector<f_t> var_lb;
-    std::vector<f_t> var_ub;
-    std::vector<var_t> var_types;
-  };
-
-  bool recognize_impl(const host_problem_t& h);
   void build_tables();
   i_t choose_hash_depth() const;
   void build_hash();
   uint64_t residual_fingerprint(const coefficient_type* residual) const;
-  // Reentrant: apart from the progress counters it reads only the model and the tables, so tasks
-  // may run it concurrently. `terminal_depth` is the depth at which the hash is consulted instead
-  // of descending further; pass 0 to descend all the way, which is also how a hash hit is turned
-  // into an assignment.
   dfs_result_t run_dfs_from(dfs_context_t& ctx,
                             i_t start_depth,
                             const coefficient_type* start_residual,
                             const std::atomic<bool>* stop,
                             i_t terminal_depth);
   // Enumerates the trailing `depth` columns, keeping the subtrees that survive pruning.
-  void collect_seeds(const std::vector<coefficient_type>& target,
-                     i_t depth,
-                     std::vector<seed_t>& seeds);
+  void collect_subtrees(const std::vector<coefficient_type>& target,
+                        i_t depth,
+                        std::vector<subtree_t>& seeds);
   dfs_result_t run_dfs(const std::vector<coefficient_type>& target);
   bool enumerate_level(i_t level, std::vector<coefficient_type>& slack, i_t index, bool& found);
   // Rebuilds the assignment and verifies it against the untouched host copy of the problem.
@@ -203,9 +175,10 @@ class markshare_t : public structural_heuristic_t<i_t, f_t> {
   void report(char symbol, bool have_incumbent);
   void maybe_report(double now);
 
-  host_problem_t h_;
+  // The host model recognize() read, kept for the independent verification in reconstruct().
+  std::unique_ptr<simplex::user_problem_t<i_t, f_t>> problem_;
   settings_t settings_;
-  model_t model_;
+  normalized_model_t model_;
   bool detected_{false};
 
   f_t obj_scale_{1};
@@ -232,8 +205,6 @@ class markshare_t : public structural_heuristic_t<i_t, f_t> {
   i_t hash_depth_{0};  // zero means the terminal is disabled
 
   const std::atomic<bool>* preemption_{nullptr};
-  // Restarted at the top of solve(). Read concurrently by the seed tasks, which only call the
-  // const elapsed_time().
   timer_t timer_{std::numeric_limits<double>::infinity()};
   bool budget_exhausted_{false};
 
