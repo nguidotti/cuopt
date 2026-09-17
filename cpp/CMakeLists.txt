@@ -1025,12 +1025,25 @@ if (TARGET KaMinPar)
         add_dependencies(cuopt_objs KaMinPar)
 endif ()
 
-# Override the basename-only CUDSS_MT_LIB_FILE_NAME computed above (for cuopt_mathopt, which
-# doesn't consume this macro) with the full CUDSS_MT_LIB_FILE path, so the runtime dlopen pin
-# (sparse_cholesky.cuh) and cudssSetThreadingLayer() resolve the exact same file CMake found,
-# rather than relying on the loader's default search path at runtime to happen to agree with how
-# this was found at configure time.
-set(CUDSS_MT_LIB_FILE_NAME "${CUDSS_MT_LIB_FILE}")
+# Build our own cuDSS threading layer against cuopt_objs's own libgomp instead of cuDSS's
+# prebuilt one, which can resolve a different libgomp instance (#1219). Off by default;
+# enabled for wheel builds (ci/build_wheel_libcuopt.sh).
+option(CUOPT_BUILD_CUSTOM_CUDSS_MTLAYER "Build a cuDSS threading layer linked against our own libgomp" OFF)
+
+if (CUOPT_BUILD_CUSTOM_CUDSS_MTLAYER)
+    add_library(cudss_mtlayer_cuopt SHARED src/barrier/cudss_mtlayer_cuopt.cpp)
+    target_include_directories(cudss_mtlayer_cuopt PRIVATE "${CUDSS_INCLUDE}")
+    target_link_libraries(cudss_mtlayer_cuopt PRIVATE OpenMP::OpenMP_CXX CUDA::cudart)
+    set_target_properties(cudss_mtlayer_cuopt
+            PROPERTIES BUILD_RPATH "\$ORIGIN"
+            INSTALL_RPATH "\$ORIGIN"
+    )
+    set(CUDSS_MT_LIB_FILE_NAME "libcudss_mtlayer_cuopt.so")
+else ()
+    # Full path, not just the basename, so the runtime dlopen pin (sparse_cholesky.cuh) and
+    # cudssSetThreadingLayer() resolve the exact same file CMake found (#1883).
+    set(CUDSS_MT_LIB_FILE_NAME "${CUDSS_MT_LIB_FILE}")
+endif ()
 
 target_compile_definitions(cuopt_objs
         PRIVATE CUDSS_MT_LIB_FILE_NAME="${CUDSS_MT_LIB_FILE_NAME}"
@@ -1243,6 +1256,13 @@ install(FILES "${CUOPT_LINKER_SCRIPT}"
         DESTINATION ${_LIB_DEST}
         COMPONENT dev
 )
+
+if (CUOPT_BUILD_CUSTOM_CUDSS_MTLAYER)
+    install(TARGETS cudss_mtlayer_cuopt
+            DESTINATION ${_LIB_DEST}
+            COMPONENT runtime
+    )
+endif ()
 
 # Headers follow their component. Shared ones go to client-dev, the leaf every
 # other component links.
