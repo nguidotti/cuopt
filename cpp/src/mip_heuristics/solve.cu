@@ -335,7 +335,7 @@ mip_solution_t<i_t, f_t> run_mip_solver(
           early_structural->set_best_objective(
             problem.get_solver_obj_from_user_obj(initial_upper_bound));
         }
-        early_structural->start();
+        early_structural->run_async();
         solver.context.early_structural_ptr = early_structural.get();
       }
     }
