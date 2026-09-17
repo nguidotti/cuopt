@@ -47,6 +47,7 @@ class markshare_t : public structural_heuristic_t<i_t, f_t> {
                  const typename mip_solver_settings_t<i_t, f_t>::tolerances_t& tolerances) override;
 
   bool solve(const typename mip_solver_settings_t<i_t, f_t>::tolerances_t& tolerances,
+             f_t time_limit,
              std::atomic<bool>& preemption,
              std::vector<f_t>& assignment) override;
 

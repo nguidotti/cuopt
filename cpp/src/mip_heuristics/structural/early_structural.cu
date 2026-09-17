@@ -16,10 +16,8 @@
 
 #include <omp.h>
 
-#include <algorithm>
 #include <chrono>
-#include <cmath>
-#include <thread>
+#include <limits>
 #include <vector>
 
 namespace cuopt::mathematical_optimization::mip {
@@ -46,9 +44,9 @@ static std::unique_ptr<structural_heuristic_t<i_t, f_t>> make_structural_heurist
 {
   auto markshare = std::make_unique<markshare_t<i_t, f_t>>();
   if (markshare->recognize(model, tolerances)) { return markshare; }
-  auto heuristic = std::make_unique<arc_flow_t<i_t, f_t>>();
-  if (!heuristic->recognize(model, tolerances)) { return nullptr; }
-  return heuristic;
+  auto arc_flow = std::make_unique<arc_flow_t<i_t, f_t>>();
+  if (arc_flow->recognize(model, tolerances)) { return arc_flow; }
+  return nullptr;
 }
 
 template <typename i_t, typename f_t>
@@ -87,7 +85,7 @@ early_structural_t<i_t, f_t>::~early_structural_t()
 }
 
 template <typename i_t, typename f_t>
-void early_structural_t<i_t, f_t>::start()
+void early_structural_t<i_t, f_t>::run_async()
 {
   if (task_launched_) { return; }
 
@@ -98,8 +96,9 @@ void early_structural_t<i_t, f_t>::start()
   // OpenMP depend clauses require a variable or array element.
   auto* task_token = &preemption_flag_;
   CUOPT_LOG_DEBUG("Launching early structural task for %s", active_->name());
+  // Alongside the solve, the heuristic runs until stop() flips the flag.
 #pragma omp task priority(CUOPT_DEFAULT_TASK_PRIORITY) depend(out : *task_token)
-  this->run();
+  this->run_sync(std::numeric_limits<f_t>::infinity());
 }
 
 template <typename i_t, typename f_t>
@@ -113,43 +112,6 @@ void early_structural_t<i_t, f_t>::stop()
   task_launched_ = false;
 
   CUOPT_LOG_DEBUG("[Early Structural] Stopped, solution_found=%d", (int)this->solution_found_);
-}
-
-template <typename i_t, typename f_t>
-void early_structural_t<i_t, f_t>::run_exclusive(f_t time_limit)
-{
-  cuopt_assert(active_ != nullptr, "run_exclusive without a recognized structure");
-
-  preemption_flag_.store(false);
-  this->start_time_ = std::chrono::steady_clock::now();
-
-  // The budget can only reach the heuristic through the preemption flag its solve() already
-  // takes, so a sibling task flips it when the clock runs out.
-  std::atomic<bool> finished{false};
-  if (std::isfinite(time_limit)) {
-#pragma omp task default(shared) priority(CUOPT_DEFAULT_TASK_PRIORITY)
-    {
-      const auto deadline =
-        this->start_time_ + std::chrono::duration<double>(std::max(f_t{0}, time_limit));
-      while (!finished.load(std::memory_order_relaxed)) {
-        if (std::chrono::steady_clock::now() >= deadline) {
-          preemption_flag_.store(true);
-          break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-      }
-    }
-  }
-
-  // Inline on the calling thread: it is the master of the solver's parallel region, so the
-  // heuristic's own taskloops are picked up by the workers parked at the barrier.
-  run();
-  finished.store(true, std::memory_order_relaxed);
-#pragma omp taskwait
-
-  CUOPT_LOG_DEBUG("[Early Structural] %s ran exclusively, solution_found=%d",
-                  active_->name(),
-                  (int)this->solution_found_);
 }
 
 template <typename i_t, typename f_t>
@@ -171,12 +133,12 @@ bool early_structural_t<i_t, f_t>::preprocessing_is_identity() const
 }
 
 template <typename i_t, typename f_t>
-void early_structural_t<i_t, f_t>::run()
+void early_structural_t<i_t, f_t>::run_sync(f_t time_limit)
 {
   cuopt_assert(active_ != nullptr, "task launched without a recognized structure");
 
   std::vector<f_t> assignment;
-  if (!active_->solve(tolerances_, preemption_flag_, assignment)) {
+  if (!active_->solve(tolerances_, time_limit, preemption_flag_, assignment)) {
     CUOPT_LOG_DEBUG("[Early Structural] %s constructed nothing", active_->name());
     return;
   }
@@ -227,7 +189,8 @@ void root_structural_t<i_t, f_t>::run()
   cuopt_assert(incumbent_callback_ != nullptr, "missing incumbent callback");
 
   std::vector<f_t> assignment;
-  if (!active_->solve(tolerances_, preemption_, assignment)) {
+  // Alongside the root solve, the heuristic runs until the caller flips the preemption flag.
+  if (!active_->solve(tolerances_, std::numeric_limits<f_t>::infinity(), preemption_, assignment)) {
     CUOPT_LOG_DEBUG("[Root Structural] %s constructed nothing", active_->name());
     return;
   }

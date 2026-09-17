@@ -769,6 +769,7 @@ typename markshare_t<i_t, f_t>::dfs_result_t markshare_t<i_t, f_t>::run_dfs_from
       if (preemption_ != nullptr && preemption_->load(std::memory_order_relaxed)) {
         return dfs_result_t::BUDGET;
       }
+      if (timer_.check_time_limit()) { return dfs_result_t::BUDGET; }
       maybe_report(now);
     }
 
@@ -893,13 +894,12 @@ typename markshare_t<i_t, f_t>::dfs_result_t markshare_t<i_t, f_t>::run_dfs(
   // Split the trailing columns into independent subtrees. Subtree sizes are wildly uneven, so aim
   // for several tasks per thread and let the scheduler balance them.
   std::vector<subtree_t> subtrees;
-  i_t depth = 1;
-  while (depth < n - 1) {
+  i_t depth = 0;
+  while (i_t(subtrees.size()) < 8 * num_threads_ && depth < n - 2) {
+    ++depth;
     subtrees.clear();
     collect_subtrees(target, depth, subtrees);
     if (subtrees.empty()) { return dfs_result_t::EXHAUSTED; }
-    if (i_t(subtrees.size()) >= 8 * num_threads_) { break; }
-    ++depth;
   }
   if (subtrees.empty()) { return dfs_result_t::EXHAUSTED; }
 
@@ -1032,6 +1032,7 @@ bool markshare_t<i_t, f_t>::reconstruct(std::vector<f_t>& assignment) const
 template <typename i_t, typename f_t>
 bool markshare_t<i_t, f_t>::solve(
   const typename mip_solver_settings_t<i_t, f_t>::tolerances_t& tolerances,
+  f_t time_limit,
   std::atomic<bool>& preemption,
   std::vector<f_t>& assignment)
 {
@@ -1039,7 +1040,7 @@ bool markshare_t<i_t, f_t>::solve(
 
   settings_.integrality_tolerance = tolerances.integrality_tolerance;
   preemption_                     = &preemption;
-  timer_                          = timer_t(std::numeric_limits<double>::infinity());
+  timer_                          = timer_t(time_limit);
   budget_exhausted_               = false;
   live_nodes_.store(0, std::memory_order_relaxed);
   levels_exhausted_.store(0, std::memory_order_relaxed);
