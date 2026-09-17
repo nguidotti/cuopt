@@ -572,9 +572,11 @@ bool markshare_t<i_t, f_t>::recognize(
 
   obj_offset_fixed_ = fixed_cost;
 
+  num_threads_ = omp_get_num_threads();
   CUOPT_LOG_INFO(
     "Markshare structure detected. Solving via dynamic programming with %d threads...\n",
     num_threads_);
+
   CUOPT_LOG_DEBUG("%s",
                   std::format("{} rows, {} binaries, rhs max {}, "
                               "slack cost {:g}, joint rows ({}, {}), joint table {:.1f} MB",
@@ -890,31 +892,30 @@ typename markshare_t<i_t, f_t>::dfs_result_t markshare_t<i_t, f_t>::run_dfs(
 
   // Split the trailing columns into independent subtrees. Subtree sizes are wildly uneven, so aim
   // for several tasks per thread and let the scheduler balance them.
-  std::vector<subtree_t> seeds;
+  std::vector<subtree_t> subtrees;
   i_t depth = 1;
   while (depth < n - 1) {
-    seeds.clear();
-    collect_subtrees(target, depth, seeds);
-    if (seeds.empty()) { return dfs_result_t::EXHAUSTED; }
-    if (i_t(seeds.size()) >= 8 * num_threads_) { break; }
+    subtrees.clear();
+    collect_subtrees(target, depth, subtrees);
+    if (subtrees.empty()) { return dfs_result_t::EXHAUSTED; }
+    if (i_t(subtrees.size()) >= 8 * num_threads_) { break; }
     ++depth;
   }
-  if (seeds.empty()) { return dfs_result_t::EXHAUSTED; }
+  if (subtrees.empty()) { return dfs_result_t::EXHAUSTED; }
 
   const i_t start_depth = n - depth;
   std::atomic<bool> stop{false};
   std::atomic<bool> found{false};
   std::atomic<bool> budget{false};
-  const size_t seed_count = seeds.size();
 
-#pragma omp taskloop grainsize(1) shared(seeds, stop, found, budget)
-  for (size_t s = 0; s < seed_count; ++s) {
+#pragma omp taskloop grainsize(1) shared(subtrees, stop, found, budget)
+  for (size_t s = 0; s < subtrees.size(); ++s) {
     if (!stop.load(std::memory_order_relaxed)) {
       dfs_context_t ctx;
       ctx.resize(model_.n, model_.m);
-      std::copy(seeds[s].value.begin(), seeds[s].value.end(), ctx.value.begin());
+      std::copy(subtrees[s].value.begin(), subtrees[s].value.end(), ctx.value.begin());
       const dfs_result_t rc =
-        run_dfs_from(ctx, start_depth, seeds[s].residual.data(), &stop, hash_depth_);
+        run_dfs_from(ctx, start_depth, subtrees[s].residual.data(), &stop, hash_depth_);
       if (rc == dfs_result_t::FOUND) {
         bool expected = false;
         // First finder wins; the rest are told to stop.
@@ -1043,9 +1044,6 @@ bool markshare_t<i_t, f_t>::solve(
   live_nodes_.store(0, std::memory_order_relaxed);
   levels_exhausted_.store(0, std::memory_order_relaxed);
   next_report_.store(settings_.report_interval, std::memory_order_relaxed);
-  // We run under `omp masked` inside the solver's parallel region, so the rest of the team is
-  // parked at the barrier and available to pick up tasks.
-  num_threads_ = omp_get_num_threads();
 
   build_tables();
   build_hash();
