@@ -131,7 +131,27 @@ class FakeSol:
         raise AttributeError
 
     def get_pdlp_warm_start_data(self):
-        raise AttributeError
+        import numpy as np
+
+        return SimpleNamespace(
+            current_primal_solution=np.array([0.1, 0.2]),
+            current_dual_solution=np.array([0.3]),
+            initial_primal_average=np.array([0.1, 0.2]),
+            initial_dual_average=np.array([0.3]),
+            current_ATY=np.array([0.3]),
+            sum_primal_solutions=np.array([0.1, 0.2]),
+            sum_dual_solutions=np.array([0.3]),
+            last_restart_duality_gap_primal_solution=np.array([0.1, 0.2]),
+            last_restart_duality_gap_dual_solution=np.array([0.3]),
+            initial_primal_weight=1.0,
+            initial_step_size=1.0,
+            total_pdlp_iterations=1,
+            total_pdhg_iterations=1,
+            last_candidate_kkt_score=0.0,
+            last_restart_kkt_score=0.0,
+            sum_solution_weight=1.0,
+            iterations_since_last_restart=0,
+        )
 
     def get_problem_category(self):
         return SimpleNamespace(name="LP")
@@ -303,9 +323,13 @@ def proxy(proxy_server, monkeypatch):
     monkeypatch.setattr(
         pw, "create_data_model", lambda lp: ([], SimpleNamespace())
     )
-    monkeypatch.setattr(
-        pw, "create_solver", lambda lp, w: ([], SimpleNamespace())
-    )
+
+    def _fake_create_solver(lp, warmstart_data):
+        settings = SimpleNamespace()
+        settings.get_pdlp_warm_start_data = lambda: warmstart_data
+        return [], settings
+
+    monkeypatch.setattr(pw, "create_solver", _fake_create_solver)
 
     def _fake_prepare_vrp(data, warnings, initial_envelopes=None):
         routing.initial_envelopes = initial_envelopes
@@ -475,6 +499,106 @@ def test_submit_status_result_delete(proxy):
     assert req_id in fake.deleted
 
 
+def test_warmstart_get_and_reuse(proxy):
+    import msgpack
+    import numpy as np
+
+    url, fake = proxy
+    req_id = requests.post(
+        url + "/cuopt/request",
+        headers={"CLIENT-VERSION": "custom"},
+        json=_lp(),
+    ).json()["reqId"]
+    warm = requests.get(url + f"/cuopt/solution/{req_id}/warmstart")
+    assert warm.status_code == 200, warm.text
+    assert warm.headers["content-type"].startswith(mime_msgpack)
+    blob = msgpack.loads(warm.content, strict_map_key=False)
+    # HTTP wire shape: msgpack_numpy-encoded float64 arrays
+    primal = blob["current_primal_solution"]
+    assert isinstance(primal, np.ndarray) and primal.dtype == np.float64
+    assert primal.tolist() == [0.1, 0.2]
+    assert blob["initial_primal_weight"] == 1.0
+
+    res = requests.post(
+        url + "/cuopt/request",
+        headers={"CLIENT-VERSION": "custom"},
+        params={"warmstartId": req_id},
+        json=_lp(),
+    )
+    assert res.status_code == 200, res.text
+    ws = fake.submitted[-1]["settings"].get_pdlp_warm_start_data()
+    assert ws is not None
+    assert list(ws.current_primal_solution) == [0.1, 0.2]
+
+
+def test_warmstart_missing_id_is_404(proxy):
+    url, _ = proxy
+    missing = str(uuid.uuid4())
+    res = requests.get(url + f"/cuopt/solution/{missing}/warmstart")
+    assert res.status_code == 404
+    posted = requests.post(
+        url + "/cuopt/request",
+        headers={"CLIENT-VERSION": "custom"},
+        params={"warmstartId": missing},
+        json=_lp(),
+    )
+    assert posted.status_code == 404, posted.text
+    assert missing in posted.json()["error"]
+
+
+def test_warmstart_while_running_returns_req_id(proxy):
+    import msgpack
+
+    url, fake = proxy
+    req_id = requests.post(
+        url + "/cuopt/request",
+        headers={"CLIENT-VERSION": "custom"},
+        json=_lp(),
+    ).json()["reqId"]
+    fake.jobs[req_id] = FakeJobStatus.PROCESSING
+    res = requests.get(url + f"/cuopt/solution/{req_id}/warmstart")
+    assert res.status_code == 200
+    assert msgpack.loads(res.content, strict_map_key=False) == {
+        "reqId": req_id
+    }
+
+
+def test_store_warmstart_skips_deleted_job(proxy):
+    import cuopt_server.proxy_webserver as pw
+
+    url, _ = proxy
+    req_id = requests.post(
+        url + "/cuopt/request",
+        headers={"CLIENT-VERSION": "custom"},
+        json=_lp(),
+    ).json()["reqId"]
+    assert (
+        requests.delete(url + f"/cuopt/solution/{req_id}").status_code == 200
+    )
+    pw._store_warmstart(req_id, {"current_primal_solution": [1.0]})
+    assert pw._cached_warmstart(req_id) is None
+
+
+def test_delete_drops_warmstart_cache(proxy):
+    url, _ = proxy
+    req_id = requests.post(
+        url + "/cuopt/request",
+        headers={"CLIENT-VERSION": "custom"},
+        json=_lp(),
+    ).json()["reqId"]
+    assert (
+        requests.get(url + f"/cuopt/solution/{req_id}/warmstart").status_code
+        == 200
+    )
+    assert (
+        requests.delete(url + f"/cuopt/solution/{req_id}").status_code == 200
+    )
+    assert (
+        requests.get(url + f"/cuopt/solution/{req_id}/warmstart").status_code
+        == 404
+    )
+
+
 def test_delete_preserves_metadata_when_grpc_delete_fails(proxy, monkeypatch):
     import cuopt_server.proxy_webserver as pw
 
@@ -632,7 +756,6 @@ def test_validation_only_skips_submit(proxy):
         ({"cache": True}, "cache"),
         ({"reqId": str(uuid.uuid4())}, "reqId"),
         ({"initialId": str(uuid.uuid4())}, "initialId"),
-        ({"warmstartId": str(uuid.uuid4())}, "warmstartId"),
         ({"incumbent_set_solutions": True}, "incumbent_set_solutions"),
     ],
 )
@@ -735,15 +858,9 @@ def test_vrp_solution_after_sidecar_lost(proxy):
     assert "vehicle_data" in sol.json()["response"]["solver_response"]
 
 
-def test_post_solution_and_warmstart_and_sync_are_501(proxy):
+def test_post_solution_and_sync_are_501(proxy):
     url, _ = proxy
     assert requests.post(url + "/cuopt/solution", json={}).status_code == 501
-    assert (
-        requests.get(
-            url + f"/cuopt/solution/{uuid.uuid4()}/warmstart"
-        ).status_code
-        == 501
-    )
     assert requests.post(url + "/cuopt/cuopt", json={}).status_code == 501
     assert requests.delete(url + "/cuopt/request/*").status_code == 501
     assert (

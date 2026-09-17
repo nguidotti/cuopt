@@ -66,9 +66,13 @@ from cuopt_server.utils.http_envelope import make_response
 from cuopt_server.utils.linear_programming.conversion import (
     create_data_model,
     create_solver,
+    extract_pdlpwarmstart_data,
     solution_to_http,
 )
-from cuopt_server.utils.linear_programming.data_definition import LPData
+from cuopt_server.utils.linear_programming.data_definition import (
+    LPData,
+    WarmStartData,
+)
 from cuopt_server.utils.linear_programming.data_transformation import (
     transform_lp_data,
 )
@@ -107,6 +111,7 @@ app = FastAPI(
 _grpc_client = None
 _routing_client = None
 _jobs = {}
+_warmstarts = {}
 _jobs_lock = threading.Lock()
 _incumbent_locks = {}
 _max_request_size = 1024 * 1024 * 1024
@@ -167,6 +172,7 @@ def reset_proxy_state() -> None:
     global _grpc_client, _routing_client
     with _jobs_lock:
         _jobs.clear()
+        _warmstarts.clear()
         _incumbent_locks.clear()
     _grpc_client = None
     _routing_client = None
@@ -185,6 +191,7 @@ def _get_job(job_id):
 def _pop_job(job_id):
     with _jobs_lock:
         _incumbent_locks.pop(job_id, None)
+        _warmstarts.pop(job_id, None)
         return _jobs.pop(job_id, None)
 
 
@@ -203,6 +210,72 @@ def _update_job(job_id, **fields):
         if meta is not None:
             meta.update(fields)
         return meta
+
+
+def _warmstart_dict_from_sol(sol):
+    try:
+        return extract_pdlpwarmstart_data(sol.get_pdlp_warm_start_data())
+    except AttributeError:
+        return None
+
+
+def _store_warmstart(job_id, blob):
+    if not blob:
+        return
+    with _jobs_lock:
+        # Deletion pops the job first; refuse to resurrect a blob after that.
+        if job_id in _jobs:
+            _warmstarts[job_id] = blob
+
+
+def _cached_warmstart(job_id):
+    with _jobs_lock:
+        return _warmstarts.get(job_id)
+
+
+def _load_warmstart_blob(job_id):
+    with _jobs_lock:
+        cached = _warmstarts.get(job_id)
+        if cached is not None:
+            return cached
+        meta = _jobs.get(job_id)
+        if meta is not None and meta.get("validation_only"):
+            return None
+    client = get_grpc_client()
+    status = client.status(job_id)
+    if _is_status(status, "NOT_FOUND"):
+        raise HTTPException(status_code=404, detail=f"id {job_id} not found")
+    if _is_status(status, "QUEUED", "PROCESSING"):
+        return None
+    if _is_status(status, "FAILED", "CANCELLED"):
+        return None
+    names = None if meta is None else meta.get("variable_names")
+    sol = client.result(job_id, variable_names=names)
+    if sol is None:
+        return None
+    blob = _warmstart_dict_from_sol(sol)
+    _store_warmstart(job_id, blob)
+    return blob
+
+
+def _warmstart_for_submit(warmstart_id):
+    _require_uuid(warmstart_id)
+    try:
+        blob = _load_warmstart_blob(warmstart_id)
+    except HTTPException:
+        raise
+    if not blob:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Warmstart data for id '{warmstart_id}' not found",
+        )
+    try:
+        return WarmStartData.parse_obj(blob)
+    except Exception as e:
+        raise HTTPException(
+            status_code=422,
+            detail="unable to validate warmstart data, %s" % str(e),
+        )
 
 
 @app.exception_handler(Exception)
@@ -308,7 +381,7 @@ def _looks_like_routing(data):
     return bool((_ROUTING_KEYS - {"solver_config"}) & set(data.keys()))
 
 
-def _prepare_lp(data, warnings):
+def _prepare_lp(data, warnings, warmstart_data=None):
     if isinstance(data, list):
         _not_implemented("Batch LP (a JSON list of LP problems)")
     try:
@@ -329,7 +402,7 @@ def _prepare_lp(data, warnings):
         )
     dm_warnings, data_model = create_data_model(lp_data)
     warnings.extend(dm_warnings)
-    sw_warnings, solver_settings = create_solver(lp_data, None)
+    sw_warnings, solver_settings = create_solver(lp_data, warmstart_data)
     warnings.extend(sw_warnings)
     return lp_data, data_model, solver_settings
 
@@ -472,6 +545,7 @@ def _deserialize_convert_submit(
     solver_logs,
     accept,
     result_file,
+    warmstart_id,
     initial_ids,
 ):
     """CPU + blocking gRPC work for POST /cuopt/request (run off the event loop)."""
@@ -533,7 +607,10 @@ def _deserialize_convert_submit(
         return job_id
     if initial_ids:
         _not_implemented("Query parameter initialId")
-    lp_data, data_model, solver_settings = _prepare_lp(data, warnings)
+    pdlp = None
+    if warmstart_id:
+        pdlp = _warmstart_for_submit(warmstart_id)
+    lp_data, data_model, solver_settings = _prepare_lp(data, warnings, pdlp)
     variable_names = lp_data.variable_names
     if validation_only:
         job_id = str(uuid.uuid4())
@@ -832,7 +909,22 @@ def deleterequest(
     include_in_schema=False,
 )
 def getwarmstart(id: str):
-    _not_implemented("GET /cuopt/solution/{id}/warmstart")
+    try:
+        _require_uuid(id)
+        meta = _get_job(id)
+        if meta is not None and meta.get("validation_only"):
+            return encode({"reqId": id}, mime_msgpack)
+        blob = _load_warmstart_blob(id)
+        if not blob:
+            return encode({"reqId": id}, mime_msgpack)
+        return Response(
+            content=encode_bytes(blob, mime_msgpack),
+            media_type=mime_msgpack,
+        )
+    except HTTPException as e:
+        return encode(http_exception_handler(e), mime_msgpack)
+    except Exception as e:
+        return encode(exception_handler(e), mime_msgpack)
 
 
 @app.get(
@@ -885,6 +977,7 @@ def getsolution(
                 total_solve_time=solve_time,
             )
         else:
+            _store_warmstart(id, _warmstart_dict_from_sol(sol))
             inner = solution_to_http(sol, include_warmstart=False)
             try:
                 notes.append(sol.get_termination_reason())
@@ -1025,8 +1118,6 @@ async def postrequest(
             _not_implemented("Query parameter cache")
         if reqId:
             _not_implemented("Query parameter reqId (cached-body solve)")
-        if warmstartId:
-            _not_implemented("Query parameter warmstartId")
         if incumbent_set_solutions:
             _not_implemented("Query parameter incumbent_set_solutions")
 
@@ -1082,6 +1173,7 @@ async def postrequest(
             solver_logs,
             accept,
             result_file,
+            warmstartId,
             initialId,
         )
         return encode({"reqId": job_id}, accept)
