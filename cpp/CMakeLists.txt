@@ -1025,6 +1025,13 @@ if (TARGET KaMinPar)
         add_dependencies(cuopt_objs KaMinPar)
 endif ()
 
+# Override the basename-only CUDSS_MT_LIB_FILE_NAME computed above (for cuopt_mathopt, which
+# doesn't consume this macro) with the full CUDSS_MT_LIB_FILE path, so the runtime dlopen pin
+# (sparse_cholesky.cuh) and cudssSetThreadingLayer() resolve the exact same file CMake found,
+# rather than relying on the loader's default search path at runtime to happen to agree with how
+# this was found at configure time.
+set(CUDSS_MT_LIB_FILE_NAME "${CUDSS_MT_LIB_FILE}")
+
 target_compile_definitions(cuopt_objs
         PRIVATE CUDSS_MT_LIB_FILE_NAME="${CUDSS_MT_LIB_FILE_NAME}"
         PUBLIC
