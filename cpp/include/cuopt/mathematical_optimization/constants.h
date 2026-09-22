@@ -155,6 +155,9 @@
 /* @brief Block bounded-variable-elimination step of cuOpt's internal MIP presolve */
 #define CUOPT_MIP_HYPER_BLOCK_BVE "mip_hyper_block_bve"
 
+/* @brief Tie a group capacity row to the group's activation variable during presolve */
+#define CUOPT_MIP_HYPER_ACTIVATED_CAPACITY "mip_hyper_activated_capacity"
+
 /* @brief QCQP (barrier) scaling hyper-parameters */
 #define CUOPT_QCQP_HYPER_RUIZ_EQUILIBRATION "qcqp_hyper_ruiz_equilibration"
 

@@ -176,6 +176,14 @@ class mip_solver_settings_t {
    */
   bool block_bve{true};
   /**
+   * @brief Strengthen a group capacity row against the group's activation variable.
+   *
+   * Where a row caps how many members of a group may be selected and every member is linked to the
+   * same activation binary by a variable-upper-bound row, rewrites the cap as a multiple of that
+   * activation, so a fractionally open group is not handed the full capacity allowance.
+   */
+  bool activated_capacity{false};
+  /**
    * @brief Determinism mode for MIP solver.
    *
    * Controls the determinism behavior of the MIP solver:
