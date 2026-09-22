@@ -135,6 +135,9 @@ class mip_solver_settings_t {
   i_t clique_cuts               = -1;
   i_t zero_half_cuts            = -1;
   i_t implied_bound_cuts        = -1;
+  // Aggregate an enabler row through its variable-upper-bound gates, counting each group once.
+  // 0 = disable, >0 = enable. Off by default while the separator is a prototype.
+  i_t group_cover_cuts           = 0;
   i_t strong_chvatal_gomory_cuts = -1;
   i_t reduced_cost_strengthening = -1;
   i_t objective_step             = 1;  // 0 = disable objective step tightening, 1 = enable

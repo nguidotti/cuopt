@@ -3232,6 +3232,191 @@ void cut_generation_t<i_t, f_t>::generate_implied_bound_cuts(
   }
 }
 
+// A group cover cut aggregates an enabler row through the gates behind it. Where the model carries
+//
+//     y <= sum_{j in S} x_j        (enabler)      and       x_j <= z_{g(j)}   for every j in S,
+//
+// a binary y that is one forces some x_j to one, which forces its own group activation to one, so
+//
+//     y <= sum_{g in D} z_g,       D = the distinct groups covering S.
+//
+// Counting each group once is where the strength is: the enabler alone lets y reach one against a
+// whole group held at 1/|S|, while the cut holds y down to that group's own activation. Valid for
+// integral y and x only.
+template <typename i_t, typename f_t>
+void cut_generation_t<i_t, f_t>::build_group_cover_candidates(
+  const simplex_solver_settings_t<i_t, f_t>& settings)
+{
+  group_cover_built_ = true;
+
+  const i_t num_rows = user_problem_.num_rows;
+  const i_t num_cols = user_problem_.num_cols;
+  if (num_rows <= 0 || num_cols <= 0) { return; }
+  if (user_problem_.var_types.size() != (size_t)num_cols ||
+      user_problem_.row_sense.size() != (size_t)num_rows ||
+      user_problem_.rhs.size() != (size_t)num_rows) {
+    return;
+  }
+
+  csr_matrix_t<i_t, f_t> Arow(num_rows, num_cols, user_problem_.A.col_start[num_cols]);
+  user_problem_.A.to_compressed_row(Arow);
+
+  auto is_binary = [&](i_t col) {
+    return user_problem_.var_types[col] != variable_type_t::CONTINUOUS &&
+           user_problem_.lower[col] == 0.0 && user_problem_.upper[col] == 1.0;
+  };
+  // Row sense in <= orientation: +1 when the row reads a.x <= rhs, -1 when a.x >= rhs, 0 otherwise.
+  auto direction_of = [&](i_t row) {
+    if (user_problem_.row_sense[row] == 'L') { return 1; }
+    if (user_problem_.row_sense[row] == 'G') { return -1; }
+    return 0;
+  };
+  const bool has_ranges = user_problem_.num_range_rows > 0;
+  std::vector<char> is_range(has_ranges ? num_rows : 0, 0);
+  for (i_t k = 0; k < user_problem_.num_range_rows; ++k) {
+    is_range[user_problem_.range_rows[k]] = 1;
+  }
+
+  // Pass one: the gates, as (selection, activation) pairs.
+  std::vector<std::pair<i_t, i_t>> gates;
+  for (i_t row = 0; row < num_rows; ++row) {
+    if (has_ranges && is_range[row]) { continue; }
+    const i_t direction = direction_of(row);
+    if (direction == 0) { continue; }
+    if (Arow.row_length(row) != 2) { continue; }
+    if (direction * user_problem_.rhs[row] != 0.0) { continue; }
+
+    i_t gated = -1, activation = -1;
+    for (i_t p = Arow.row_start[row]; p < Arow.row_start[row + 1]; ++p) {
+      const i_t col = Arow.j[p];
+      if (!is_binary(col)) {
+        gated = activation = -1;
+        break;
+      }
+      const f_t v = direction * Arow.x[p];
+      if (v == 1.0) {
+        gated = col;
+      } else if (v == -1.0) {
+        activation = col;
+      }
+    }
+    if (gated >= 0 && activation >= 0) { gates.emplace_back(gated, activation); }
+  }
+  if (gates.empty()) { return; }
+  std::sort(gates.begin(), gates.end());
+  gates.erase(std::unique(gates.begin(), gates.end()), gates.end());
+
+  auto gates_of = [&](i_t col) {
+    const auto lo =
+      std::lower_bound(gates.begin(), gates.end(), col, [](const std::pair<i_t, i_t>& g, i_t c) {
+        return g.first < c;
+      });
+    const auto hi = std::upper_bound(
+      lo, gates.end(), col, [](i_t c, const std::pair<i_t, i_t>& g) { return c < g.first; });
+    return std::make_pair(lo, hi);
+  };
+
+  // Pass two: the enabler rows, one +1 head against a tail of -1 selections.
+  std::vector<i_t> groups;
+  std::vector<std::pair<i_t, std::vector<i_t>>> candidates;
+  for (i_t row = 0; row < num_rows; ++row) {
+    if (has_ranges && is_range[row]) { continue; }
+    const i_t direction = direction_of(row);
+    if (direction == 0) { continue; }
+    const i_t len = Arow.row_length(row);
+    if (len < 3) { continue; }
+    if (direction * user_problem_.rhs[row] != 0.0) { continue; }
+
+    i_t head    = -1;
+    bool usable = true;
+    groups.clear();
+    for (i_t p = Arow.row_start[row]; p < Arow.row_start[row + 1] && usable; ++p) {
+      const i_t col = Arow.j[p];
+      const f_t v   = direction * Arow.x[p];
+      if (!is_binary(col)) {
+        usable = false;
+      } else if (v == 1.0) {
+        usable = head < 0;
+        head   = col;
+      } else if (v == -1.0) {
+        auto [lo, hi] = gates_of(col);
+        // A tail member with no gate leaves nothing to aggregate through; keep the candidate by
+        // standing in the selection itself, which is what the enabler already bounds the head by.
+        if (lo == hi) {
+          groups.push_back(col);
+        } else {
+          for (auto it = lo; it != hi; ++it) {
+            groups.push_back(it->second);
+          }
+        }
+      } else {
+        usable = false;
+      }
+    }
+    if (!usable || head < 0 || groups.empty()) { continue; }
+
+    std::sort(groups.begin(), groups.end());
+    groups.erase(std::unique(groups.begin(), groups.end()), groups.end());
+    // Nothing was merged, so the cut is the sum of the gates the LP already has.
+    if (groups.size() >= (size_t)(len - 1)) { continue; }
+    if (std::binary_search(groups.begin(), groups.end(), head)) { continue; }
+
+    candidates.emplace_back(head, groups);
+  }
+  if (candidates.empty()) { return; }
+
+  // Two enabler rows over the same group set give the same cut; keep one.
+  std::sort(candidates.begin(), candidates.end());
+  candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+
+  group_cover_heads_.reserve(candidates.size());
+  group_cover_offsets_.reserve(candidates.size() + 1);
+  group_cover_offsets_.push_back(0);
+  for (const auto& [head, group_set] : candidates) {
+    group_cover_heads_.push_back(head);
+    group_cover_groups_.insert(group_cover_groups_.end(), group_set.begin(), group_set.end());
+    group_cover_offsets_.push_back(group_cover_groups_.size());
+  }
+
+  settings.log.print_format(
+    "Group cover: {} candidate cuts over {} gates\n", group_cover_heads_.size(), gates.size());
+}
+
+template <typename i_t, typename f_t>
+void cut_generation_t<i_t, f_t>::generate_group_cover_cuts(
+  const simplex_solver_settings_t<i_t, f_t>& settings,
+  const std::vector<f_t>& xstar,
+  f_t start_time)
+{
+  if (!group_cover_built_) { build_group_cover_candidates(settings); }
+  if (group_cover_heads_.empty()) { return; }
+
+  const f_t tol = 1e-4;
+  i_t num_cuts  = 0;
+  const i_t n   = group_cover_heads_.size();
+  for (i_t k = 0; k < n; ++k) {
+    if ((k & 0xFF) == 0 && toc(start_time) >= settings.time_limit) { return; }
+    const i_t head = group_cover_heads_[k];
+    f_t activity   = xstar[head];
+    for (i_t p = group_cover_offsets_[k]; p < group_cover_offsets_[k + 1]; ++p) {
+      activity -= xstar[group_cover_groups_[p]];
+    }
+    if (activity <= tol) { continue; }
+
+    // add_cut expects cut'x >= rhs, so the cut head - sum_g z_g <= 0 is emitted negated.
+    inequality_t<i_t, f_t> cut;
+    cut.push_back(head, -1.0);
+    for (i_t p = group_cover_offsets_[k]; p < group_cover_offsets_[k + 1]; ++p) {
+      cut.push_back(group_cover_groups_[p], 1.0);
+    }
+    cut.rhs = 0.0;
+    cut_pool_.add_cut(cut_type_t::GROUP_COVER, cut);
+    num_cuts++;
+  }
+
+  if (num_cuts > 0) { settings.log.debug("Generated %d group cover cuts\n", num_cuts); }
+}
+
 namespace {
 
 // Total probing-edge budget from the byte cap and the remaining work headroom
@@ -3603,6 +3788,17 @@ bool cut_generation_t<i_t, f_t>::generate_cuts(const lp_problem_t<i_t, f_t>& lp,
     f_t cut_generation_time = toc(cut_start_time);
     if (cut_generation_time > 1.0) {
       settings.log.debug("Implied bounds cut generation time %.2f seconds\n", cut_generation_time);
+    }
+  }
+
+  // Generate group cover cuts
+  if (settings.group_cover_cuts != 0) {
+    if (toc(start_time) >= settings.time_limit) { return true; }
+    f_t cut_start_time = tic();
+    generate_group_cover_cuts(settings, xstar, start_time);
+    f_t cut_generation_time = toc(cut_start_time);
+    if (cut_generation_time > 1.0) {
+      settings.log.debug("Group cover cut generation time %.2f seconds\n", cut_generation_time);
     }
   }
 

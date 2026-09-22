@@ -80,6 +80,7 @@
 #define CUOPT_MIP_CLIQUE_CUTS                       "mip_clique_cuts"
 #define CUOPT_MIP_ZERO_HALF_CUTS                    "mip_zero_half_cuts"
 #define CUOPT_MIP_STRONG_CHVATAL_GOMORY_CUTS        "mip_strong_chvatal_gomory_cuts"
+#define CUOPT_MIP_GROUP_COVER_CUTS                  "mip_group_cover_cuts"
 #define CUOPT_MIP_REDUCED_COST_STRENGTHENING        "mip_reduced_cost_strengthening"
 #define CUOPT_MIP_RINS                              "mip_rins"
 #define CUOPT_MIP_RENS                              "mip_rens"

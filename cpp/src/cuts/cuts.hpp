@@ -45,7 +45,8 @@ enum cut_type_t : int8_t {
   IMPLIED_BOUND          = 5,
   ZERO_HALF              = 6,
   FLOW_COVER             = 7,
-  MAX_CUT_TYPE           = 8
+  GROUP_COVER            = 8,
+  MAX_CUT_TYPE           = 9
 };
 
 template <typename f_t>
@@ -186,7 +187,8 @@ struct cut_info_t {
                                               "Clique        ",
                                               "Implied Bounds",
                                               "Zero-Half     ",
-                                              "Flow Cover    "};
+                                              "Flow Cover    ",
+                                              "Group Cover   "};
   std::array<i_t, MAX_CUT_TYPE> num_cuts   = {0};
 };
 
@@ -861,6 +863,14 @@ class cut_generation_t {
                                    const std::vector<f_t>& xstar,
                                    f_t start_time);
 
+  // Generate group cover cuts from the variable-upper-bound gates behind each enabler row
+  void generate_group_cover_cuts(const simplex::simplex_solver_settings_t<i_t, f_t>& settings,
+                                 const std::vector<f_t>& xstar,
+                                 f_t start_time);
+
+  // Scan the user problem for gate and enabler rows. Called once, on the first cut pass.
+  void build_group_cover_candidates(const simplex::simplex_solver_settings_t<i_t, f_t>& settings);
+
   void prepare_fractional_sub_conflict_graph(
     const simplex::simplex_solver_settings_t<i_t, f_t>& settings,
     const std::vector<f_t>& xstar,
@@ -876,6 +886,13 @@ class cut_generation_t {
   std::shared_ptr<mip::clique_table_t<i_t, f_t>>& clique_table_;
   omp_atomic_t<bool>* signal_extend_{nullptr};
   fractional_conflict_subgraph_t<i_t, f_t> sub_cg_;
+  // One candidate per enabler row whose selections are all gated: the head, and the distinct group
+  // activations behind its tail. Built once from user_problem_, then separated against xstar each
+  // pass. group_cover_groups_ is the flat store the offsets index into.
+  std::vector<i_t> group_cover_heads_;
+  std::vector<i_t> group_cover_offsets_;
+  std::vector<i_t> group_cover_groups_;
+  bool group_cover_built_{false};
 };
 
 template <typename i_t, typename f_t>
