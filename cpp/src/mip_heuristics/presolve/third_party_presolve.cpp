@@ -732,8 +732,7 @@ void set_presolve_methods(
   papilo::Presolve<f_t>& presolver,
   problem_category_t category,
   bool dual_postsolve,
-  std::optional<std::unordered_set<std::string>> const& method_allowlist = std::nullopt,
-  bool activated_capacity                                                = false)
+  std::optional<std::unordered_set<std::string>> const& method_allowlist = std::nullopt)
 {
   using uptr = std::unique_ptr<papilo::PresolveMethod<f_t>>;
 
@@ -747,11 +746,9 @@ void set_presolve_methods(
 
   if (category == problem_category_t::MIP) {
     // cuOpt custom GF2 presolver
-    maybe_add(uptr(new cuopt::mathematical_optimization::mip::GF2Presolve<f_t>()));
-    maybe_add(uptr(new cuopt::mathematical_optimization::mip::BHWCoeffReduce<f_t>()));
-    if (activated_capacity) {
-      maybe_add(uptr(new cuopt::mathematical_optimization::mip::ActivatedCapacity<f_t>()));
-    }
+    maybe_add(uptr(new GF2Presolve<f_t>()));
+    maybe_add(uptr(new BHWCoeffReduce<f_t>()));
+    maybe_add(uptr(new ActivatedCapacity<f_t>()));
   }
   // fast presolvers
   maybe_add(uptr(new papilo::SingletonCols<f_t>()));
@@ -940,8 +937,7 @@ third_party_presolve_status_t third_party_presolve_t<i_t, f_t>::apply_papilo(
   CUOPT_LOG_INFO("\nRunning Papilo presolve (git hash %s)", PAPILO_GITHASH);
   if (category == problem_category_t::MIP) { dual_postsolve = false; }
   papilo::Presolve<f_t> papilo_presolver;
-  set_presolve_methods(
-    papilo_presolver, category, dual_postsolve, reduction_allowlist_, activated_capacity_);
+  set_presolve_methods(papilo_presolver, category, dual_postsolve, reduction_allowlist_);
   set_presolve_options<i_t, f_t>(papilo_presolver,
                                  category,
                                  absolute_tolerance,
@@ -1227,11 +1223,8 @@ third_party_presolve_status_t third_party_presolve_t<i_t, f_t>::apply_to_subprob
                      papilo_problem.getConstraintMatrix().getNnz());
 
   papilo::Presolve<f_t> papilo_presolver;
-  set_presolve_methods(papilo_presolver,
-                       problem_category_t::MIP,
-                       dual_postsolve,
-                       reduction_allowlist_,
-                       activated_capacity_);
+  set_presolve_methods(
+    papilo_presolver, problem_category_t::MIP, dual_postsolve, reduction_allowlist_);
   set_presolve_options<i_t, f_t>(papilo_presolver,
                                  problem_category_t::MIP,
                                  settings.primal_tol,
