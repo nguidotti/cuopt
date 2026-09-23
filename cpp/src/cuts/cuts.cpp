@@ -3232,11 +3232,16 @@ void cut_generation_t<i_t, f_t>::generate_implied_bound_cuts(
   }
 }
 
+// The variable upper bounds x_j <= u_j z linking a member to the indicator that must be on before
+// it can be chosen. Only the binary unit form x_j <= z is recognised here -- both columns binary,
+// coefficients +-1, right-hand side zero -- which is narrower than either separator needs: the
+// implied indicator cut holds for any u_j > 0, and the capacity lifting cut does not need the
+// member to be integral at all. Widening the scan would find more structure than it does today.
 template <typename i_t, typename f_t>
-void cut_generation_t<i_t, f_t>::build_gate_table(const csr_matrix_t<i_t, f_t>& Arow)
+void cut_generation_t<i_t, f_t>::build_vub_table(const csr_matrix_t<i_t, f_t>& Arow)
 {
-  if (gates_built_) { return; }
-  gates_built_ = true;
+  if (vub_built_) { return; }
+  vub_built_ = true;
 
   const i_t num_rows = user_problem_.num_rows;
   const i_t num_cols = user_problem_.num_cols;
@@ -3247,7 +3252,7 @@ void cut_generation_t<i_t, f_t>::build_gate_table(const csr_matrix_t<i_t, f_t>& 
     is_range[user_problem_.range_rows[k]] = 1;
   }
 
-  std::vector<std::pair<i_t, i_t>> gates;
+  std::vector<std::pair<i_t, i_t>> vubs;
   for (i_t row = 0; row < num_rows; ++row) {
     if (has_ranges && is_range[row]) { continue; }
     if (Arow.row_length(row) != 2) { continue; }
@@ -3257,72 +3262,73 @@ void cut_generation_t<i_t, f_t>::build_gate_table(const csr_matrix_t<i_t, f_t>& 
     const i_t direction = sense == 'L' ? 1 : -1;
     if (direction * user_problem_.rhs[row] != 0.0) { continue; }
 
-    i_t gated = -1, activation = -1;
+    i_t member = -1, indicator = -1;
     for (i_t p = Arow.row_start[row]; p < Arow.row_start[row + 1]; ++p) {
       const i_t col = Arow.j[p];
       if (user_problem_.var_types[col] == variable_type_t::CONTINUOUS ||
           user_problem_.lower[col] != 0.0 || user_problem_.upper[col] != 1.0) {
-        gated = activation = -1;
+        member = indicator = -1;
         break;
       }
       const f_t v = direction * Arow.x[p];
       if (v == 1.0) {
-        gated = col;
+        member = col;
       } else if (v == -1.0) {
-        activation = col;
+        indicator = col;
       }
     }
-    if (gated >= 0 && activation >= 0) { gates.emplace_back(gated, activation); }
+    if (member >= 0 && indicator >= 0) { vubs.emplace_back(member, indicator); }
   }
-  if (gates.empty()) { return; }
+  if (vubs.empty()) { return; }
 
-  gate_offsets_.assign(num_cols + 1, 0);
-  for (const auto& [gated, activation] : gates) {
-    ++gate_offsets_[gated + 1];
+  vub_offsets_.assign(num_cols + 1, 0);
+  for (const auto& [member, indicator] : vubs) {
+    ++vub_offsets_[member + 1];
   }
   for (i_t col = 0; col < num_cols; ++col) {
-    gate_offsets_[col + 1] += gate_offsets_[col];
+    vub_offsets_[col + 1] += vub_offsets_[col];
   }
-  gate_activations_.resize(gates.size());
-  std::vector<i_t> cursor(gate_offsets_.begin(), gate_offsets_.end() - 1);
-  for (const auto& [gated, activation] : gates) {
-    gate_activations_[cursor[gated]++] = activation;
+  vub_indicators_.resize(vubs.size());
+  std::vector<i_t> cursor(vub_offsets_.begin(), vub_offsets_.end() - 1);
+  for (const auto& [member, indicator] : vubs) {
+    vub_indicators_[cursor[member]++] = indicator;
   }
 
-  // Sort each column's span and drop duplicate gate rows, compacting in place. The write cursor
-  // trails the read cursor because it only advances on a kept entry.
+  // Sort each column's span and drop rows stating the same bound twice, compacting in place. The
+  // write cursor trails the read cursor because it only advances on a kept entry.
   i_t out = 0;
   for (i_t col = 0; col < num_cols; ++col) {
-    const i_t begin    = gate_offsets_[col];
-    const i_t end      = gate_offsets_[col + 1];
-    gate_offsets_[col] = out;
-    std::sort(gate_activations_.begin() + begin, gate_activations_.begin() + end);
+    const i_t begin   = vub_offsets_[col];
+    const i_t end     = vub_offsets_[col + 1];
+    vub_offsets_[col] = out;
+    std::sort(vub_indicators_.begin() + begin, vub_indicators_.begin() + end);
     for (i_t p = begin; p < end; ++p) {
-      if (p == begin || gate_activations_[p] != gate_activations_[p - 1]) {
-        gate_activations_[out++] = gate_activations_[p];
+      if (p == begin || vub_indicators_[p] != vub_indicators_[p - 1]) {
+        vub_indicators_[out++] = vub_indicators_[p];
       }
     }
   }
-  gate_offsets_[num_cols] = out;
-  gate_activations_.resize(out);
+  vub_offsets_[num_cols] = out;
+  vub_indicators_.resize(out);
 }
 
-// A group cover cut aggregates an enabler row through the gates behind it. Where the model carries
+// An implied indicator cut aggregates an implication row over the indicators of its members. Where
+// the model carries
 //
-//     y <= sum_{j in S} x_j        (enabler)      and       x_j <= z_{g(j)}   for every j in S,
+//     y <= sum_{j in S} x_j      (implication)    and     x_j <= z_{g(j)}   for every j in S,
 //
-// a binary y that is one forces some x_j to one, which forces its own group activation to one, so
+// a binary y that is one forces some single x_j to one, which forces that member's indicator to
+// one, so
 //
-//     y <= sum_{g in D} z_g,       D = the distinct groups covering S.
+//     y <= sum_{g in D} z_g,     D = the distinct indicators over S.
 //
-// Counting each group once is where the strength is: the enabler alone lets y reach one against a
-// whole group held at 1/|S|, while the cut holds y down to that group's own activation. Valid for
-// integral y and x only.
+// Counting each indicator once is where the strength is: chaining the members through their own
+// variable upper bounds gives y <= sum_j z_{g(j)}, which counts one indicator once per member.
 template <typename i_t, typename f_t>
-void cut_generation_t<i_t, f_t>::build_group_cover_candidates(
+void cut_generation_t<i_t, f_t>::build_implied_indicator_candidates(
   const simplex_solver_settings_t<i_t, f_t>& settings)
 {
-  group_cover_built_ = true;
+  implied_indicator_built_ = true;
 
   const i_t num_rows = user_problem_.num_rows;
   const i_t num_cols = user_problem_.num_cols;
@@ -3342,12 +3348,12 @@ void cut_generation_t<i_t, f_t>::build_group_cover_candidates(
     is_range[user_problem_.range_rows[k]] = 1;
   }
 
-  build_gate_table(Arow);
-  if (gate_activations_.empty()) { return; }
+  build_vub_table(Arow);
+  if (vub_indicators_.empty()) { return; }
 
-  // Pass two: the enabler rows, one +1 head against a tail of -1 selections.
-  std::vector<i_t> groups;
-  std::vector<std::pair<i_t, std::vector<i_t>>> candidates;
+  // The implication rows, one +1 head against a tail of -1 members.
+  std::vector<i_t> indicators;
+  implied_indicator_offsets_.push_back(0);
   for (i_t row = 0; row < num_rows; ++row) {
     if (has_ranges && is_range[row]) { continue; }
     const char sense = user_problem_.row_sense[row];
@@ -3360,10 +3366,10 @@ void cut_generation_t<i_t, f_t>::build_group_cover_candidates(
 
     i_t head    = -1;
     bool usable = true;
-    groups.clear();
-    for (i_t p = Arow.row_start[row]; p < Arow.row_start[row + 1] && usable; ++p) {
-      const i_t col = Arow.j[p];
-      const f_t v   = direction * Arow.x[p];
+    indicators.clear();
+    for (i_t k = Arow.row_start[row]; k < Arow.row_start[row + 1] && usable; ++k) {
+      const i_t col = Arow.j[k];
+      const f_t v   = direction * Arow.x[k];
       if (user_problem_.var_types[col] == variable_type_t::CONTINUOUS ||
           user_problem_.lower[col] != 0.0 || user_problem_.upper[col] != 1.0) {
         usable = false;
@@ -3371,101 +3377,96 @@ void cut_generation_t<i_t, f_t>::build_group_cover_candidates(
         usable = head < 0;
         head   = col;
       } else if (v == -1.0) {
-        // A tail member with no gate leaves nothing to aggregate through; keep the candidate by
-        // standing in the selection itself, which is what the enabler already bounds the head by.
-        if (gate_offsets_[col] == gate_offsets_[col + 1]) {
-          groups.push_back(col);
+        // A member with no variable upper bound leaves nothing to aggregate through; keep the
+        // candidate by standing in the member itself, which the implication row already bounds
+        // the head by.
+        if (vub_offsets_[col] == vub_offsets_[col + 1]) {
+          indicators.push_back(col);
         } else {
-          for (i_t p = gate_offsets_[col]; p < gate_offsets_[col + 1]; ++p) {
-            groups.push_back(gate_activations_[p]);
+          for (i_t p = vub_offsets_[col]; p < vub_offsets_[col + 1]; ++p) {
+            indicators.push_back(vub_indicators_[p]);
           }
         }
       } else {
         usable = false;
       }
     }
-    if (!usable || head < 0 || groups.empty()) { continue; }
+    if (!usable || head < 0 || indicators.empty()) { continue; }
 
-    std::sort(groups.begin(), groups.end());
-    groups.erase(std::unique(groups.begin(), groups.end()), groups.end());
-    // Nothing was merged, so the cut is the sum of the gates the LP already has.
-    if (groups.size() >= (size_t)(len - 1)) { continue; }
-    if (std::binary_search(groups.begin(), groups.end(), head)) { continue; }
+    std::sort(indicators.begin(), indicators.end());
+    indicators.erase(std::unique(indicators.begin(), indicators.end()), indicators.end());
+    // Nothing was merged, so the cut is the sum of the variable upper bounds the LP already has.
+    if (indicators.size() >= (size_t)(len - 1)) { continue; }
+    if (std::binary_search(indicators.begin(), indicators.end(), head)) { continue; }
 
-    candidates.emplace_back(head, groups);
+    implied_indicator_heads_.push_back(head);
+    implied_indicator_indicators_.insert(
+      implied_indicator_indicators_.end(), indicators.begin(), indicators.end());
+    implied_indicator_offsets_.push_back(implied_indicator_indicators_.size());
   }
-  if (candidates.empty()) { return; }
+  if (implied_indicator_heads_.empty()) { return; }
 
-  // Two enabler rows over the same group set give the same cut; keep one.
-  std::sort(candidates.begin(), candidates.end());
-  candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
-
-  group_cover_heads_.reserve(candidates.size());
-  group_cover_offsets_.reserve(candidates.size() + 1);
-  group_cover_offsets_.push_back(0);
-  for (const auto& [head, group_set] : candidates) {
-    group_cover_heads_.push_back(head);
-    group_cover_groups_.insert(group_cover_groups_.end(), group_set.begin(), group_set.end());
-    group_cover_offsets_.push_back(group_cover_groups_.size());
-  }
-
-  settings.log.print_format("Group cover: {} candidate cuts over {} gates\n",
-                            group_cover_heads_.size(),
-                            gate_activations_.size());
+  settings.log.print_format("Implied indicator: {} candidate cuts over {} variable upper bounds\n",
+                            implied_indicator_heads_.size(),
+                            vub_indicators_.size());
 }
 
 template <typename i_t, typename f_t>
-void cut_generation_t<i_t, f_t>::generate_group_cover_cuts(
+void cut_generation_t<i_t, f_t>::generate_implied_indicator_cuts(
   const simplex_solver_settings_t<i_t, f_t>& settings,
   const std::vector<f_t>& xstar,
   f_t start_time)
 {
-  if (!group_cover_built_) { build_group_cover_candidates(settings); }
-  if (group_cover_heads_.empty()) { return; }
+  if (!implied_indicator_built_) { build_implied_indicator_candidates(settings); }
+  if (implied_indicator_heads_.empty()) { return; }
 
   const f_t tol = 1e-4;
   i_t num_cuts  = 0;
-  const i_t n   = group_cover_heads_.size();
+  const i_t n   = implied_indicator_heads_.size();
   for (i_t k = 0; k < n; ++k) {
     if ((k & 0xFF) == 0 && toc(start_time) >= settings.time_limit) { return; }
-    const i_t head = group_cover_heads_[k];
+    const i_t head = implied_indicator_heads_[k];
     f_t activity   = xstar[head];
-    for (i_t p = group_cover_offsets_[k]; p < group_cover_offsets_[k + 1]; ++p) {
-      activity -= xstar[group_cover_groups_[p]];
+    for (i_t p = implied_indicator_offsets_[k]; p < implied_indicator_offsets_[k + 1]; ++p) {
+      activity -= xstar[implied_indicator_indicators_[p]];
     }
     if (activity <= tol) { continue; }
 
     // add_cut expects cut'x >= rhs, so the cut head - sum_g z_g <= 0 is emitted negated.
     inequality_t<i_t, f_t> cut;
     cut.push_back(head, -1.0);
-    for (i_t p = group_cover_offsets_[k]; p < group_cover_offsets_[k + 1]; ++p) {
-      cut.push_back(group_cover_groups_[p], 1.0);
+    for (i_t p = implied_indicator_offsets_[k]; p < implied_indicator_offsets_[k + 1]; ++p) {
+      cut.push_back(implied_indicator_indicators_[p], 1.0);
     }
     cut.rhs = 0.0;
-    cut_pool_.add_cut(cut_type_t::GROUP_COVER, cut);
+    cut_pool_.add_cut(cut_type_t::IMPLIED_INDICATOR, cut);
     num_cuts++;
   }
 
-  if (num_cuts > 0) { settings.log.debug("Generated %d group cover cuts\n", num_cuts); }
+  if (num_cuts > 0) { settings.log.debug("Generated %d implied indicator cuts\n", num_cuts); }
 }
 
-// An activated capacity cut ties a group capacity row to the group's activation. Where the model
+// A capacity lifting cut lifts the complemented indicator into a capacity row. Where the model
 // carries
 //
 //     sum_{i in S} x_i - s <= K     (capacity)     and      x_i <= z   for every i in S,
 //
-// z = 0 forces every x_i to zero while the relaxing term stays non-positive, so the row holds at a
-// right-hand side of zero, and z = 1 leaves it unchanged:
+// sequential lifting of zbar = 1 - z into the capacity row asks for the largest coefficient a
+// keeping sum_i x_i - s + a zbar <= K valid. At zbar = 1 the variable upper bounds force every
+// x_i to zero and -s is non-positive, so the left side maxes out at 0 and a may rise to K:
 //
 //     sum_{i in S} x_i - s <= K z.
 //
-// Valid for integral z only. Unlike the enabler rows behind a group cover cut, the capacity row
-// stays in the model; the cut is the strengthened copy of it.
+// K is therefore the maximal lifting coefficient, not a choice. Valid for integral z only. Unlike
+// the implication rows behind an implied indicator cut, the capacity row stays in the model; the
+// cut is the lifted copy of it. The capacity row also bounds the violation, since it already gives
+// sum_i x*_i - s* <= K and hence a violation of at most K(1 - z*): the cut can only bite where the
+// row is near-tight and the indicator is well below one.
 template <typename i_t, typename f_t>
-void cut_generation_t<i_t, f_t>::build_activated_capacity_candidates(
+void cut_generation_t<i_t, f_t>::build_capacity_lifting_candidates(
   const simplex_solver_settings_t<i_t, f_t>& settings)
 {
-  activated_capacity_built_ = true;
+  capacity_lifting_built_ = true;
 
   const i_t num_rows = user_problem_.num_rows;
   const i_t num_cols = user_problem_.num_cols;
@@ -3485,15 +3486,15 @@ void cut_generation_t<i_t, f_t>::build_activated_capacity_candidates(
     is_range[user_problem_.range_rows[k]] = 1;
   }
 
-  build_gate_table(Arow);
-  if (gate_activations_.empty()) { return; }
+  build_vub_table(Arow);
+  if (vub_indicators_.empty()) { return; }
 
-  std::vector<i_t> selections;
+  std::vector<i_t> members;
   std::vector<i_t> support;
   std::vector<i_t> common;
   std::vector<i_t> intersection;
 
-  activated_capacity_offsets_.push_back(0);
+  capacity_lifting_offsets_.push_back(0);
   for (i_t row = 0; row < num_rows; ++row) {
     if (has_ranges && is_range[row]) { continue; }
     const char sense = user_problem_.row_sense[row];
@@ -3505,7 +3506,7 @@ void cut_generation_t<i_t, f_t>::build_activated_capacity_candidates(
     const f_t capacity = direction * user_problem_.rhs[row];
     if (capacity <= 0.0) { continue; }
 
-    selections.clear();
+    members.clear();
     support.clear();
     bool usable = true;
     for (i_t p = Arow.row_start[row]; p < Arow.row_start[row + 1] && usable; ++p) {
@@ -3514,96 +3515,98 @@ void cut_generation_t<i_t, f_t>::build_activated_capacity_candidates(
       support.push_back(col);
       if (user_problem_.var_types[col] != variable_type_t::CONTINUOUS) {
         usable = user_problem_.lower[col] == 0.0 && user_problem_.upper[col] == 1.0 && v == 1.0;
-        if (usable) { selections.push_back(col); }
+        if (usable) { members.push_back(col); }
       } else {
         // A relaxing term: non-positive over the whole box, so it cannot violate the row at z = 0.
         usable = v < 0.0 && user_problem_.lower[col] >= 0.0;
       }
     }
-    if (!usable || selections.size() < 2) { continue; }
-    // At or above its own support size the cap is implied by the gates already, and so is K z.
-    const f_t n_selections = selections.size();
-    if (capacity >= n_selections) { continue; }
+    if (!usable || members.size() < 2) { continue; }
+    // At or above its own support size the cap is implied by the variable upper bounds, and so is
+    // K z, leaving nothing to lift.
+    const f_t n_members = members.size();
+    if (capacity >= n_members) { continue; }
 
-    common.assign(gate_activations_.begin() + gate_offsets_[selections[0]],
-                  gate_activations_.begin() + gate_offsets_[selections[0] + 1]);
-    for (size_t k = 1; k < selections.size() && !common.empty(); ++k) {
-      const i_t col = selections[k];
+    common.assign(vub_indicators_.begin() + vub_offsets_[members[0]],
+                  vub_indicators_.begin() + vub_offsets_[members[0] + 1]);
+    for (size_t k = 1; k < members.size() && !common.empty(); ++k) {
+      const i_t col = members[k];
       intersection.clear();
       std::set_intersection(common.begin(),
                             common.end(),
-                            gate_activations_.begin() + gate_offsets_[col],
-                            gate_activations_.begin() + gate_offsets_[col + 1],
+                            vub_indicators_.begin() + vub_offsets_[col],
+                            vub_indicators_.begin() + vub_offsets_[col + 1],
                             std::back_inserter(intersection));
       common.swap(intersection);
     }
     if (common.empty()) { continue; }
 
     std::sort(support.begin(), support.end());
-    i_t activation = -1;
+    i_t indicator = -1;
     for (i_t z : common) {
       if (std::binary_search(support.begin(), support.end(), z)) { continue; }
-      activation = z;
+      indicator = z;
       break;
     }
-    if (activation < 0) { continue; }
+    if (indicator < 0) { continue; }
 
-    activated_capacity_activations_.push_back(activation);
-    activated_capacity_caps_.push_back(capacity);
+    capacity_lifting_indicators_.push_back(indicator);
+    capacity_lifting_caps_.push_back(capacity);
     for (i_t p = Arow.row_start[row]; p < Arow.row_start[row + 1]; ++p) {
-      activated_capacity_cols_.push_back(Arow.j[p]);
-      activated_capacity_coeffs_.push_back(direction * Arow.x[p]);
+      capacity_lifting_cols_.push_back(Arow.j[p]);
+      capacity_lifting_coeffs_.push_back(direction * Arow.x[p]);
     }
-    activated_capacity_offsets_.push_back(activated_capacity_cols_.size());
+    capacity_lifting_offsets_.push_back(capacity_lifting_cols_.size());
   }
-  if (activated_capacity_activations_.empty()) { return; }
+  if (capacity_lifting_indicators_.empty()) { return; }
 
-  settings.log.print_format("Activated capacity: {} candidate cuts over {} gates\n",
-                            activated_capacity_activations_.size(),
-                            gate_activations_.size());
+  settings.log.print_format("Capacity lifting: {} candidate cuts over {} variable upper bounds\n",
+                            capacity_lifting_indicators_.size(),
+                            vub_indicators_.size());
 }
 
 template <typename i_t, typename f_t>
-void cut_generation_t<i_t, f_t>::generate_activated_capacity_cuts(
+void cut_generation_t<i_t, f_t>::generate_capacity_lifting_cuts(
   const simplex_solver_settings_t<i_t, f_t>& settings,
   const std::vector<f_t>& xstar,
   f_t start_time)
 {
-  if (!activated_capacity_built_) { build_activated_capacity_candidates(settings); }
-  if (activated_capacity_activations_.empty()) { return; }
+  if (!capacity_lifting_built_) { build_capacity_lifting_candidates(settings); }
+  if (capacity_lifting_indicators_.empty()) { return; }
 
-  // The strengthened row carries a coefficient of K against +-1 everywhere else, so it costs the
-  // node LP far more per row than a unit-coefficient cut and is held to a higher bar than
-  // cut_pool_t's global min_cut_distance_ of 1e-4. Measured over the first root passes: the cuts
-  // that carry tsmc-setcover-3 have distance 0.23 upwards, while on tsmc-setcover-2, where the
-  // family buys no bound the group cover cuts do not already have, three quarters sit below 0.14.
+  // The lifted row carries a coefficient of K against +-1 everywhere else, so it costs the node LP
+  // far more per row than a unit-coefficient cut and is held to a higher bar than cut_pool_t's
+  // global min_cut_distance_ of 1e-4. Measured over the first root passes: the cuts that carry
+  // tsmc-setcover-3, where the cap is 3 of 25 members and the rows bind constantly, have distance
+  // 0.23 upwards; on tsmc-setcover-2 the cap is 12 of 25, the rows rarely bind, and three quarters
+  // sit below 0.14 while buying no bound the implied indicator cuts do not already have.
   const f_t min_distance = 0.2;
   i_t num_cuts           = 0;
-  const i_t n            = activated_capacity_activations_.size();
+  const i_t n            = capacity_lifting_indicators_.size();
   for (i_t k = 0; k < n; ++k) {
     if ((k & 0xFF) == 0 && toc(start_time) >= settings.time_limit) { return; }
-    const i_t activation = activated_capacity_activations_[k];
-    const f_t capacity   = activated_capacity_caps_[k];
-    f_t activity         = -capacity * xstar[activation];
-    f_t norm             = capacity * capacity;
-    for (i_t p = activated_capacity_offsets_[k]; p < activated_capacity_offsets_[k + 1]; ++p) {
-      activity += activated_capacity_coeffs_[p] * xstar[activated_capacity_cols_[p]];
-      norm += activated_capacity_coeffs_[p] * activated_capacity_coeffs_[p];
+    const i_t indicator = capacity_lifting_indicators_[k];
+    const f_t capacity  = capacity_lifting_caps_[k];
+    f_t activity        = -capacity * xstar[indicator];
+    f_t norm            = capacity * capacity;
+    for (i_t p = capacity_lifting_offsets_[k]; p < capacity_lifting_offsets_[k + 1]; ++p) {
+      activity += capacity_lifting_coeffs_[p] * xstar[capacity_lifting_cols_[p]];
+      norm += capacity_lifting_coeffs_[p] * capacity_lifting_coeffs_[p];
     }
     if (activity <= min_distance * std::sqrt(norm)) { continue; }
 
     // add_cut expects cut'x >= rhs, so the row sum_p a_p x_p - K z <= 0 is emitted negated.
     inequality_t<i_t, f_t> cut;
-    for (i_t p = activated_capacity_offsets_[k]; p < activated_capacity_offsets_[k + 1]; ++p) {
-      cut.push_back(activated_capacity_cols_[p], -activated_capacity_coeffs_[p]);
+    for (i_t p = capacity_lifting_offsets_[k]; p < capacity_lifting_offsets_[k + 1]; ++p) {
+      cut.push_back(capacity_lifting_cols_[p], -capacity_lifting_coeffs_[p]);
     }
-    cut.push_back(activation, capacity);
+    cut.push_back(indicator, capacity);
     cut.rhs = 0.0;
-    cut_pool_.add_cut(cut_type_t::ACTIVATED_CAPACITY, cut);
+    cut_pool_.add_cut(cut_type_t::CAPACITY_LIFTING, cut);
     num_cuts++;
   }
 
-  if (num_cuts > 0) { settings.log.debug("Generated %d activated capacity cuts\n", num_cuts); }
+  if (num_cuts > 0) { settings.log.debug("Generated %d capacity lifting cuts\n", num_cuts); }
 }
 
 namespace {
@@ -3980,25 +3983,26 @@ bool cut_generation_t<i_t, f_t>::generate_cuts(const lp_problem_t<i_t, f_t>& lp,
     }
   }
 
-  // Generate group cover cuts
-  if (settings.group_cover_cuts != 0) {
+  // Generate implied indicator cuts
+  if (settings.implied_indicator_cuts != 0) {
     if (toc(start_time) >= settings.time_limit) { return true; }
     f_t cut_start_time = tic();
-    generate_group_cover_cuts(settings, xstar, start_time);
+    generate_implied_indicator_cuts(settings, xstar, start_time);
     f_t cut_generation_time = toc(cut_start_time);
     if (cut_generation_time > 1.0) {
-      settings.log.debug("Group cover cut generation time %.2f seconds\n", cut_generation_time);
+      settings.log.debug("Implied indicator cut generation time %.2f seconds\n",
+                         cut_generation_time);
     }
   }
 
-  // Generate activated capacity cuts
-  if (settings.activated_capacity_cuts != 0) {
+  // Generate capacity lifting cuts
+  if (settings.capacity_lifting_cuts != 0) {
     if (toc(start_time) >= settings.time_limit) { return true; }
     f_t cut_start_time = tic();
-    generate_activated_capacity_cuts(settings, xstar, start_time);
+    generate_capacity_lifting_cuts(settings, xstar, start_time);
     f_t cut_generation_time = toc(cut_start_time);
     if (cut_generation_time > 1.0) {
-      settings.log.debug("Activated capacity cut generation time %.2f seconds\n",
+      settings.log.debug("Capacity lifting cut generation time %.2f seconds\n",
                          cut_generation_time);
     }
   }

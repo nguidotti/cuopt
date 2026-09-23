@@ -45,8 +45,8 @@ enum cut_type_t : int8_t {
   IMPLIED_BOUND          = 5,
   ZERO_HALF              = 6,
   FLOW_COVER             = 7,
-  GROUP_COVER            = 8,
-  ACTIVATED_CAPACITY     = 9,
+  IMPLIED_INDICATOR      = 8,
+  CAPACITY_LIFTING       = 9,
   MAX_CUT_TYPE           = 10
 };
 
@@ -189,8 +189,8 @@ struct cut_info_t {
                                               "Implied Bounds",
                                               "Zero-Half     ",
                                               "Flow Cover    ",
-                                              "Group Cover   ",
-                                              "Activated Cap "};
+                                              "Implied Ind.  ",
+                                              "Capacity Lift "};
   std::array<i_t, MAX_CUT_TYPE> num_cuts   = {0};
 };
 
@@ -865,27 +865,27 @@ class cut_generation_t {
                                    const std::vector<f_t>& xstar,
                                    f_t start_time);
 
-  // Generate group cover cuts from the variable-upper-bound gates behind each enabler row
-  void generate_group_cover_cuts(const simplex::simplex_solver_settings_t<i_t, f_t>& settings,
-                                 const std::vector<f_t>& xstar,
-                                 f_t start_time);
+  // Generate implied indicator cuts by aggregating an implication row over its members' indicators
+  void generate_implied_indicator_cuts(const simplex::simplex_solver_settings_t<i_t, f_t>& settings,
+                                       const std::vector<f_t>& xstar,
+                                       f_t start_time);
 
-  // Scan the user problem for gate and enabler rows. Called once, on the first cut pass.
-  void build_group_cover_candidates(const simplex::simplex_solver_settings_t<i_t, f_t>& settings);
-
-  // Generate activated capacity cuts, tying a group capacity row to the group's activation
-  void generate_activated_capacity_cuts(
-    const simplex::simplex_solver_settings_t<i_t, f_t>& settings,
-    const std::vector<f_t>& xstar,
-    f_t start_time);
-
-  // Scan the user problem for gate and capacity rows. Called once, on the first cut pass.
-  void build_activated_capacity_candidates(
+  // Scan the user problem for implication rows. Called once, on the first cut pass.
+  void build_implied_indicator_candidates(
     const simplex::simplex_solver_settings_t<i_t, f_t>& settings);
 
-  // The variable-upper-bound gates x_j <= z, in CSR form over the columns. Shared by both
-  // structural separators and built on whichever of them runs first.
-  void build_gate_table(const csr_matrix_t<i_t, f_t>& Arow);
+  // Generate capacity lifting cuts by lifting the complemented indicator into a capacity row
+  void generate_capacity_lifting_cuts(const simplex::simplex_solver_settings_t<i_t, f_t>& settings,
+                                      const std::vector<f_t>& xstar,
+                                      f_t start_time);
+
+  // Scan the user problem for capacity rows. Called once, on the first cut pass.
+  void build_capacity_lifting_candidates(
+    const simplex::simplex_solver_settings_t<i_t, f_t>& settings);
+
+  // Build the variable-upper-bound relation. Shared by both structural separators and built on
+  // whichever of them runs first.
+  void build_vub_table(const csr_matrix_t<i_t, f_t>& Arow);
 
   void prepare_fractional_sub_conflict_graph(
     const simplex::simplex_solver_settings_t<i_t, f_t>& settings,
@@ -902,26 +902,28 @@ class cut_generation_t {
   std::shared_ptr<mip::clique_table_t<i_t, f_t>>& clique_table_;
   omp_atomic_t<bool>* signal_extend_{nullptr};
   fractional_conflict_subgraph_t<i_t, f_t> sub_cg_;
-  // One candidate per enabler row whose selections are all gated: the head, and the distinct group
-  // activations behind its tail. Built once from user_problem_, then separated against xstar each
-  // pass. group_cover_groups_ is the flat store the offsets index into.
-  std::vector<i_t> group_cover_heads_;
-  std::vector<i_t> group_cover_offsets_;
-  std::vector<i_t> group_cover_groups_;
-  bool group_cover_built_{false};
-  // The activations gating column j are gate_activations_[gate_offsets_[j] .. gate_offsets_[j+1]),
-  // sorted and deduplicated, so both separators can intersect the spans directly.
-  std::vector<i_t> gate_offsets_;
-  std::vector<i_t> gate_activations_;
-  bool gates_built_{false};
-  // One candidate per capacity row whose members share an activation: that activation, the cap K,
-  // and the row itself in <= orientation, so separation needs no second pass over the matrix.
-  std::vector<i_t> activated_capacity_activations_;
-  std::vector<f_t> activated_capacity_caps_;
-  std::vector<i_t> activated_capacity_offsets_;
-  std::vector<i_t> activated_capacity_cols_;
-  std::vector<f_t> activated_capacity_coeffs_;
-  bool activated_capacity_built_{false};
+  // One candidate per implication row whose members are all bounded by an indicator: the head, and
+  // the distinct indicators behind its tail. Built once from user_problem_, then separated against
+  // xstar each pass. implied_indicator_indicators_ is the flat store the offsets index into.
+  std::vector<i_t> implied_indicator_heads_;
+  std::vector<i_t> implied_indicator_offsets_;
+  std::vector<i_t> implied_indicator_indicators_;
+  bool implied_indicator_built_{false};
+  // The variable upper bounds x_j <= z, in CSR form over the columns: the indicators bounding
+  // column j are vub_indicators_[vub_offsets_[j] .. vub_offsets_[j+1]), sorted and deduplicated so
+  // both separators can intersect the spans directly. Only the binary form x_j <= z is recognised,
+  // which is narrower than either cut needs -- see build_vub_table.
+  std::vector<i_t> vub_offsets_;
+  std::vector<i_t> vub_indicators_;
+  bool vub_built_{false};
+  // One candidate per capacity row whose members share an indicator: that indicator, the cap K, and
+  // the row itself in <= orientation, so separation needs no second pass over the matrix.
+  std::vector<i_t> capacity_lifting_indicators_;
+  std::vector<f_t> capacity_lifting_caps_;
+  std::vector<i_t> capacity_lifting_offsets_;
+  std::vector<i_t> capacity_lifting_cols_;
+  std::vector<f_t> capacity_lifting_coeffs_;
+  bool capacity_lifting_built_{false};
 };
 
 template <typename i_t, typename f_t>
