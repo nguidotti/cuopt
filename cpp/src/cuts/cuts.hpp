@@ -46,7 +46,8 @@ enum cut_type_t : int8_t {
   ZERO_HALF              = 6,
   FLOW_COVER             = 7,
   GROUP_COVER            = 8,
-  MAX_CUT_TYPE           = 9
+  ACTIVATED_CAPACITY     = 9,
+  MAX_CUT_TYPE           = 10
 };
 
 template <typename f_t>
@@ -188,7 +189,8 @@ struct cut_info_t {
                                               "Implied Bounds",
                                               "Zero-Half     ",
                                               "Flow Cover    ",
-                                              "Group Cover   "};
+                                              "Group Cover   ",
+                                              "Activated Cap "};
   std::array<i_t, MAX_CUT_TYPE> num_cuts   = {0};
 };
 
@@ -871,6 +873,20 @@ class cut_generation_t {
   // Scan the user problem for gate and enabler rows. Called once, on the first cut pass.
   void build_group_cover_candidates(const simplex::simplex_solver_settings_t<i_t, f_t>& settings);
 
+  // Generate activated capacity cuts, tying a group capacity row to the group's activation
+  void generate_activated_capacity_cuts(
+    const simplex::simplex_solver_settings_t<i_t, f_t>& settings,
+    const std::vector<f_t>& xstar,
+    f_t start_time);
+
+  // Scan the user problem for gate and capacity rows. Called once, on the first cut pass.
+  void build_activated_capacity_candidates(
+    const simplex::simplex_solver_settings_t<i_t, f_t>& settings);
+
+  // The variable-upper-bound gates x_j <= z, in CSR form over the columns. Shared by both
+  // structural separators and built on whichever of them runs first.
+  void build_gate_table(const csr_matrix_t<i_t, f_t>& Arow);
+
   void prepare_fractional_sub_conflict_graph(
     const simplex::simplex_solver_settings_t<i_t, f_t>& settings,
     const std::vector<f_t>& xstar,
@@ -893,6 +909,19 @@ class cut_generation_t {
   std::vector<i_t> group_cover_offsets_;
   std::vector<i_t> group_cover_groups_;
   bool group_cover_built_{false};
+  // The activations gating column j are gate_activations_[gate_offsets_[j] .. gate_offsets_[j+1]),
+  // sorted and deduplicated, so both separators can intersect the spans directly.
+  std::vector<i_t> gate_offsets_;
+  std::vector<i_t> gate_activations_;
+  bool gates_built_{false};
+  // One candidate per capacity row whose members share an activation: that activation, the cap K,
+  // and the row itself in <= orientation, so separation needs no second pass over the matrix.
+  std::vector<i_t> activated_capacity_activations_;
+  std::vector<f_t> activated_capacity_caps_;
+  std::vector<i_t> activated_capacity_offsets_;
+  std::vector<i_t> activated_capacity_cols_;
+  std::vector<f_t> activated_capacity_coeffs_;
+  bool activated_capacity_built_{false};
 };
 
 template <typename i_t, typename f_t>

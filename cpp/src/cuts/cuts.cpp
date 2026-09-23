@@ -3232,6 +3232,81 @@ void cut_generation_t<i_t, f_t>::generate_implied_bound_cuts(
   }
 }
 
+template <typename i_t, typename f_t>
+void cut_generation_t<i_t, f_t>::build_gate_table(const csr_matrix_t<i_t, f_t>& Arow)
+{
+  if (gates_built_) { return; }
+  gates_built_ = true;
+
+  const i_t num_rows = user_problem_.num_rows;
+  const i_t num_cols = user_problem_.num_cols;
+
+  const bool has_ranges = user_problem_.num_range_rows > 0;
+  std::vector<char> is_range(has_ranges ? num_rows : 0, 0);
+  for (i_t k = 0; k < user_problem_.num_range_rows; ++k) {
+    is_range[user_problem_.range_rows[k]] = 1;
+  }
+
+  std::vector<std::pair<i_t, i_t>> gates;
+  for (i_t row = 0; row < num_rows; ++row) {
+    if (has_ranges && is_range[row]) { continue; }
+    if (Arow.row_length(row) != 2) { continue; }
+    const char sense = user_problem_.row_sense[row];
+    if (sense != 'L' && sense != 'G') { continue; }
+    // Row sense in <= orientation: +1 when the row reads a.x <= rhs, -1 when a.x >= rhs.
+    const i_t direction = sense == 'L' ? 1 : -1;
+    if (direction * user_problem_.rhs[row] != 0.0) { continue; }
+
+    i_t gated = -1, activation = -1;
+    for (i_t p = Arow.row_start[row]; p < Arow.row_start[row + 1]; ++p) {
+      const i_t col = Arow.j[p];
+      if (user_problem_.var_types[col] == variable_type_t::CONTINUOUS ||
+          user_problem_.lower[col] != 0.0 || user_problem_.upper[col] != 1.0) {
+        gated = activation = -1;
+        break;
+      }
+      const f_t v = direction * Arow.x[p];
+      if (v == 1.0) {
+        gated = col;
+      } else if (v == -1.0) {
+        activation = col;
+      }
+    }
+    if (gated >= 0 && activation >= 0) { gates.emplace_back(gated, activation); }
+  }
+  if (gates.empty()) { return; }
+
+  gate_offsets_.assign(num_cols + 1, 0);
+  for (const auto& [gated, activation] : gates) {
+    ++gate_offsets_[gated + 1];
+  }
+  for (i_t col = 0; col < num_cols; ++col) {
+    gate_offsets_[col + 1] += gate_offsets_[col];
+  }
+  gate_activations_.resize(gates.size());
+  std::vector<i_t> cursor(gate_offsets_.begin(), gate_offsets_.end() - 1);
+  for (const auto& [gated, activation] : gates) {
+    gate_activations_[cursor[gated]++] = activation;
+  }
+
+  // Sort each column's span and drop duplicate gate rows, compacting in place. The write cursor
+  // trails the read cursor because it only advances on a kept entry.
+  i_t out = 0;
+  for (i_t col = 0; col < num_cols; ++col) {
+    const i_t begin    = gate_offsets_[col];
+    const i_t end      = gate_offsets_[col + 1];
+    gate_offsets_[col] = out;
+    std::sort(gate_activations_.begin() + begin, gate_activations_.begin() + end);
+    for (i_t p = begin; p < end; ++p) {
+      if (p == begin || gate_activations_[p] != gate_activations_[p - 1]) {
+        gate_activations_[out++] = gate_activations_[p];
+      }
+    }
+  }
+  gate_offsets_[num_cols] = out;
+  gate_activations_.resize(out);
+}
+
 // A group cover cut aggregates an enabler row through the gates behind it. Where the model carries
 //
 //     y <= sum_{j in S} x_j        (enabler)      and       x_j <= z_{g(j)}   for every j in S,
@@ -3261,69 +3336,25 @@ void cut_generation_t<i_t, f_t>::build_group_cover_candidates(
   csr_matrix_t<i_t, f_t> Arow(num_rows, num_cols, user_problem_.A.col_start[num_cols]);
   user_problem_.A.to_compressed_row(Arow);
 
-  auto is_binary = [&](i_t col) {
-    return user_problem_.var_types[col] != variable_type_t::CONTINUOUS &&
-           user_problem_.lower[col] == 0.0 && user_problem_.upper[col] == 1.0;
-  };
-  // Row sense in <= orientation: +1 when the row reads a.x <= rhs, -1 when a.x >= rhs, 0 otherwise.
-  auto direction_of = [&](i_t row) {
-    if (user_problem_.row_sense[row] == 'L') { return 1; }
-    if (user_problem_.row_sense[row] == 'G') { return -1; }
-    return 0;
-  };
   const bool has_ranges = user_problem_.num_range_rows > 0;
   std::vector<char> is_range(has_ranges ? num_rows : 0, 0);
   for (i_t k = 0; k < user_problem_.num_range_rows; ++k) {
     is_range[user_problem_.range_rows[k]] = 1;
   }
 
-  // Pass one: the gates, as (selection, activation) pairs.
-  std::vector<std::pair<i_t, i_t>> gates;
-  for (i_t row = 0; row < num_rows; ++row) {
-    if (has_ranges && is_range[row]) { continue; }
-    const i_t direction = direction_of(row);
-    if (direction == 0) { continue; }
-    if (Arow.row_length(row) != 2) { continue; }
-    if (direction * user_problem_.rhs[row] != 0.0) { continue; }
-
-    i_t gated = -1, activation = -1;
-    for (i_t p = Arow.row_start[row]; p < Arow.row_start[row + 1]; ++p) {
-      const i_t col = Arow.j[p];
-      if (!is_binary(col)) {
-        gated = activation = -1;
-        break;
-      }
-      const f_t v = direction * Arow.x[p];
-      if (v == 1.0) {
-        gated = col;
-      } else if (v == -1.0) {
-        activation = col;
-      }
-    }
-    if (gated >= 0 && activation >= 0) { gates.emplace_back(gated, activation); }
-  }
-  if (gates.empty()) { return; }
-  std::sort(gates.begin(), gates.end());
-  gates.erase(std::unique(gates.begin(), gates.end()), gates.end());
-
-  auto gates_of = [&](i_t col) {
-    const auto lo =
-      std::lower_bound(gates.begin(), gates.end(), col, [](const std::pair<i_t, i_t>& g, i_t c) {
-        return g.first < c;
-      });
-    const auto hi = std::upper_bound(
-      lo, gates.end(), col, [](i_t c, const std::pair<i_t, i_t>& g) { return c < g.first; });
-    return std::make_pair(lo, hi);
-  };
+  build_gate_table(Arow);
+  if (gate_activations_.empty()) { return; }
 
   // Pass two: the enabler rows, one +1 head against a tail of -1 selections.
   std::vector<i_t> groups;
   std::vector<std::pair<i_t, std::vector<i_t>>> candidates;
   for (i_t row = 0; row < num_rows; ++row) {
     if (has_ranges && is_range[row]) { continue; }
-    const i_t direction = direction_of(row);
-    if (direction == 0) { continue; }
-    const i_t len = Arow.row_length(row);
+    const char sense = user_problem_.row_sense[row];
+    if (sense != 'L' && sense != 'G') { continue; }
+    // Row sense in <= orientation: +1 when the row reads a.x <= rhs, -1 when a.x >= rhs.
+    const i_t direction = sense == 'L' ? 1 : -1;
+    const i_t len       = Arow.row_length(row);
     if (len < 3) { continue; }
     if (direction * user_problem_.rhs[row] != 0.0) { continue; }
 
@@ -3333,20 +3364,20 @@ void cut_generation_t<i_t, f_t>::build_group_cover_candidates(
     for (i_t p = Arow.row_start[row]; p < Arow.row_start[row + 1] && usable; ++p) {
       const i_t col = Arow.j[p];
       const f_t v   = direction * Arow.x[p];
-      if (!is_binary(col)) {
+      if (user_problem_.var_types[col] == variable_type_t::CONTINUOUS ||
+          user_problem_.lower[col] != 0.0 || user_problem_.upper[col] != 1.0) {
         usable = false;
       } else if (v == 1.0) {
         usable = head < 0;
         head   = col;
       } else if (v == -1.0) {
-        auto [lo, hi] = gates_of(col);
         // A tail member with no gate leaves nothing to aggregate through; keep the candidate by
         // standing in the selection itself, which is what the enabler already bounds the head by.
-        if (lo == hi) {
+        if (gate_offsets_[col] == gate_offsets_[col + 1]) {
           groups.push_back(col);
         } else {
-          for (auto it = lo; it != hi; ++it) {
-            groups.push_back(it->second);
+          for (i_t p = gate_offsets_[col]; p < gate_offsets_[col + 1]; ++p) {
+            groups.push_back(gate_activations_[p]);
           }
         }
       } else {
@@ -3378,8 +3409,9 @@ void cut_generation_t<i_t, f_t>::build_group_cover_candidates(
     group_cover_offsets_.push_back(group_cover_groups_.size());
   }
 
-  settings.log.print_format(
-    "Group cover: {} candidate cuts over {} gates\n", group_cover_heads_.size(), gates.size());
+  settings.log.print_format("Group cover: {} candidate cuts over {} gates\n",
+                            group_cover_heads_.size(),
+                            gate_activations_.size());
 }
 
 template <typename i_t, typename f_t>
@@ -3415,6 +3447,163 @@ void cut_generation_t<i_t, f_t>::generate_group_cover_cuts(
   }
 
   if (num_cuts > 0) { settings.log.debug("Generated %d group cover cuts\n", num_cuts); }
+}
+
+// An activated capacity cut ties a group capacity row to the group's activation. Where the model
+// carries
+//
+//     sum_{i in S} x_i - s <= K     (capacity)     and      x_i <= z   for every i in S,
+//
+// z = 0 forces every x_i to zero while the relaxing term stays non-positive, so the row holds at a
+// right-hand side of zero, and z = 1 leaves it unchanged:
+//
+//     sum_{i in S} x_i - s <= K z.
+//
+// Valid for integral z only. Unlike the enabler rows behind a group cover cut, the capacity row
+// stays in the model; the cut is the strengthened copy of it.
+template <typename i_t, typename f_t>
+void cut_generation_t<i_t, f_t>::build_activated_capacity_candidates(
+  const simplex_solver_settings_t<i_t, f_t>& settings)
+{
+  activated_capacity_built_ = true;
+
+  const i_t num_rows = user_problem_.num_rows;
+  const i_t num_cols = user_problem_.num_cols;
+  if (num_rows <= 0 || num_cols <= 0) { return; }
+  if (user_problem_.var_types.size() != (size_t)num_cols ||
+      user_problem_.row_sense.size() != (size_t)num_rows ||
+      user_problem_.rhs.size() != (size_t)num_rows) {
+    return;
+  }
+
+  csr_matrix_t<i_t, f_t> Arow(num_rows, num_cols, user_problem_.A.col_start[num_cols]);
+  user_problem_.A.to_compressed_row(Arow);
+
+  const bool has_ranges = user_problem_.num_range_rows > 0;
+  std::vector<char> is_range(has_ranges ? num_rows : 0, 0);
+  for (i_t k = 0; k < user_problem_.num_range_rows; ++k) {
+    is_range[user_problem_.range_rows[k]] = 1;
+  }
+
+  build_gate_table(Arow);
+  if (gate_activations_.empty()) { return; }
+
+  std::vector<i_t> selections;
+  std::vector<i_t> support;
+  std::vector<i_t> common;
+  std::vector<i_t> intersection;
+
+  activated_capacity_offsets_.push_back(0);
+  for (i_t row = 0; row < num_rows; ++row) {
+    if (has_ranges && is_range[row]) { continue; }
+    const char sense = user_problem_.row_sense[row];
+    if (sense != 'L' && sense != 'G') { continue; }
+    // Row sense in <= orientation: +1 when the row reads a.x <= rhs, -1 when a.x >= rhs.
+    const i_t direction = sense == 'L' ? 1 : -1;
+    if (Arow.row_length(row) < 2) { continue; }
+
+    const f_t capacity = direction * user_problem_.rhs[row];
+    if (capacity <= 0.0) { continue; }
+
+    selections.clear();
+    support.clear();
+    bool usable = true;
+    for (i_t p = Arow.row_start[row]; p < Arow.row_start[row + 1] && usable; ++p) {
+      const i_t col = Arow.j[p];
+      const f_t v   = direction * Arow.x[p];
+      support.push_back(col);
+      if (user_problem_.var_types[col] != variable_type_t::CONTINUOUS) {
+        usable = user_problem_.lower[col] == 0.0 && user_problem_.upper[col] == 1.0 && v == 1.0;
+        if (usable) { selections.push_back(col); }
+      } else {
+        // A relaxing term: non-positive over the whole box, so it cannot violate the row at z = 0.
+        usable = v < 0.0 && user_problem_.lower[col] >= 0.0;
+      }
+    }
+    if (!usable || selections.size() < 2) { continue; }
+    // At or above its own support size the cap is implied by the gates already, and so is K z.
+    const f_t n_selections = selections.size();
+    if (capacity >= n_selections) { continue; }
+
+    common.assign(gate_activations_.begin() + gate_offsets_[selections[0]],
+                  gate_activations_.begin() + gate_offsets_[selections[0] + 1]);
+    for (size_t k = 1; k < selections.size() && !common.empty(); ++k) {
+      const i_t col = selections[k];
+      intersection.clear();
+      std::set_intersection(common.begin(),
+                            common.end(),
+                            gate_activations_.begin() + gate_offsets_[col],
+                            gate_activations_.begin() + gate_offsets_[col + 1],
+                            std::back_inserter(intersection));
+      common.swap(intersection);
+    }
+    if (common.empty()) { continue; }
+
+    std::sort(support.begin(), support.end());
+    i_t activation = -1;
+    for (i_t z : common) {
+      if (std::binary_search(support.begin(), support.end(), z)) { continue; }
+      activation = z;
+      break;
+    }
+    if (activation < 0) { continue; }
+
+    activated_capacity_activations_.push_back(activation);
+    activated_capacity_caps_.push_back(capacity);
+    for (i_t p = Arow.row_start[row]; p < Arow.row_start[row + 1]; ++p) {
+      activated_capacity_cols_.push_back(Arow.j[p]);
+      activated_capacity_coeffs_.push_back(direction * Arow.x[p]);
+    }
+    activated_capacity_offsets_.push_back(activated_capacity_cols_.size());
+  }
+  if (activated_capacity_activations_.empty()) { return; }
+
+  settings.log.print_format("Activated capacity: {} candidate cuts over {} gates\n",
+                            activated_capacity_activations_.size(),
+                            gate_activations_.size());
+}
+
+template <typename i_t, typename f_t>
+void cut_generation_t<i_t, f_t>::generate_activated_capacity_cuts(
+  const simplex_solver_settings_t<i_t, f_t>& settings,
+  const std::vector<f_t>& xstar,
+  f_t start_time)
+{
+  if (!activated_capacity_built_) { build_activated_capacity_candidates(settings); }
+  if (activated_capacity_activations_.empty()) { return; }
+
+  // The strengthened row carries a coefficient of K against +-1 everywhere else, so it costs the
+  // node LP far more per row than a unit-coefficient cut and is held to a higher bar than
+  // cut_pool_t's global min_cut_distance_ of 1e-4. Measured over the first root passes: the cuts
+  // that carry tsmc-setcover-3 have distance 0.23 upwards, while on tsmc-setcover-2, where the
+  // family buys no bound the group cover cuts do not already have, three quarters sit below 0.14.
+  const f_t min_distance = 0.2;
+  i_t num_cuts           = 0;
+  const i_t n            = activated_capacity_activations_.size();
+  for (i_t k = 0; k < n; ++k) {
+    if ((k & 0xFF) == 0 && toc(start_time) >= settings.time_limit) { return; }
+    const i_t activation = activated_capacity_activations_[k];
+    const f_t capacity   = activated_capacity_caps_[k];
+    f_t activity         = -capacity * xstar[activation];
+    f_t norm             = capacity * capacity;
+    for (i_t p = activated_capacity_offsets_[k]; p < activated_capacity_offsets_[k + 1]; ++p) {
+      activity += activated_capacity_coeffs_[p] * xstar[activated_capacity_cols_[p]];
+      norm += activated_capacity_coeffs_[p] * activated_capacity_coeffs_[p];
+    }
+    if (activity <= min_distance * std::sqrt(norm)) { continue; }
+
+    // add_cut expects cut'x >= rhs, so the row sum_p a_p x_p - K z <= 0 is emitted negated.
+    inequality_t<i_t, f_t> cut;
+    for (i_t p = activated_capacity_offsets_[k]; p < activated_capacity_offsets_[k + 1]; ++p) {
+      cut.push_back(activated_capacity_cols_[p], -activated_capacity_coeffs_[p]);
+    }
+    cut.push_back(activation, capacity);
+    cut.rhs = 0.0;
+    cut_pool_.add_cut(cut_type_t::ACTIVATED_CAPACITY, cut);
+    num_cuts++;
+  }
+
+  if (num_cuts > 0) { settings.log.debug("Generated %d activated capacity cuts\n", num_cuts); }
 }
 
 namespace {
@@ -3799,6 +3988,18 @@ bool cut_generation_t<i_t, f_t>::generate_cuts(const lp_problem_t<i_t, f_t>& lp,
     f_t cut_generation_time = toc(cut_start_time);
     if (cut_generation_time > 1.0) {
       settings.log.debug("Group cover cut generation time %.2f seconds\n", cut_generation_time);
+    }
+  }
+
+  // Generate activated capacity cuts
+  if (settings.activated_capacity_cuts != 0) {
+    if (toc(start_time) >= settings.time_limit) { return true; }
+    f_t cut_start_time = tic();
+    generate_activated_capacity_cuts(settings, xstar, start_time);
+    f_t cut_generation_time = toc(cut_start_time);
+    if (cut_generation_time > 1.0) {
+      settings.log.debug("Activated capacity cut generation time %.2f seconds\n",
+                         cut_generation_time);
     }
   }
 

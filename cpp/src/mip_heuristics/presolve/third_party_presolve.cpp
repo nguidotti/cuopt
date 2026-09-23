@@ -40,7 +40,6 @@
 #include <cuopt/mathematical_optimization/solve.hpp>
 #include <dual_simplex/presolve.hpp>
 #include <mip_heuristics/mip_constants.hpp>
-#include <mip_heuristics/presolve/activated_capacity.hpp>
 #include <mip_heuristics/presolve/bhw_coeff_reduce.hpp>
 #include <mip_heuristics/presolve/gf2_presolve.hpp>
 #include <mip_heuristics/presolve/single_lock_dual_aggregation.hpp>
@@ -748,7 +747,6 @@ void set_presolve_methods(
     // cuOpt custom GF2 presolver
     maybe_add(uptr(new GF2Presolve<f_t>()));
     maybe_add(uptr(new BHWCoeffReduce<f_t>()));
-    maybe_add(uptr(new ActivatedCapacity<f_t>()));
   }
   // fast presolvers
   maybe_add(uptr(new papilo::SingletonCols<f_t>()));

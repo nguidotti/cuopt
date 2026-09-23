@@ -2322,6 +2322,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
   submip_settings.clique_cuts                              = 0;
   submip_settings.zero_half_cuts                           = 0;
   submip_settings.group_cover_cuts                         = 0;
+  submip_settings.activated_capacity_cuts                  = 0;
   submip_settings.inside_submip                            = 1;
   submip_settings.strong_branching_simplex_iteration_limit = 50;
   submip_settings.inside_root_node                         = 0;
