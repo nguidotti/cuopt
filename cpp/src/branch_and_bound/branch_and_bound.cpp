@@ -4062,6 +4062,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   root_lp_current_lower_bound_        = -inf;
   exploration_stats_.nodes_unexplored = 0;
   exploration_stats_.nodes_explored   = 0;
+  lower_bound_numerical_              = inf;
   original_lp_.A.to_compressed_row(Arow_);
 
   active_submip_solvers_mutex_.lock();
@@ -4295,9 +4296,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     return mip_status_t::OPTIMAL;
   }
 
-  is_running_            = true;
-  lower_bound_numerical_ = inf;
-
+  is_running_ = true;
   lp_settings.concurrent_halt =
     settings_.concurrent_halt ? settings_.concurrent_halt : &node_concurrent_halt_;
   reduced_cost_bounds_t<i_t, f_t> reduced_cost_bounds(original_lp_.num_cols);
