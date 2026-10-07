@@ -1687,6 +1687,11 @@ dual_status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(
       lp_settings.time_limit = settings_.time_limit - toc(exploration_stats_.start_time);
       if (lp_settings.time_limit <= 0.0) { return dual_status_t::TIME_LIMIT; }
 
+      if (!worker->domain.propagate_objective(
+      worker->Arow, worker->var_types, settings_, worker->leaf_problem, cutoff)) {
+        return dual_status_t::CUTOFF;
+      }
+
       i_t node_iter          = 0;
       f_t lp_start_time      = tic();
       f_t node_work_estimate = 0.0;
@@ -1774,7 +1779,6 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
 
   worker->recompute_basis = true;
   worker->ensure_orbital_fixing();
-
   // The branching of the start node itself is applied when its LP is solved.
   if (start_node->parent != nullptr) {
     start_node->parent->rebuild_variable_bounds(worker->domain);
@@ -4336,7 +4340,6 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     return mip_status_t::OPTIMAL;
   }
 
-  is_running_ = true;
   lp_settings.concurrent_halt =
     settings_.concurrent_halt ? settings_.concurrent_halt : &node_concurrent_halt_;
   reduced_cost_bounds_t<i_t, f_t> reduced_cost_bounds(original_lp_.num_cols);
@@ -4431,6 +4434,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   }
 
   if (num_fractional != 0 && settings_.max_cut_passes > 0) { print_table_header(); }
+  is_running_ = true;
 
   cut_pool_t<i_t, f_t> cut_pool(original_lp_.num_cols, settings_);
   cut_generation_t<i_t, f_t> cut_generation(cut_pool,
@@ -4793,6 +4797,37 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 
   is_running_ = false;
   settings_.log.printf("\n");
+
+  if (!settings_.inside_submip) {
+    size_t objective_fixings = 0;
+    size_t objective_cutoffs = 0;
+    auto add_objective_stats = [&](const domain_t<i_t, f_t>& domain) {
+      objective_fixings += domain.objective_fixings;
+      objective_cutoffs += domain.objective_cutoffs;
+    };
+    if (deterministic_mode_enabled_) {
+      for (const auto& worker : *deterministic_workers_) {
+        add_objective_stats(worker.domain);
+      }
+      if (deterministic_diving_workers_) {
+        for (const auto& worker : *deterministic_diving_workers_) {
+          add_objective_stats(worker.domain);
+        }
+      }
+    } else {
+      for (i_t i = 0; i < bfs_worker_pool_.size(); ++i) {
+        add_objective_stats(bfs_worker_pool_[i]->domain);
+      }
+      for (i_t i = 0; i < diving_worker_pool_.size(); ++i) {
+        add_objective_stats(diving_worker_pool_[i]->domain);
+      }
+      for (i_t i = 0; i < submip_worker_pool_.size(); ++i) {
+        add_objective_stats(submip_worker_pool_[i]->domain);
+      }
+    }
+    CUOPT_LOG_INFO(
+      "Objective propagation: %zu fixings, %zu cutoffs\n", objective_fixings, objective_cutoffs);
+  }
 
   // Compute final lower bound
   f_t lower_bound;
@@ -5351,7 +5386,8 @@ node_status_t branch_and_bound_t<i_t, f_t>::solve_node_deterministic(
   simplex_solver_settings_t<i_t, f_t> lp_settings = settings_;
   lp_settings.set_log(false);
 
-  lp_settings.cut_off       = worker.local_upper_bound + settings_.dual_tol;
+  const f_t cutoff          = compute_node_cutoff(worker.leaf_problem, worker.local_upper_bound);
+  lp_settings.cut_off       = cutoff + settings_.dual_tol;
   lp_settings.inside_mip    = 2;
   lp_settings.time_limit    = remaining_time;
   lp_settings.scale_columns = false;
@@ -5366,6 +5402,10 @@ node_status_t branch_and_bound_t<i_t, f_t>::solve_node_deterministic(
     feasible = worker.rebuild_bounds_from_stack(original_lp_, settings_);
   }
 
+  const bool is_cutoff =
+    feasible && !worker.domain.propagate_objective(
+                  worker.Arow, worker.var_types, settings_, worker.leaf_problem, cutoff);
+
   if (settings_.deterministic) {
     // TEMP APPROXIMATION;
     worker.work_context.record_work_sync_on_horizon(worker.domain.last_nnz_processed / 1e8);
@@ -5379,6 +5419,15 @@ node_status_t branch_and_bound_t<i_t, f_t>::solve_node_deterministic(
     ++exploration_stats_.nodes_explored;
     worker.recompute_basis = true;
     return node_status_t::INFEASIBLE;
+  }
+
+  if (is_cutoff) {
+    ++exploration_stats_.nodes_explored;
+    --exploration_stats_.nodes_unexplored;
+    deterministic_bfs_policy_t<i_t, f_t> policy{*this, worker};
+    auto [status, round_dir] =
+      update_tree_impl(node_ptr, search_tree, &worker, dual_status_t::CUTOFF, policy);
+    return status;
   }
 
   // Solve LP relaxation
@@ -5975,12 +6024,15 @@ void branch_and_bound_t<i_t, f_t>::deterministic_dive(
     // Setup LP settings
     simplex_solver_settings_t<i_t, f_t> lp_settings = settings_;
     lp_settings.set_log(false);
-    lp_settings.cut_off       = worker.local_upper_bound + settings_.dual_tol;
+    const f_t cutoff          = compute_node_cutoff(worker.leaf_problem, worker.local_upper_bound);
+    lp_settings.cut_off       = cutoff + settings_.dual_tol;
     lp_settings.inside_mip    = 2;
     lp_settings.time_limit    = remaining_time;
     lp_settings.scale_columns = false;
 
-    feasible = worker.update_variable_bounds(node_ptr, settings_);
+    feasible = worker.update_variable_bounds(node_ptr, settings_) &&
+               worker.domain.propagate_objective(
+                 worker.Arow, worker.var_types, settings_, worker.leaf_problem, cutoff);
 
     if (settings_.deterministic) {
       // TEMP APPROXIMATION;
