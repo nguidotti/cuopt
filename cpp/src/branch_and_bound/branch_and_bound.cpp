@@ -1712,7 +1712,7 @@ dual_status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(
       if (lp_settings.time_limit <= 0.0) { return dual_status_t::TIME_LIMIT; }
 
       if (!worker->domain.propagate_objective(
-      worker->Arow, worker->var_types, settings_, worker->leaf_problem, cutoff)) {
+            worker->Arow, worker->var_types, settings_, worker->leaf_problem, cutoff)) {
         return dual_status_t::CUTOFF;
       }
 
@@ -4584,6 +4584,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 
     if (!std::isfinite(lower_bound)) { lower_bound = search_tree_.root.lower_bound; }
   }
+  lower_bound = std::min(lower_bound, upper_bound_.load());
 
   DEBUG_SUBMIP("RINS: success={}, infeasible={}, empty={}, calls={}",
                rins_stats_.total_success.load(),
