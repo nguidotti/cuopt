@@ -918,6 +918,17 @@ void branch_and_bound_t<i_t, f_t>::set_final_solution(mip_solution_t<i_t, f_t>& 
       domain_stats.clique_infeasible,
       domain_stats.clique_time);
   }
+  if (domain_stats.objective_calls > 0) {
+    settings_.log.print_format(
+      "Objective propagation: {} calls, {} rounds, {} tightenings ({} fixings), {} cutoffs, "
+      "{:.2f}s\n",
+      domain_stats.objective_calls,
+      domain_stats.objective_rounds,
+      domain_stats.objective_tightenings,
+      domain_stats.objective_fixings,
+      domain_stats.objective_cutoffs,
+      domain_stats.objective_time);
+  }
   if (integer_pivots_.load() > 0) {
     settings_.log.print_format("Number of integer pivots: {}\n", integer_pivots_.load());
   }
@@ -1280,7 +1291,6 @@ struct deterministic_bfs_policy_t
                          branch_direction_t dir) override
   {
     switch (status) {
-      case node_status_t::INFEASIBLE: this->worker.record_infeasible(node); break;
       case node_status_t::FATHOMED: this->worker.record_fathomed(node, node->lower_bound); break;
       case node_status_t::INTEGER_FEASIBLE:
         this->worker.record_integer_solution(node, node->lower_bound);
@@ -1470,15 +1480,14 @@ std::pair<node_status_t, branch_direction_t> branch_and_bound_t<i_t, f_t>::updat
   worker->recompute_basis = true;
 
   if (lp_status == dual_status_t::DUAL_UNBOUNDED) {
-    node_ptr->lower_bound = inf;
-    policy.graphviz(search_tree, node_ptr, "infeasible", 0.0);
-    search_tree.update(node_ptr, node_status_t::INFEASIBLE);
-    status = node_status_t::INFEASIBLE;
+    node_ptr->lower_bound = upper_bound;
+    policy.graphviz(search_tree, node_ptr, "infeasible", upper_bound);
+    search_tree.update(node_ptr, node_status_t::FATHOMED);
+    status = node_status_t::FATHOMED;
 
   } else if (lp_status == dual_status_t::CUTOFF) {
-    f_t leaf_obj          = compute_objective(leaf_problem, leaf_solution.x);
     node_ptr->lower_bound = upper_bound;
-    policy.graphviz(search_tree, node_ptr, "cut off", leaf_obj);
+    policy.graphviz(search_tree, node_ptr, "cut off", upper_bound);
     search_tree.update(node_ptr, node_status_t::FATHOMED);
     status = node_status_t::FATHOMED;
 
@@ -1716,7 +1725,7 @@ dual_status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(
       if (lp_settings.time_limit <= 0.0) { return dual_status_t::TIME_LIMIT; }
 
       if (!worker->domain.propagate_objective(
-      worker->Arow, worker->var_types, settings_, worker->leaf_problem, cutoff)) {
+            worker->Arow, worker->var_types, settings_, worker->leaf_problem, cutoff)) {
         return dual_status_t::CUTOFF;
       }
 
@@ -1818,7 +1827,7 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
   if (!is_start_feasible) {
     start_node->lower_bound = inf;
     search_tree_.graphviz_node(settings_.log, start_node, "infeasible", inf);
-    search_tree_.update(start_node, node_status_t::INFEASIBLE);
+    search_tree_.update(start_node, node_status_t::FATHOMED);
     ++exploration_stats_.nodes_explored;
     --exploration_stats_.nodes_unexplored;
     return;
@@ -4805,37 +4814,6 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   is_running_ = false;
   settings_.log.printf("\n");
 
-  if (!settings_.inside_submip) {
-    size_t objective_fixings = 0;
-    size_t objective_cutoffs = 0;
-    auto add_objective_stats = [&](const domain_t<i_t, f_t>& domain) {
-      objective_fixings += domain.objective_fixings;
-      objective_cutoffs += domain.objective_cutoffs;
-    };
-    if (deterministic_mode_enabled_) {
-      for (const auto& worker : *deterministic_workers_) {
-        add_objective_stats(worker.domain);
-      }
-      if (deterministic_diving_workers_) {
-        for (const auto& worker : *deterministic_diving_workers_) {
-          add_objective_stats(worker.domain);
-        }
-      }
-    } else {
-      for (i_t i = 0; i < bfs_worker_pool_.size(); ++i) {
-        add_objective_stats(bfs_worker_pool_[i]->domain);
-      }
-      for (i_t i = 0; i < diving_worker_pool_.size(); ++i) {
-        add_objective_stats(diving_worker_pool_[i]->domain);
-      }
-      for (i_t i = 0; i < submip_worker_pool_.size(); ++i) {
-        add_objective_stats(submip_worker_pool_[i]->domain);
-      }
-    }
-    CUOPT_LOG_INFO(
-      "Objective propagation: %zu fixings, %zu cutoffs\n", objective_fixings, objective_cutoffs);
-  }
-
   // Compute final lower bound
   f_t lower_bound;
   if (deterministic_mode_enabled_) {
@@ -5418,12 +5396,12 @@ node_status_t branch_and_bound_t<i_t, f_t>::solve_node_deterministic(
 
   if (!feasible) {
     node_ptr->lower_bound = std::numeric_limits<f_t>::infinity();
-    search_tree.update(node_ptr, node_status_t::INFEASIBLE);
-    worker.record_infeasible(node_ptr);
+    search_tree.update(node_ptr, node_status_t::FATHOMED);
+    worker.record_fathomed(node_ptr, worker.local_upper_bound);
     --exploration_stats_.nodes_unexplored;
     ++exploration_stats_.nodes_explored;
     worker.recompute_basis = true;
-    return node_status_t::INFEASIBLE;
+    return node_status_t::FATHOMED;
   }
 
   if (is_cutoff) {

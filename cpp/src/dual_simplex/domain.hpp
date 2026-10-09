@@ -67,7 +67,8 @@ struct domain_params {
 // the rows queued when it starts. propagation_time includes the activity updates of its own
 // tightenings, which are also counted in update_activities_time. The probing and clique counters
 // cover the implications of fixed integer variables, and their times are included in
-// propagation_time.
+// propagation_time. The objective counters cover the propagation of c^T x <= cutoff; its time
+// includes the row propagation that follows each of its rounds, which is also counted above.
 struct domain_stats_t {
   int64_t calls               = 0;
   int64_t infeasible          = 0;
@@ -92,11 +93,18 @@ struct domain_stats_t {
   int64_t clique_fixings       = 0;
   int64_t clique_infeasible    = 0;
 
+  int64_t objective_calls       = 0;
+  int64_t objective_rounds      = 0;
+  int64_t objective_tightenings = 0;
+  int64_t objective_fixings     = 0;
+  int64_t objective_cutoffs     = 0;
+
   double propagation_time        = 0.0;
   double compute_activities_time = 0.0;
   double update_activities_time  = 0.0;
   double probing_time            = 0.0;
   double clique_time             = 0.0;
+  double objective_time          = 0.0;
 
   domain_stats_t& operator+=(const domain_stats_t& other)
   {
@@ -121,11 +129,17 @@ struct domain_stats_t {
     clique_tightenings += other.clique_tightenings;
     clique_fixings += other.clique_fixings;
     clique_infeasible += other.clique_infeasible;
+    objective_calls += other.objective_calls;
+    objective_rounds += other.objective_rounds;
+    objective_tightenings += other.objective_tightenings;
+    objective_fixings += other.objective_fixings;
+    objective_cutoffs += other.objective_cutoffs;
     propagation_time += other.propagation_time;
     compute_activities_time += other.compute_activities_time;
     update_activities_time += other.update_activities_time;
     probing_time += other.probing_time;
     clique_time += other.clique_time;
+    objective_time += other.objective_time;
     return *this;
   }
 };
@@ -243,8 +257,6 @@ class domain_t {
                            f_t cutoff);
 
   size_t last_nnz_processed{0};
-  size_t objective_fixings{0};
-  size_t objective_cutoffs{0};
 
   // Implications applied when an integer variable is fixed to 0 or 1. Either may be null, and the
   // clique table is skipped until it is ready.
