@@ -1,0 +1,19 @@
+diff --git a/src/papilo/presolvers/DualInfer.hpp b/src/papilo/presolvers/DualInfer.hpp
+index 450329ac..8f39573d 100644
+--- a/src/papilo/presolvers/DualInfer.hpp
++++ b/src/papilo/presolvers/DualInfer.hpp
+@@ -189,11 +189,11 @@ DualInfer<REAL>::execute( const Problem<REAL>& problem,
+
+    for( int i = 0; i != nrows; ++i )
+    {
+-      if( consMatrix.isRowRedundant( i ) )
++      // An empty row whose constant activity violates a side by less than feastol is neither
++      // redundant nor infeasible for checkStatus, so it can reach here; its dual stays at zero.
++      if( consMatrix.isRowRedundant( i ) || consMatrix.getRowSizes()[i] == 0 )
+          continue;
+
+-      assert( consMatrix.getRowSizes()[i] > 0 );
+-
+       if( !rflags[i].test( RowFlag::kRhsInf ) )
+          dualColFlags[i].set( ColFlag::kLbInf );
+       if( !rflags[i].test( RowFlag::kLhsInf ) )

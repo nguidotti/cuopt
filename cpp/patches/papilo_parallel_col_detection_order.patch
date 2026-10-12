@@ -1,0 +1,48 @@
+diff --git a/src/papilo/presolvers/ParallelColDetection.hpp b/src/papilo/presolvers/ParallelColDetection.hpp
+index 5a38253b..e2d2db0b 100644
+--- a/src/papilo/presolvers/ParallelColDetection.hpp
++++ b/src/papilo/presolvers/ParallelColDetection.hpp
+@@ -219,7 +219,9 @@ ParallelColDetection<REAL>::findParallelCols(
+          int col2 = bucket[j];
+          assert( !cflags[col2].test( ColFlag::kIntegral ) );
+          const REAL* coefs2 = constMatrix.getColumnCoefficients( col2 ).getValues();
+-         assert( num.isLE( abs( coefs1[0] ), abs( coefs2[0] ) ) );
++         // Nearly parallel columns can share a bucket out of |a0| order; they are not parallel.
++         if( !num.isLE( abs( coefs1[0] ), abs( coefs2[0] ) ) )
++            continue;
+
+          if( check_parallelity( num, obj, col2, length, coefs2, col1, coefs1 ) )
+          {
+@@ -269,7 +271,11 @@ ParallelColDetection<REAL>::findParallelCols(
+             auto col2vec = constMatrix.getColumnCoefficients( col2 );
+             assert( col2vec.getLength() == length );
+             const REAL* coefs2 = col2vec.getValues();
+-            assert( num.isLE( abs( coefs1[0] ), abs( coefs2[0] ) ) );
++            if( !num.isLE( abs( coefs1[0] ), abs( coefs2[0] ) ) )
++            {
++               abort_after_first_loop = false;
++               continue;
++            }
+             REAL scale = coefs2[0] / coefs1[0];
+
+             if( num.isIntegral(scale)
+@@ -310,7 +316,8 @@ ParallelColDetection<REAL>::findParallelCols(
+                break;
+
+             const REAL* coefs2 = constMatrix.getColumnCoefficients( col2 ).getValues();
+-            assert( num.isLE( abs( coefs1[0] ), abs( coefs2[0] ) ) );
++            if( !num.isLE( abs( coefs1[0] ), abs( coefs2[0] ) ) )
++               continue;
+
+             if( check_parallelity( num, obj, col2, length, coefs2, col1, coefs1 ) )
+                continuous_parallel_cols.emplace_back( col2, col1 );
+@@ -369,7 +376,8 @@ ParallelColDetection<REAL>::findParallelCols(
+             auto col2vec = constMatrix.getColumnCoefficients( col2 );
+             assert( col2vec.getLength() == length );
+             const REAL* coefs2 = col2vec.getValues();
+-            assert( num.isLE( abs( coefs1[0] ), abs( coefs2[0] ) ) );
++            if( !num.isLE( abs( coefs1[0] ), abs( coefs2[0] ) ) )
++               continue;
+             REAL scale = coefs2[0] / coefs1[0];
+
+             if( num.isIntegral(scale)

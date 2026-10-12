@@ -299,8 +299,14 @@ FetchContent_Declare(
         GIT_REPOSITORY "https://github.com/scipopt/papilo.git"
         GIT_TAG "3a0d1d30a0a580530b37495b0ebb5926cf6e8a2c"
         GIT_PROGRESS TRUE
-        PATCH_COMMAND git -C <SOURCE_DIR> apply
+        PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=<SOURCE_DIR>
+                      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/apply_patches.cmake"
                       "${CMAKE_CURRENT_SOURCE_DIR}/patches/papilo_parallel_integrality_guard.patch"
+                      "${CMAKE_CURRENT_SOURCE_DIR}/patches/papilo_dualinfer_empty_row.patch"
+                      "${CMAKE_CURRENT_SOURCE_DIR}/patches/papilo_parallel_col_postsolve_on_bounds.patch"
+                      "${CMAKE_CURRENT_SOURCE_DIR}/patches/papilo_parallel_col_postsolve_recompute.patch"
+                      "${CMAKE_CURRENT_SOURCE_DIR}/patches/papilo_coef_strengthening_narrow_domain.patch"
+                      "${CMAKE_CURRENT_SOURCE_DIR}/patches/papilo_parallel_col_detection_order.patch"
         EXCLUDE_FROM_ALL
         SYSTEM
 )

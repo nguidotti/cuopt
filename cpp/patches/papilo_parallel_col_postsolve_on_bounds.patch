@@ -1,0 +1,14 @@
+diff --git a/src/papilo/core/postsolve/Postsolve.hpp b/src/papilo/core/postsolve/Postsolve.hpp
+index ff2b2ab5..1267b999 100644
+--- a/src/papilo/core/postsolve/Postsolve.hpp
++++ b/src/papilo/core/postsolve/Postsolve.hpp
+@@ -1239,7 +1239,8 @@ Postsolve<REAL>::apply_parallel_col_to_original_solution(
+    bool col2onBounds =
+        ( !( col1boundFlags & IS_UBINF ) && num.isEq( col2val, col2ub ) ) ||
+        ( !( col1boundFlags & IS_LBINF ) && num.isEq( col2val, col2lb ) );
+-   assert( col1onBounds || col2onBounds );
++   // The integral branch keeps both columns feasible and integral but not necessarily on a bound.
++   assert( ( col1boundFlags & IS_INTEGRAL ) || col1onBounds || col2onBounds );
+
+    if( originalSolution.type == SolutionType::kPrimalDual )
+    {

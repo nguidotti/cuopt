@@ -1,0 +1,17 @@
+diff --git a/src/papilo/presolvers/CoefficientStrengthening.hpp b/src/papilo/presolvers/CoefficientStrengthening.hpp
+index 4deed852..ad27ebf9 100644
+--- a/src/papilo/presolvers/CoefficientStrengthening.hpp
++++ b/src/papilo/presolvers/CoefficientStrengthening.hpp
+@@ -225,6 +225,12 @@ CoefficientStrengthening<REAL>::perform_coefficient_tightening(
+       if( num.isFeasGE( newabscoef, abs( coefficients[k] ) ) )
+          continue;
+
++      // An implied-integer column can keep bounds a few ulps off an integer, which leaves a
++      // non-fixed domain narrower than 1 that the strengthening below does not handle.
++      if( !domains.flags[coefindices[k]].test( ColFlag::kLbInf, ColFlag::kUbInf ) &&
++          domains.upper_bounds[coefindices[k]] - domains.lower_bounds[coefindices[k]] < 1.0 )
++         continue;
++
+       integerCoefficients.emplace_back( coefficients[k] * scale,
+                                         coefindices[k] );
+    }
