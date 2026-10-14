@@ -103,7 +103,8 @@ bool check_guess(const lp_problem_t<i_t, f_t>& original_lp,
                  const std::vector<f_t>& guess,
                  f_t& primal_error,
                  f_t& bound_error,
-                 i_t& num_fractional)
+                 i_t& num_fractional,
+                 f_t& integrality_error)
 {
   bool feasible = false;
   std::vector<f_t> residual(original_lp.num_rows);
@@ -111,7 +112,7 @@ bool check_guess(const lp_problem_t<i_t, f_t>& original_lp,
   matrix_vector_multiply(original_lp.A, 1.0, guess, -1.0, residual);
   primal_error           = vector_norm_inf<i_t, f_t>(residual);
   bound_error            = 0.0;
-  f_t integrality_error  = 0.0;
+  integrality_error      = 0.0;
   constexpr bool verbose = false;
   for (i_t j = 0; j < original_lp.num_cols; j++) {
     if (var_types[j] == variable_type_t::INTEGER) {
@@ -145,7 +146,7 @@ bool check_guess(const lp_problem_t<i_t, f_t>& original_lp,
     feasible = true;
   }
 
-  settings.log.debug_format(
+  settings.log.print_format(
     "incumbent: primal_error={:.5g}, bound_error={:.5g}, integrality_error={:.5g}\n",
     primal_error,
     bound_error,
@@ -554,6 +555,7 @@ bool branch_and_bound_t<i_t, f_t>::set_solution_from_heuristics(const std::vecto
   if (accept_new_incumbent(obj)) {
     f_t primal_err;
     f_t bound_err;
+    f_t integral_err;
     i_t num_fractional;
     mutex_original_lp_.lock();
     if (crushed_solution.size() != original_lp_.num_cols) {
@@ -562,8 +564,14 @@ bool branch_and_bound_t<i_t, f_t>::set_solution_from_heuristics(const std::vecto
       crush_primal_solution<i_t, f_t>(
         original_problem_, original_lp_, solution, new_slacks_, crushed_solution);
     }
-    is_feasible = check_guess(
-      original_lp_, settings_, var_types_, crushed_solution, primal_err, bound_err, num_fractional);
+    is_feasible = check_guess(original_lp_,
+                              settings_,
+                              var_types_,
+                              crushed_solution,
+                              primal_err,
+                              bound_err,
+                              num_fractional,
+                              integral_err);
     settings_.log.print_format("upper_bound={}, obj={}\n", incumbent_.objective, obj);
     mutex_original_lp_.unlock();
     mutex_upper_.lock();
@@ -639,8 +647,15 @@ void branch_and_bound_t<i_t, f_t>::queue_external_solution_deterministic(
   f_t primal_err;
   f_t bound_err;
   i_t num_fractional;
-  bool is_feasible = check_guess(
-    original_lp_, settings_, var_types_, crushed_solution, primal_err, bound_err, num_fractional);
+  f_t integral_err;
+  bool is_feasible = check_guess(original_lp_,
+                                 settings_,
+                                 var_types_,
+                                 crushed_solution,
+                                 primal_err,
+                                 bound_err,
+                                 num_fractional,
+                                 integral_err);
   mutex_original_lp_.unlock();
 
   if (!is_feasible) {
@@ -767,13 +782,15 @@ bool branch_and_bound_t<i_t, f_t>::repair_solution(const std::vector<f_t>& edge_
     f_t primal_error;
     f_t bound_error;
     i_t num_fractional;
+    f_t integral_err;
     feasible               = check_guess(original_lp_,
                            settings_,
                            var_types_,
                            lp_solution.x,
                            primal_error,
                            bound_error,
-                           num_fractional);
+                           num_fractional,
+                           integral_err);
     repaired_obj           = compute_objective(original_lp_, repaired_solution);
     constexpr bool verbose = false;
     if (verbose) {
@@ -4066,8 +4083,15 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     f_t primal_err;
     f_t bound_err;
     i_t num_fractional;
-    const bool feasible = check_guess(
-      original_lp_, settings_, var_types_, crushed_guess, primal_err, bound_err, num_fractional);
+    f_t integral_err;
+    const bool feasible = check_guess(original_lp_,
+                                      settings_,
+                                      var_types_,
+                                      crushed_guess,
+                                      primal_err,
+                                      bound_err,
+                                      num_fractional,
+                                      integral_err);
     if (feasible) {
       const f_t computed_obj = compute_objective(original_lp_, crushed_guess);
       mutex_upper_.lock();

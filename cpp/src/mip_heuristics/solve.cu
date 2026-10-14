@@ -840,7 +840,7 @@ mip_solution_t<i_t, f_t> solve_mip_helper(
         full_sol.copy_new_assignment(
           cuopt::host_copy(primal_solution, op_problem.get_handle_ptr()->get_stream()));
         full_sol.compute_feasibility();
-        CUOPT_LOG_DEBUG(
+        CUOPT_LOG_INFO(
           "Post solve: max residual error=%g, max integrality error=%g, max variable bound "
           "error=%g",
           full_sol.compute_max_constraint_violation(),
