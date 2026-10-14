@@ -523,9 +523,9 @@ bool branch_and_bound_t<i_t, f_t>::accept_new_incumbent(f_t obj)
   if (original_lp_.objective_step.has_step()) {
     return obj < incumbent_.objective - 0.5 * original_lp_.objective_step.step_size;
   } else if (original_lp_.objective_is_integral) {
-    return incumbent_.objective - 0.5;
+    return obj < incumbent_.objective - 0.5;
   } else {
-    return incumbent_.objective - settings_.primal_tol;
+    return obj < incumbent_.objective - settings_.primal_tol;
   }
 }
 
