@@ -454,12 +454,6 @@ bool domain_t<i_t, f_t>::run_bound_propagation(const csr_matrix_t<i_t, f_t>& Aro
   int64_t rounds            = 0;
   size_t rows_left_in_round = 0;
   while (feasible && (!row_queue.empty() || !var_queue.empty())) {
-    if (rows_left_in_round == 0) {
-      rows_left_in_round = row_queue.size();
-      ++rounds;
-    }
-    --rows_left_in_round;
-
     // Apply the implications of the fixed variables before propagating the rows.
     if (!var_queue.empty()) {
       const i_t j   = var_queue.pop_front();
