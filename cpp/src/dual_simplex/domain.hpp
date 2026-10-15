@@ -10,6 +10,8 @@
 #include <dual_simplex/presolve.hpp>
 #include <utilities/circular_deque.hpp>
 
+#include <algorithm>
+#include <cstdint>
 #include <limits>
 
 namespace cuopt::mathematical_optimization::simplex {
@@ -50,6 +52,48 @@ struct domain_params {
   double min_improvement_factor   = 1e3;
   // Derived bounds larger than this in magnitude are discarded
   double max_derived_bound = 1e8;
+};
+
+// Cumulative statistics of the bound propagation performed by a domain. A round is one pass over
+// the rows queued when it starts. propagation_time includes the activity updates of its own
+// tightenings, which are also counted in update_activities_time.
+struct domain_stats_t {
+  int64_t calls               = 0;
+  int64_t infeasible          = 0;
+  int64_t rounds              = 0;
+  int64_t max_rounds          = 0;
+  int64_t rows_processed      = 0;
+  int64_t rows_scanned        = 0;
+  int64_t applied_changes     = 0;
+  int64_t tightenings         = 0;
+  int64_t fixings             = 0;
+  int64_t activity_updates    = 0;
+  int64_t activity_recomputes = 0;
+  int64_t nnz_processed       = 0;
+
+  double propagation_time        = 0.0;
+  double compute_activities_time = 0.0;
+  double update_activities_time  = 0.0;
+
+  domain_stats_t& operator+=(const domain_stats_t& other)
+  {
+    calls += other.calls;
+    infeasible += other.infeasible;
+    rounds += other.rounds;
+    max_rounds = std::max(max_rounds, other.max_rounds);
+    rows_processed += other.rows_processed;
+    rows_scanned += other.rows_scanned;
+    applied_changes += other.applied_changes;
+    tightenings += other.tightenings;
+    fixings += other.fixings;
+    activity_updates += other.activity_updates;
+    activity_recomputes += other.activity_recomputes;
+    nnz_processed += other.nnz_processed;
+    propagation_time += other.propagation_time;
+    compute_activities_time += other.compute_activities_time;
+    update_activities_time += other.update_activities_time;
+    return *this;
+  }
 };
 
 // The finite parts of the activities are accumulated with compensated (Dot2) summation: the
@@ -157,6 +201,8 @@ class domain_t {
 
   size_t last_nnz_processed{0};
 
+  domain_stats_t stats;
+
  private:
   domain_params params;
 
@@ -190,10 +236,13 @@ template <typename i_t, typename f_t>
 bool full_bound_strengthening(const csr_matrix_t<i_t, f_t>& Arow,
                               const std::vector<variable_type_t>& var_types,
                               const simplex_solver_settings_t<i_t, f_t>& settings,
-                              lp_problem_t<i_t, f_t>& lp)
+                              lp_problem_t<i_t, f_t>& lp,
+                              domain_stats_t* stats = nullptr)
 {
   domain_t<i_t, f_t> domain;
-  return domain.propagate_full(Arow, var_types, settings, lp);
+  const bool feasible = domain.propagate_full(Arow, var_types, settings, lp);
+  if (stats != nullptr) { *stats += domain.stats; }
+  return feasible;
 }
 
 }  // namespace cuopt::mathematical_optimization::simplex

@@ -795,6 +795,32 @@ void branch_and_bound_t<i_t, f_t>::set_solution_at_root(mip_solution_t<i_t, f_t>
 }
 
 template <typename i_t, typename f_t>
+simplex::domain_stats_t branch_and_bound_t<i_t, f_t>::collect_domain_stats() const
+{
+  simplex::domain_stats_t stats = root_domain_stats_;
+  for (i_t i = 0; i < bfs_worker_pool_.size(); ++i) {
+    stats += bfs_worker_pool_[i]->domain.stats;
+  }
+  for (i_t i = 0; i < diving_worker_pool_.size(); ++i) {
+    stats += diving_worker_pool_[i]->domain.stats;
+  }
+  for (i_t i = 0; i < submip_worker_pool_.size(); ++i) {
+    stats += submip_worker_pool_[i]->domain.stats;
+  }
+  if (deterministic_workers_) {
+    for (const auto& worker : *deterministic_workers_) {
+      stats += worker.domain.stats;
+    }
+  }
+  if (deterministic_diving_workers_) {
+    for (const auto& worker : *deterministic_diving_workers_) {
+      stats += worker.domain.stats;
+    }
+  }
+  return stats;
+}
+
+template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::set_final_solution(mip_solution_t<i_t, f_t>& solution,
                                                       f_t lower_bound)
 {
@@ -850,6 +876,30 @@ void branch_and_bound_t<i_t, f_t>::set_final_solution(mip_solution_t<i_t, f_t>& 
       exploration_stats_.lexical_reduction_nodes.load(),
       exploration_stats_.lexical_reduction_fixings_applied.load(),
       exploration_stats_.lexical_reduction_pruned_nodes.load());
+  }
+  const simplex::domain_stats_t domain_stats = collect_domain_stats();
+  if (domain_stats.calls > 0) {
+    settings_.log.print_format(
+      "Bound propagation: {} calls ({} infeasible), {} applied changes, {} tightenings ({} "
+      "fixings), {} rounds (max {}), {} rows processed ({} scanned), {} nnz\n",
+      domain_stats.calls,
+      domain_stats.infeasible,
+      domain_stats.applied_changes,
+      domain_stats.tightenings,
+      domain_stats.fixings,
+      domain_stats.rounds,
+      domain_stats.max_rounds,
+      domain_stats.rows_processed,
+      domain_stats.rows_scanned,
+      domain_stats.nnz_processed);
+    settings_.log.print_format(
+      "Bound propagation time: {:.2f}s propagating, {:.2f}s computing activities, {:.2f}s "
+      "updating activities ({} updates, {} row recomputes)\n",
+      domain_stats.propagation_time,
+      domain_stats.compute_activities_time,
+      domain_stats.update_activities_time,
+      domain_stats.activity_updates,
+      domain_stats.activity_recomputes);
   }
   if (integer_pivots_.load() > 0) {
     settings_.log.print_format("Number of integer pivots: {}\n", integer_pivots_.load());
@@ -3815,7 +3865,8 @@ typename branch_and_bound_t<i_t, f_t>::cut_pass_action_t branch_and_bound_t<i_t,
 
   f_t node_presolve_start_time = tic();
   mutex_original_lp_.lock();
-  bool feasible = simplex::full_bound_strengthening(Arow_, var_types_, settings_, original_lp_);
+  bool feasible = simplex::full_bound_strengthening(
+    Arow_, var_types_, settings_, original_lp_, &root_domain_stats_);
   mutex_original_lp_.unlock();
   f_t node_presolve_time = toc(node_presolve_start_time);
   if (node_presolve_time > 1.0) {
@@ -4582,7 +4633,8 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
       mutex_original_lp_.lock();
       original_lp_.lower = lower_bounds;
       original_lp_.upper = upper_bounds;
-      bool feasible = simplex::full_bound_strengthening(Arow_, var_types_, settings_, original_lp_);
+      bool feasible      = simplex::full_bound_strengthening(
+        Arow_, var_types_, settings_, original_lp_, &root_domain_stats_);
       mutex_original_lp_.unlock();
       if (!feasible) {
         settings_.log.printf("Bound strengthening failed\n");

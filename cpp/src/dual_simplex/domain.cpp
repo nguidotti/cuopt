@@ -9,9 +9,12 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cmath>
 
 namespace cuopt::mathematical_optimization::simplex {
+
+using steady_clock = std::chrono::steady_clock;
 
 // One step of the Ogita-Rump-Oishi Dot2 algorithm: adds coeff * value to sum and accumulates the
 // rounding errors of the product and of the addition in err, so sum + err is accurate to about
@@ -71,6 +74,7 @@ template <typename i_t, typename f_t>
 void domain_t<i_t, f_t>::compute_activities(const csr_matrix_t<i_t, f_t>& Arow,
                                             const lp_problem_t<i_t, f_t>& lp)
 {
+  const auto start = steady_clock::now();
   row_activities.resize(Arow.m);
   row_queued.resize(Arow.m, false);
   row_queue.clear_resize(std::max(Arow.m, 1));
@@ -78,12 +82,17 @@ void domain_t<i_t, f_t>::compute_activities(const csr_matrix_t<i_t, f_t>& Arow,
   for (i_t i = 0; i < Arow.m; ++i) {
     compute_row_activity(i, Arow, lp.lower, lp.upper);
   }
+  stats.compute_activities_time +=
+    std::chrono::duration<double>(steady_clock::now() - start).count();
 }
 
 template <typename i_t, typename f_t>
 void domain_t<i_t, f_t>::update_activities(const lp_problem_t<i_t, f_t>& lp,
                                            const bound_change_t<i_t, f_t>& bound_change)
 {
+  const auto start = steady_clock::now();
+  ++stats.activity_updates;
+
   i_t begin = lp.A.col_start[bound_change.var];
   i_t end   = lp.A.col_start[bound_change.var + 1];
   nnz_processed += end - begin;
@@ -154,6 +163,8 @@ void domain_t<i_t, f_t>::update_activities(const lp_problem_t<i_t, f_t>& lp,
       activity.recompute = true;
     }
   }
+  stats.update_activities_time +=
+    std::chrono::duration<double>(steady_clock::now() - start).count();
 }
 
 template <typename i_t, typename f_t>
@@ -243,10 +254,12 @@ bool domain_t<i_t, f_t>::apply_and_propagate(const csr_matrix_t<i_t, f_t>& Arow,
                                              lp_problem_t<i_t, f_t>& lp)
 {
   if (!apply(lp, bound_change)) {
+    stats.nnz_processed += nnz_processed;
     last_nnz_processed = nnz_processed;
     nnz_processed      = 0;
     return true;
   }
+  ++stats.applied_changes;
 
   i_t j         = bound_change.var;
   i_t col_start = lp.A.col_start[j];
@@ -283,14 +296,26 @@ bool domain_t<i_t, f_t>::run_bound_propagation(const csr_matrix_t<i_t, f_t>& Aro
                                                const simplex_solver_settings_t<i_t, f_t>& settings,
                                                lp_problem_t<i_t, f_t>& lp)
 {
-  bool feasible = true;
-  i_t iter      = 0;
+  const auto start          = steady_clock::now();
+  bool feasible             = true;
+  i_t iter                  = 0;
+  int64_t rounds            = 0;
+  size_t rows_left_in_round = 0;
   while (feasible && !row_queue.empty()) {
+    if (rows_left_in_round == 0) {
+      rows_left_in_round = row_queue.size();
+      ++rounds;
+    }
+    --rows_left_in_round;
+
     i_t row         = row_queue.pop_front();
     row_queued[row] = false;
     ++iter;
 
-    if (row_activities[row].recompute) { compute_row_activity(row, Arow, lp.lower, lp.upper); }
+    if (row_activities[row].recompute) {
+      compute_row_activity(row, Arow, lp.lower, lp.upper);
+      ++stats.activity_recomputes;
+    }
     row_activity_t activity = row_activities[row];
     const f_t max_a         = activity.max + activity.max_err;
     const f_t min_a         = activity.min + activity.min_err;
@@ -333,6 +358,7 @@ bool domain_t<i_t, f_t>::run_bound_propagation(const csr_matrix_t<i_t, f_t>& Aro
     i_t row_start = Arow.row_start[row];
     i_t row_end   = Arow.row_start[row + 1];
     nnz_processed += row_end - row_start;
+    ++stats.rows_scanned;
 
     // The capacity threshold is recomputed from the bounds seen during this scan.
     f_t threshold = -tol;
@@ -363,7 +389,10 @@ bool domain_t<i_t, f_t>::run_bound_propagation(const csr_matrix_t<i_t, f_t>& Aro
 
       // Read the activity again for each variable, since earlier tightenings in this row might have
       // already updated it, possibly marking it for recomputation.
-      if (row_activities[row].recompute) { compute_row_activity(row, Arow, lp.lower, lp.upper); }
+      if (row_activities[row].recompute) {
+        compute_row_activity(row, Arow, lp.lower, lp.upper);
+        ++stats.activity_recomputes;
+      }
       const row_activity_t<i_t, f_t>& current = row_activities[row];
 
       // Contribution of x_j to the min/max activity, flagged as infinite the same way as in
@@ -471,6 +500,8 @@ bool domain_t<i_t, f_t>::run_bound_propagation(const csr_matrix_t<i_t, f_t>& Aro
              .new_upper = new_ub,
              .new_lower = new_lb,
              .origin    = bound_change_origin_t::BOUND_PROPAGATION});
+      ++stats.tightenings;
+      if (new_lb == new_ub) { ++stats.fixings; }
 
       // Queue the rows containing x_j, including this one, so they are propagated with the new
       // bounds.
@@ -490,6 +521,14 @@ bool domain_t<i_t, f_t>::run_bound_propagation(const csr_matrix_t<i_t, f_t>& Aro
   while (!row_queue.empty()) {
     row_queued[row_queue.pop_front()] = false;
   }
+
+  ++stats.calls;
+  if (!feasible) { ++stats.infeasible; }
+  stats.rounds += rounds;
+  stats.max_rounds = std::max(stats.max_rounds, rounds);
+  stats.rows_processed += iter;
+  stats.nnz_processed += nnz_processed;
+  stats.propagation_time += std::chrono::duration<double>(steady_clock::now() - start).count();
 
   last_nnz_processed = nnz_processed;
   nnz_processed      = 0;
