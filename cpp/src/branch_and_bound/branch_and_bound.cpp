@@ -5272,7 +5272,7 @@ node_status_t branch_and_bound_t<i_t, f_t>::solve_node_deterministic(
 #endif
 
   if (!feasible) {
-    node_ptr->lower_bound = std::numeric_limits<f_t>::infinity();
+    node_ptr->lower_bound = worker.local_upper_bound;
     search_tree.update(node_ptr, node_status_t::FATHOMED);
     worker.record_fathomed(node_ptr, worker.local_upper_bound);
     --exploration_stats_.nodes_unexplored;
