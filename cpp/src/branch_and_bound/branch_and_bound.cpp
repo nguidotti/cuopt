@@ -6013,8 +6013,8 @@ void branch_and_bound_t<i_t, f_t>::deterministic_dive(
     lp_settings.scale_columns = false;
 
     feasible = worker.update_variable_bounds(node_ptr, settings_) &&
-                    worker.domain.propagate_objective(
-                      worker.Arow, worker.var_types, settings_, worker.leaf_problem, cutoff);
+               worker.domain.propagate_objective(
+                 worker.Arow, worker.var_types, settings_, worker.leaf_problem, cutoff);
 
     if (settings_.deterministic) {
       // TEMP APPROXIMATION;
