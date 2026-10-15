@@ -94,7 +94,8 @@ class deterministic_worker_base_t : public branch_and_bound_worker_t<i_t, f_t> {
                               const std::vector<f_t>& root_edge_norm,
                               const std::vector<i_t>& new_slacks,
                               const std::string& context_name)
-    : base_t(id, original_lp, Arow, var_types, settings, pc, root_solution, root_edge_norm, new_slacks),
+    : base_t(
+        id, original_lp, Arow, var_types, settings, pc, root_solution, root_edge_norm, new_slacks),
       work_context(context_name),
       pc_snapshot(1, settings)
   {
@@ -474,8 +475,15 @@ class deterministic_diving_worker_pool_t
     this->workers_.reserve(num_workers);
     for (int i = 0; i < num_workers; ++i) {
       search_strategy_t type = diving_types[i % diving_types.size()];
-      this->workers_.emplace_back(
-        i, type, original_lp, Arow, var_types, settings, pc, root_solution, root_edge_norm,
+      this->workers_.emplace_back(i,
+                                  type,
+                                  original_lp,
+                                  Arow,
+                                  var_types,
+                                  settings,
+                                  pc,
+                                  root_solution,
+                                  root_edge_norm,
                                   new_slacks);
     }
   }

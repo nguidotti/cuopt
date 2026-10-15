@@ -37,8 +37,15 @@ class worker_pool_t {
     num_idle_workers_ = num_workers;
     idle_workers_.clear_resize(num_workers);
     for (i_t i = 0; i < num_workers; ++i) {
-      workers_[i] = std::make_unique<WorkerType>(
-        i, original_lp, Arow, var_type, settings, pc, root_solution, root_edge_norm,new_slacks,
+      workers_[i] = std::make_unique<WorkerType>(i,
+                                                 original_lp,
+                                                 Arow,
+                                                 var_type,
+                                                 settings,
+                                                 pc,
+                                                 root_solution,
+                                                 root_edge_norm,
+                                                 new_slacks,
                                                  rng_offset);
       idle_workers_.push_back(i);
       // Propagate the (possibly null) symmetry pointer; workers lazily build

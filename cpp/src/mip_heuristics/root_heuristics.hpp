@@ -101,8 +101,14 @@ struct cut_pass_heuristics_t {
     const std::vector<f_t>& sol,
     search_strategy_t type)
   {
-    submip_worker_ = std::make_unique<diving_worker_t<i_t, f_t>>(
-      id, lp, Arow_, var_types_, settings, pseudo_costs_, root_solution_, root_edge_norm_,
+    submip_worker_                  = std::make_unique<diving_worker_t<i_t, f_t>>(id,
+                                                                 lp,
+                                                                 Arow_,
+                                                                 var_types_,
+                                                                 settings,
+                                                                 pseudo_costs_,
+                                                                 root_solution_,
+                                                                 root_edge_norm_,
                                                                  new_slacks_);
     submip_worker_->start_node      = mip_node_t<i_t, f_t>(root_obj, root_vstatus);
     submip_worker_->leaf_vstatus    = root_vstatus;
@@ -121,8 +127,14 @@ struct cut_pass_heuristics_t {
     const std::vector<simplex::variable_status_t>& root_vstatus,
     const std::vector<f_t>& sol)
   {
-    mutation_worker_ = std::make_unique<diving_worker_t<i_t, f_t>>(
-      id, lp, Arow_, var_types_, settings, pseudo_costs_, root_solution_, root_edge_norm_,
+    mutation_worker_                  = std::make_unique<diving_worker_t<i_t, f_t>>(id,
+                                                                   lp,
+                                                                   Arow_,
+                                                                   var_types_,
+                                                                   settings,
+                                                                   pseudo_costs_,
+                                                                   root_solution_,
+                                                                   root_edge_norm_,
                                                                    new_slacks_);
     mutation_worker_->start_node      = mip_node_t<i_t, f_t>(root_obj, root_vstatus);
     mutation_worker_->leaf_vstatus    = root_vstatus;

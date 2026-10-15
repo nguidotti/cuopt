@@ -5843,7 +5843,13 @@ void branch_and_bound_t<i_t, f_t>::deterministic_dive(
   worker.leaf_problem.lower = std::move(entry.resolved_lower);
   worker.leaf_problem.upper = std::move(entry.resolved_upper);
   worker.domain.clear();
-  worker.domain.compute_activities(worker.Arow, worker.leaf_problem);
+  bool feasible =
+    worker.domain.propagate_full(worker.Arow, worker.var_types, settings_, worker.leaf_problem);
+
+  if (settings_.deterministic) {
+    worker.work_context.record_work_sync_on_horizon(worker.domain.last_nnz_processed / 1e8);
+  }
+  if (!feasible) { return; }
 
   const i_t max_nodes_per_dive  = settings_.diving_settings.node_limit;
   const i_t max_backtrack_depth = settings_.diving_settings.backtrack_limit;
@@ -5884,7 +5890,7 @@ void branch_and_bound_t<i_t, f_t>::deterministic_dive(
     lp_settings.time_limit    = remaining_time;
     lp_settings.scale_columns = false;
 
-    bool feasible = worker.update_variable_bounds(node_ptr, settings_);
+    feasible = worker.update_variable_bounds(node_ptr, settings_);
 
     if (settings_.deterministic) {
       // TEMP APPROXIMATION;

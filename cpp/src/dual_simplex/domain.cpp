@@ -423,8 +423,8 @@ bool domain_t<i_t, f_t>::run_bound_propagation(const csr_matrix_t<i_t, f_t>& Aro
       if (var_types[j] == variable_type_t::INTEGER) {
         new_lb     = std::ceil(new_lb - settings.integer_tol);
         new_ub     = std::floor(new_ub + settings.integer_tol);
-        tighten_lb = new_lb > lb && new_lb - lb > min_improvement * std::abs(new_lb);
-        tighten_ub = new_ub < ub && ub - new_ub > min_improvement * std::abs(new_ub);
+        tighten_lb = new_lb - lb > settings.integer_tol;
+        tighten_ub = ub - new_ub > settings.integer_tol;
       } else if (lp.A.col_start[j + 1] - lp.A.col_start[j] == 1) {
         // A continuous column singleton (e.g., a slack) is only bounded, never tightened: its
         // finite bounds are implied by this row and only make the LP harder to solve.
