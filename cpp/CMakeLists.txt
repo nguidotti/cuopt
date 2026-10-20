@@ -317,7 +317,7 @@ FetchContent_MakeAvailable(papilo)
 FetchContent_Declare(
         pslp
         GIT_REPOSITORY "https://github.com/dance858/PSLP.git"
-        GIT_TAG "v0.1.1"
+        GIT_TAG "v0.1.0"
         GIT_PROGRESS TRUE
         EXCLUDE_FROM_ALL
         SYSTEM
@@ -1397,6 +1397,18 @@ install(DIRECTORY include/cuopt/grpc/
         DESTINATION ${_INCLUDE_DEST}/grpc
         COMPONENT client-dev
 )
+
+if(NOT SKIP_GRPC_BUILD)
+    install(FILES
+            ${PROTO_PATH_MANUAL}/cuopt_remote_service.proto
+            ${PROTO_PATH_MANUAL}/cuopt_remote.proto
+            ${PROTO_PATH_GEN}/cuopt_remote_data.proto
+            ${PROTO_PATH_ROUTING}/cuopt_routing.proto
+            ${PROTO_PATH_ROUTING}/cuopt_routing_solution.proto
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/cuopt/proto
+            COMPONENT client-dev
+    )
+endif()
 
 # linear_programming/cuopt_c.h forwards to the C API that mathopt provides.
 install(DIRECTORY include/cuopt/mathematical_optimization/
