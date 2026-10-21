@@ -1449,8 +1449,8 @@ f_t branch_and_bound_t<i_t, f_t>::compute_node_cutoff(const lp_problem_t<i_t, f_
   if (lp.objective_step.has_step()) {
     f_t step = lp.objective_step.step_size;
     f_t bias = lp.objective_step.bias;
-    // Any improving feasible solution must have objective <= upper_bound - step.
-    f_t k = std::floor((upper_bound - bias) / step + settings_.integer_tol);
+    // Any improving feasible solution lies on the lattice strictly below upper_bound.
+    f_t k = std::ceil((upper_bound - bias) / step - settings_.integer_tol);
     return (k - 1) * step + bias;
   } else if (lp.objective_is_integral) {
     // Any improving feasible solution has an integer objective strictly below upper_bound.
