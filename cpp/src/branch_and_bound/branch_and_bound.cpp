@@ -2258,6 +2258,7 @@ void branch_and_bound_t<i_t, f_t>::dive_with(diving_worker_t<i_t, f_t>* worker,
     if (lp_status == dual_status_t::CONCURRENT_LIMIT) { break; }
     if (lp_status == dual_status_t::ITERATION_LIMIT) { break; }
 
+    const i_t depth               = node_ptr->depth;
     auto [node_status, round_dir] = update_tree(node_ptr, dive_tree, worker, lp_status, log);
     worker->recompute_basis       = node_status != node_status_t::HAS_CHILDREN;
 
@@ -2271,7 +2272,7 @@ void branch_and_bound_t<i_t, f_t>::dive_with(diving_worker_t<i_t, f_t>* worker,
       }
     } else {
       if (stack.size() >= 1) {
-        for (i_t i = 0; i < node_ptr->depth - stack.front()->depth + 1; ++i) {
+        for (i_t i = 0; i < depth - stack.front()->depth + 1; ++i) {
           worker->backtrack_bound_changes();
         }
       }
@@ -6017,12 +6018,13 @@ void branch_and_bound_t<i_t, f_t>::deterministic_dive(
     }
 
     deterministic_diving_policy_t<i_t, f_t> policy{*this, worker, stack, max_backtrack_depth};
+    const i_t depth = node_ptr->depth;
     auto [node_status, round_dir] =
       update_tree_impl(node_ptr, dive_tree, &worker, lp_status, policy);
 
     // Backtrack to the parent of the next node, including the changes of this node.
     if (node_status != node_status_t::HAS_CHILDREN && !stack.empty()) {
-      for (i_t i = 0; i < node_ptr->depth - stack.front()->depth + 1; ++i) {
+      for (i_t i = 0; i < depth - stack.front()->depth + 1; ++i) {
         worker.backtrack_bound_changes();
       }
     }
