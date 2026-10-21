@@ -145,13 +145,6 @@ bool check_guess(const lp_problem_t<i_t, f_t>& original_lp,
     if (verbose) { settings.log.printf("Solution is feasible\n"); }
     feasible = true;
   }
-
-  settings.log.print_format(
-    "incumbent: primal_error={:.5g}, bound_error={:.5g}, integrality_error={:.5g}\n",
-    primal_error,
-    bound_error,
-    integrality_error);
-
   return feasible;
 }
 
