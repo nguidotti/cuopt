@@ -4345,7 +4345,6 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     return mip_status_t::OPTIMAL;
   }
 
-  is_running_ = true;
   lp_settings.concurrent_halt =
     settings_.concurrent_halt ? settings_.concurrent_halt : &node_concurrent_halt_;
   reduced_cost_bounds_t<i_t, f_t> reduced_cost_bounds(original_lp_.num_cols);
@@ -4440,6 +4439,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   }
 
   if (num_fractional != 0 && settings_.max_cut_passes > 0) { print_table_header(); }
+  is_running_ = true;
 
   cut_pool_t<i_t, f_t> cut_pool(original_lp_.num_cols, settings_);
   cut_generation_t<i_t, f_t> cut_generation(cut_pool,
