@@ -495,14 +495,10 @@ f_t branch_and_bound_t<i_t, f_t>::compute_node_cutoff(const lp_problem_t<i_t, f_
   if (lp.objective_step.has_step()) {
     f_t step = lp.objective_step.step_size;
     f_t bias = lp.objective_step.bias;
-    // Any improving feasible solution must have objective <= upper_bound - step.
-    f_t k = std::floor((upper_bound - bias) / step + settings_.integer_tol);
+    f_t k    = std::ceil((upper_bound - bias) / step - settings_.integer_tol);
     return (k - 1) * step + bias + settings_.dual_tol;
   } else if (lp.objective_is_integral) {
-    // If the objective is integral, any feasible solution should produce an upper bound that is
-    // (approximately) integral. We add a small tolerance and floor this value to get an integer,
-    // we then subtract 1, to stop simplex on problems that cannot improve the primal objective.
-    return std::floor(upper_bound + settings_.integer_tol) - 1 + settings_.dual_tol;
+    return std::ceil(upper_bound - settings_.integer_tol) - 1 + settings_.dual_tol;
   }
   return upper_bound + settings_.dual_tol;
 }
