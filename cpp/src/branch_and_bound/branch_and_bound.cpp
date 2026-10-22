@@ -508,14 +508,20 @@ bool branch_and_bound_t<i_t, f_t>::accept_new_incumbent(f_t obj)
 {
   if (!incumbent_.has_incumbent) return true;
 
-  // A new incumbent must have objective < threshold.
+  f_t threshold = incumbent_.objective - settings_.primal_tol;
+  f_t step      = 0.0;
   if (original_lp_.objective_step.has_step()) {
-    return obj < incumbent_.objective - 0.5 * original_lp_.objective_step.step_size;
+    step = original_lp_.objective_step.step_size;
   } else if (original_lp_.objective_is_integral) {
-    return obj < incumbent_.objective - 0.5;
-  } else {
-    return obj < incumbent_.objective - settings_.primal_tol;
+    step = 1.0;
   }
+  if (step > 0.0) {
+    // Half a step above the greatest lattice value strictly below the incumbent.
+    const f_t lattice_below =
+      compute_node_cutoff(original_lp_, incumbent_.objective) - settings_.dual_tol;
+    threshold = std::min(threshold, lattice_below + 0.5 * step);
+  }
+  return obj < threshold;
 }
 
 template <typename i_t, typename f_t>
@@ -561,19 +567,19 @@ bool branch_and_bound_t<i_t, f_t>::set_solution_from_heuristics(const std::vecto
                               bound_err,
                               num_fractional,
                               integral_err);
-    settings_.log.print_format("upper_bound={}, obj={}\n", incumbent_.objective, obj);
     mutex_original_lp_.unlock();
-    mutex_upper_.lock();
 
-    if (is_feasible && accept_new_incumbent(obj)) {
-      f_t current_upper_bound = upper_bound_.load();
-      upper_bound_            = std::min(current_upper_bound, obj);
-      incumbent_.set_incumbent_solution(obj, crushed_solution);
-      if (current_upper_bound > upper_bound_.load()) {
-        report_heuristic(obj, origin);
-        success = true;
+    if (is_feasible) {
+      std::lock_guard lock(mutex_upper_);
+      if (accept_new_incumbent(obj)) {
+        f_t current_upper_bound = upper_bound_.load();
+        upper_bound_            = std::min(current_upper_bound, obj);
+        incumbent_.set_incumbent_solution(obj, crushed_solution);
+        if (current_upper_bound > upper_bound_.load()) {
+          report_heuristic(obj, origin);
+          success = true;
+        }
       }
-
     } else {
       attempt_repair         = true;
       constexpr bool verbose = false;
@@ -586,7 +592,6 @@ bool branch_and_bound_t<i_t, f_t>::set_solution_from_heuristics(const std::vecto
           num_fractional);
       }
     }
-    mutex_upper_.unlock();
   } else {
     settings_.log.debug("Solution objective not better than current upper_bound_. Not accepted.\n");
   }
