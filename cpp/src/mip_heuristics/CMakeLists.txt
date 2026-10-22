@@ -18,6 +18,7 @@ set(MIP_LP_NECESSARY_FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/presolve/indicator_strengthening.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/solution/solution.cu
   ${CMAKE_CURRENT_SOURCE_DIR}/presolve/conflict_graph/clique_table.cu
+  ${CMAKE_CURRENT_SOURCE_DIR}/diving_heuristics.cpp
 )
 
 # Files that are MIP-specific and not needed for pure LP
