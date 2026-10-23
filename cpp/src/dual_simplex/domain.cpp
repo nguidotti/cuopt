@@ -303,11 +303,9 @@ bool domain_t<i_t, f_t>::propagate_implications(i_t j,
     for (i_t p = offsets[j]; p < offsets[j + 1]; ++p) {
       const i_t k = variables[p];
       if (k == j || k >= lp.num_cols) { continue; }
-      const f_t new_lower = std::abs(lower[p]) < params.max_derived_bound ? lower[p] : -inf;
-      const f_t new_upper = std::abs(upper[p]) < params.max_derived_bound ? upper[p] : inf;
       if (!tighten_bounds(k,
-                          new_lower,
-                          new_upper,
+                          lower[p],
+                          upper[p],
                           bound_change_origin_t::BOUND_IMPLICATION,
                           var_types,
                           settings,

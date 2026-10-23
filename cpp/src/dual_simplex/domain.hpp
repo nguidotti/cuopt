@@ -191,6 +191,7 @@ class domain_t {
                       const std::vector<variable_type_t>& var_types,
                       const lp_problem_t<i_t, f_t>& lp,
                       f_t tol);
+
   // Queues row i unless it is already queued or neither of its sides can tighten a bound. A row
   // awaiting recomputation is always queued.
   void queue_row(i_t i, const lp_problem_t<i_t, f_t>& lp, f_t tol);
