@@ -170,9 +170,22 @@ class domain_t {
 
   size_t nnz_processed{0};
 
+  // Queues the rows containing x_j.
+  void queue_variable(i_t j, const lp_problem_t<i_t, f_t>& lp, f_t tol);
+
   // Queues row i unless it is already queued or neither of its sides can tighten a bound. A row
   // awaiting recomputation is always queued.
   void queue_row(i_t i, const lp_problem_t<i_t, f_t>& lp, f_t tol);
+
+  // Intersects the bounds of x_k with [new_lower, new_upper], applying and queueing x_k if they
+  // improve. Returns false if the bounds cross.
+  bool tighten_bounds(i_t k,
+                      f_t new_lower,
+                      f_t new_upper,
+                      bound_change_origin_t origin,
+                      const std::vector<variable_type_t>& var_types,
+                      const simplex_solver_settings_t<i_t, f_t>& settings,
+                      lp_problem_t<i_t, f_t>& lp);
 
   // Propagates the queued rows in FIFO order, applying each accepted bound immediately
   // and queueing the rows it affects. Returns false if a row or a variable proves infeasibility.
