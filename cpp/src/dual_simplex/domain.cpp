@@ -190,6 +190,17 @@ void domain_t<i_t, f_t>::queue_row(i_t i, const lp_problem_t<i_t, f_t>& lp, f_t 
 }
 
 template <typename i_t, typename f_t>
+void domain_t<i_t, f_t>::clear_queues()
+{
+  while (!row_queue.empty()) {
+    row_queued[row_queue.pop_front()] = false;
+  }
+  while (!var_queue.empty()) {
+    var_queued[var_queue.pop_front()] = false;
+  }
+}
+
+template <typename i_t, typename f_t>
 void domain_t<i_t, f_t>::queue_variable(i_t j,
                                         const std::vector<variable_type_t>& var_types,
                                         const lp_problem_t<i_t, f_t>& lp,
@@ -208,7 +219,7 @@ void domain_t<i_t, f_t>::queue_variable(i_t j,
       (value == 0 || value == 1)) {
     var_queue.push_back(j);
     var_queued[j] = true;
-      }
+  }
 }
 
 template <typename i_t, typename f_t>
@@ -269,7 +280,88 @@ bool domain_t<i_t, f_t>::tighten_bounds(i_t k,
   }
 
   apply(lp, {.var = k, .new_upper = new_upper, .new_lower = new_lower, .origin = origin});
-  queue_variable(k, lp, tol);
+  queue_variable(k, var_types, lp, tol);
+  return true;
+}
+
+template <typename i_t, typename f_t>
+bool domain_t<i_t, f_t>::propagate_implications(i_t j,
+                                                const std::vector<variable_type_t>& var_types,
+                                                const simplex_solver_settings_t<i_t, f_t>& settings,
+                                                lp_problem_t<i_t, f_t>& lp)
+{
+  const bool one = lp.lower[j] == 1;
+
+  // Probing x_j = 0 (resp. 1) implies lower[p] <= x_k <= upper[p] for every entry p of x_j.
+  if (implied_bounds != nullptr && j + 1 < implied_bounds->zero_offsets.size()) {
+    const auto& offsets   = one ? implied_bounds->one_offsets : implied_bounds->zero_offsets;
+    const auto& variables = one ? implied_bounds->one_variables : implied_bounds->zero_variables;
+    const auto& lower = one ? implied_bounds->one_lower_bound : implied_bounds->zero_lower_bound;
+    const auto& upper = one ? implied_bounds->one_upper_bound : implied_bounds->zero_upper_bound;
+    nnz_processed += offsets[j + 1] - offsets[j];
+
+    for (i_t p = offsets[j]; p < offsets[j + 1]; ++p) {
+      const i_t k = variables[p];
+      if (k == j || k >= lp.num_cols) { continue; }
+      const f_t new_lower = std::abs(lower[p]) < params.max_derived_bound ? lower[p] : -inf;
+      const f_t new_upper = std::abs(upper[p]) < params.max_derived_bound ? upper[p] : inf;
+      if (!tighten_bounds(k,
+                          new_lower,
+                          new_upper,
+                          bound_change_origin_t::BOUND_IMPLICATION,
+                          var_types,
+                          settings,
+                          lp)) {
+        return false;
+      }
+    }
+  }
+
+  if (clique_table == nullptr || !clique_table->ready.load(std::memory_order_acquire)) {
+    return true;
+  }
+
+  // Vertex v < n is the literal x_v and v >= n its complement 1 - x_{v - n}. At most one literal
+  // of a clique is true, so every neighbour of the true literal of x_j is false.
+  const i_t n = clique_table->n_variables;
+  if (j >= n) { return true; }
+  const i_t literal = one ? j : j + n;
+
+  auto set_false = [&](i_t v) {
+    ++nnz_processed;
+    const i_t k = v < n ? v : v - n;
+    if (k == j) { return true; }
+    if (v < n) {
+      return tighten_bounds(
+        k, lp.lower[k], 0.0, bound_change_origin_t::CLIQUE, var_types, settings, lp);
+    }
+    return tighten_bounds(
+      k, 1.0, lp.upper[k], bound_change_origin_t::CLIQUE, var_types, settings, lp);
+  };
+
+  for (i_t c : clique_table->var_clique_first.slice(literal)) {
+    for (i_t v : clique_table->first[c]) {
+      if (!set_false(v)) { return false; }
+    }
+  }
+
+  for (i_t a : clique_table->var_clique_addtl.slice(literal)) {
+    const auto& addtl = clique_table->addtl_cliques[a];
+    if (addtl.vertex_idx == literal) {
+      // The extension vertex is adjacent to the suffix of its base clique.
+      const auto& base = clique_table->first[addtl.clique_idx];
+      for (size_t pos = addtl.start_pos_on_clique; pos < base.size(); ++pos) {
+        if (!set_false(base[pos])) { return false; }
+      }
+    } else if (!set_false(addtl.vertex_idx)) {
+      return false;
+    }
+  }
+
+  for (i_t v : clique_table->small_clique_adj.slice(literal)) {
+    if (!set_false(v)) { return false; }
+  }
+
   return true;
 }
 
@@ -503,12 +595,7 @@ bool domain_t<i_t, f_t>::run_bound_propagation(const csr_matrix_t<i_t, f_t>& Aro
   }
 
   // Clear the rows and variables left in the queues when infeasibility stops the propagation early.
-  while (!row_queue.empty()) {
-    row_queued[row_queue.pop_front()] = false;
-  }
-  while (!var_queue.empty()) {
-    var_queued[var_queue.pop_front()] = false;
-  }
+  clear_queues();
 
   last_nnz_processed = nnz_processed;
   nnz_processed      = 0;

@@ -192,6 +192,9 @@ class domain_t {
   // awaiting recomputation is always queued.
   void queue_row(i_t i, const lp_problem_t<i_t, f_t>& lp, f_t tol);
 
+  // Empties the row and variable queues.
+  void clear_queues();
+
   // Queues the rows containing x_j and, if x_j is an integer fixed to 0 or 1, x_j itself so its
   // implications are applied.
   void queue_variable(i_t j,
