@@ -185,22 +185,18 @@ class domain_t {
 
   size_t nnz_processed{0};
 
-  // Queues the rows containing x_j.
-  void queue_variable(i_t j, const lp_problem_t<i_t, f_t>& lp, f_t tol);
-
-  // Queues row i unless it is already queued or neither of its sides can tighten a bound. A row
-  // awaiting recomputation is always queued.
-  void queue_row(i_t i, const lp_problem_t<i_t, f_t>& lp, f_t tol);
-
-  // Empties the row and variable queues.
-  void clear_queues();
-
   // Queues the rows containing x_j and, if x_j is an integer fixed to 0 or 1, x_j itself so its
   // implications are applied.
   void queue_variable(i_t j,
                       const std::vector<variable_type_t>& var_types,
                       const lp_problem_t<i_t, f_t>& lp,
                       f_t tol);
+  // Queues row i unless it is already queued or neither of its sides can tighten a bound. A row
+  // awaiting recomputation is always queued.
+  void queue_row(i_t i, const lp_problem_t<i_t, f_t>& lp, f_t tol);
+
+  // Empties the row and variable queues.
+  void clear_queues();
 
   // Applies the probing and clique implications of x_j at its fixed value. Returns false if an
   // implied bound proves infeasibility.
