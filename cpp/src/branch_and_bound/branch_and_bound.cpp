@@ -1687,9 +1687,11 @@ dual_status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(
       lp_settings.time_limit = settings_.time_limit - toc(exploration_stats_.start_time);
       if (lp_settings.time_limit <= 0.0) { return dual_status_t::TIME_LIMIT; }
 
-      if (!worker->domain.propagate_objective(
-      worker->Arow, worker->var_types, settings_, worker->leaf_problem, cutoff)) {
-        return dual_status_t::CUTOFF;
+      if (worker->search_strategy == search_strategy_t::BEST_FIRST) {
+        if (!worker->domain.propagate_objective(
+              worker->Arow, worker->var_types, settings_, worker->leaf_problem, cutoff)) {
+          return dual_status_t::CUTOFF;
+        }
       }
 
       i_t node_iter          = 0;
@@ -4797,37 +4799,6 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 
   is_running_ = false;
   settings_.log.printf("\n");
-
-  if (!settings_.inside_submip) {
-    size_t objective_fixings = 0;
-    size_t objective_cutoffs = 0;
-    auto add_objective_stats = [&](const domain_t<i_t, f_t>& domain) {
-      objective_fixings += domain.objective_fixings;
-      objective_cutoffs += domain.objective_cutoffs;
-    };
-    if (deterministic_mode_enabled_) {
-      for (const auto& worker : *deterministic_workers_) {
-        add_objective_stats(worker.domain);
-      }
-      if (deterministic_diving_workers_) {
-        for (const auto& worker : *deterministic_diving_workers_) {
-          add_objective_stats(worker.domain);
-        }
-      }
-    } else {
-      for (i_t i = 0; i < bfs_worker_pool_.size(); ++i) {
-        add_objective_stats(bfs_worker_pool_[i]->domain);
-      }
-      for (i_t i = 0; i < diving_worker_pool_.size(); ++i) {
-        add_objective_stats(diving_worker_pool_[i]->domain);
-      }
-      for (i_t i = 0; i < submip_worker_pool_.size(); ++i) {
-        add_objective_stats(submip_worker_pool_[i]->domain);
-      }
-    }
-    CUOPT_LOG_INFO(
-      "Objective propagation: %zu fixings, %zu cutoffs\n", objective_fixings, objective_cutoffs);
-  }
 
   // Compute final lower bound
   f_t lower_bound;
