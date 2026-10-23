@@ -208,7 +208,10 @@ class omp_atomic_t {
     return old;
   }
 
-  T fetch_sub(T inc) { return fetch_add(-inc); }
+  T fetch_sub(T inc, std::memory_order memory_order = std::memory_order::seq_cst)
+  {
+    return fetch_add(-inc, memory_order);
+  }
 
   // Get the underlying value without atomics
   T& underlying() { return val; }

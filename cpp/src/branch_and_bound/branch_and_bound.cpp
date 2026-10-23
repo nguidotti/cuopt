@@ -1386,14 +1386,14 @@ std::pair<node_status_t, branch_direction_t> branch_and_bound_t<i_t, f_t>::updat
   if (lp_status == dual_status_t::DUAL_UNBOUNDED) {
     node_ptr->lower_bound = inf;
     policy.graphviz(search_tree, node_ptr, "infeasible", 0.0);
-    search_tree.update(node_ptr, node_status_t::INFEASIBLE);
+    node_ptr->set_status(node_status_t::INFEASIBLE);
     status = node_status_t::INFEASIBLE;
 
   } else if (lp_status == dual_status_t::CUTOFF) {
     f_t leaf_obj          = compute_objective(leaf_problem, leaf_solution.x);
     node_ptr->lower_bound = upper_bound;
     policy.graphviz(search_tree, node_ptr, "cut off", leaf_obj);
-    search_tree.update(node_ptr, node_status_t::FATHOMED);
+    node_ptr->set_status(node_status_t::FATHOMED);
     status = node_status_t::FATHOMED;
 
   } else if (lp_status == dual_status_t::OPTIMAL) {
@@ -1427,7 +1427,7 @@ std::pair<node_status_t, branch_direction_t> branch_and_bound_t<i_t, f_t>::updat
     if (num_frac == 0) {
       policy.handle_integer_solution(node_ptr, leaf_obj, leaf_solution.x);
       policy.graphviz(search_tree, node_ptr, "integer feasible", leaf_obj);
-      search_tree.update(node_ptr, node_status_t::INTEGER_FEASIBLE);
+      node_ptr->set_status(node_status_t::INTEGER_FEASIBLE);
       status = node_status_t::INTEGER_FEASIBLE;
 
     } else if (node_ptr->lower_bound <= upper_bound + abs_fathom_tol) {
@@ -1452,12 +1452,12 @@ std::pair<node_status_t, branch_direction_t> branch_and_bound_t<i_t, f_t>::updat
                          worker->leaf_vstatus,
                          leaf_problem,
                          log);
-      search_tree.update(node_ptr, node_status_t::HAS_CHILDREN);
+      node_ptr->set_status(node_status_t::HAS_CHILDREN);
       status = node_status_t::HAS_CHILDREN;
 
     } else {
       policy.graphviz(search_tree, node_ptr, "fathomed", node_ptr->lower_bound);
-      search_tree.update(node_ptr, node_status_t::FATHOMED);
+      node_ptr->set_status(node_status_t::FATHOMED);
       status = node_status_t::FATHOMED;
     }
   } else if (lp_status == dual_status_t::TIME_LIMIT) {
@@ -1469,7 +1469,7 @@ std::pair<node_status_t, branch_direction_t> branch_and_bound_t<i_t, f_t>::updat
   } else {
     policy.on_numerical_issue(node_ptr);
     policy.graphviz(search_tree, node_ptr, "numerical", 0.0);
-    search_tree.update(node_ptr, node_status_t::NUMERICAL);
+    node_ptr->set_status(node_status_t::NUMERICAL);
     status = node_status_t::NUMERICAL;
   }
 
@@ -1770,7 +1770,7 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
 
     if (node_ptr->lower_bound > upper_bound_.load()) {
       search_tree_.graphviz_node(settings_.log, node_ptr, "cutoff", node_ptr->lower_bound);
-      search_tree_.update(node_ptr, node_status_t::FATHOMED);
+      node_ptr->set_status(node_status_t::FATHOMED);
       worker->recompute_basis  = true;
       worker->recompute_bounds = true;
       --exploration_stats_.nodes_unexplored;
@@ -2063,7 +2063,7 @@ void branch_and_bound_t<i_t, f_t>::best_first_search_with(bfs_worker_t<i_t, f_t>
       // This node was put on the heap earlier but its lower bound is now greater than the
       // current upper bound
       search_tree_.graphviz_node(settings_.log, start_node, "cutoff", start_node->lower_bound);
-      search_tree_.update(start_node, node_status_t::FATHOMED);
+      start_node->set_status(node_status_t::FATHOMED);
       --exploration_stats_.nodes_unexplored;
       continue;
     }
@@ -4716,7 +4716,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
         // This node was put on the heap earlier but its lower bound is now greater than the
         // current upper bound
         search_tree_.graphviz_node(settings_.log, start_node, "cutoff", start_node->lower_bound);
-        search_tree_.update(start_node, node_status_t::FATHOMED);
+        start_node->set_status(node_status_t::FATHOMED);
         --exploration_stats_.nodes_unexplored;
       }
 
@@ -5046,7 +5046,7 @@ void branch_and_bound_t<i_t, f_t>::run_deterministic_bfs_loop(
       if (node->lower_bound > upper_bound) {
         worker.current_node = nullptr;
         worker.record_fathomed(node, node->lower_bound);
-        search_tree.update(node, node_status_t::FATHOMED);
+        node->set_status(node_status_t::FATHOMED);
         --exploration_stats_.nodes_unexplored;
         continue;
       }
@@ -5275,7 +5275,7 @@ node_status_t branch_and_bound_t<i_t, f_t>::solve_node_deterministic(
 
   if (!feasible) {
     node_ptr->lower_bound = std::numeric_limits<f_t>::infinity();
-    search_tree.update(node_ptr, node_status_t::INFEASIBLE);
+    node_ptr->set_status(node_status_t::INFEASIBLE);
     worker.record_infeasible(node_ptr);
     --exploration_stats_.nodes_unexplored;
     ++exploration_stats_.nodes_explored;
@@ -5585,7 +5585,7 @@ void branch_and_bound_t<i_t, f_t>::deterministic_prune_worker_nodes_vs_incumbent
       std::deque<mip_node_t<i_t, f_t>*> surviving;
       for (auto* node : worker.plunge_stack) {
         if (node->lower_bound >= upper_bound) {
-          search_tree_.update(node, node_status_t::FATHOMED);
+          node->set_status(node_status_t::FATHOMED);
           --exploration_stats_.nodes_unexplored;
         } else {
           surviving.push_back(node);
@@ -5599,7 +5599,7 @@ void branch_and_bound_t<i_t, f_t>::deterministic_prune_worker_nodes_vs_incumbent
       std::vector<mip_node_t<i_t, f_t>*> surviving;
       for (auto* node : worker.backlog.data()) {
         if (node->lower_bound >= upper_bound) {
-          search_tree_.update(node, node_status_t::FATHOMED);
+          node->set_status(node_status_t::FATHOMED);
           --exploration_stats_.nodes_unexplored;
         } else {
           surviving.push_back(node);
