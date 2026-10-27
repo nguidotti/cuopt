@@ -922,7 +922,7 @@ void branch_and_bound_t<i_t, f_t>::add_feasible_solution(const lp_problem_t<i_t,
   mutex_upper_.lock();
   if (!incumbent_.has_incumbent || leaf_objective < incumbent_.objective) {
     incumbent_.set_incumbent_solution(leaf_objective, sol.empty() ? leaf_solution : sol);
-    upper_bound_.fetch_min(leaf_objective);
+    fetch_min(upper_bound_, leaf_objective);
 
     char symbol = feasible_solution_symbol(thread_type, settings_.diving_settings.show_type);
     report(lp, symbol, leaf_objective, get_lower_bound(), leaf_depth, 0);
@@ -1122,7 +1122,7 @@ struct nondeterministic_policy_t : tree_update_policy_t<i_t, f_t> {
   void on_numerical_issue(mip_node_t<i_t, f_t>* node) override
   {
     if (worker->search_strategy == search_strategy_t::BEST_FIRST) {
-      bnb.lower_bound_numerical_.fetch_min(node->lower_bound);
+      fetch_min(bnb.lower_bound_numerical_, node->lower_bound);
       log.printf("LP returned numerical issue on node %d. Best bound set to %+10.6e.\n",
                  node->node_id,
                  compute_user_objective(bnb.original_lp_, bnb.lower_bound_numerical_.load()));
@@ -5570,7 +5570,7 @@ void branch_and_bound_t<i_t, f_t>::deterministic_sort_replay_events(
   deterministic_merge_pseudo_cost_updates(*deterministic_workers_);
 
   for (const auto& worker : *deterministic_workers_) {
-    lower_bound_numerical_.fetch_min(worker.local_lower_bound_ceiling);
+    fetch_min(lower_bound_numerical_, worker.local_lower_bound_ceiling);
   }
 }
 
