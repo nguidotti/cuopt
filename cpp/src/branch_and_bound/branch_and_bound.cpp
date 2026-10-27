@@ -266,6 +266,7 @@ branch_and_bound_t<i_t, f_t>::branch_and_bound_t(
     incumbent_(1),
     root_relax_soln_(1, 1),
     root_crossover_soln_(1, 1),
+    seed_generator_(solver_settings.random_seed),
     pc_(1, solver_settings),
     solver_status_(mip_status_t::UNSET)
 {
@@ -3280,8 +3281,15 @@ void branch_and_bound_t<i_t, f_t>::launch_root_heuristics(
     root_heuristics.stop_old_workers(cut_pass, 1);
 
     search_strategy_t strategy = use_rins ? search_strategy_t::RINS : search_strategy_t::RENS;
-    diving_worker_t<i_t, f_t>* worker = current_heuristic->create_submip_worker(
-      cut_pass, lp, settings_, root_objective_, root_vstatus_, lp_solution.x, strategy);
+    diving_worker_t<i_t, f_t>* worker =
+      current_heuristic->create_submip_worker(cut_pass,
+                                              lp,
+                                              settings_,
+                                              root_objective_,
+                                              root_vstatus_,
+                                              lp_solution.x,
+                                              strategy,
+                                              root_heuristics.seed_rng_);
 
     if (use_rins) {
       mutex_upper_.lock();
@@ -3313,8 +3321,14 @@ void branch_and_bound_t<i_t, f_t>::launch_root_heuristics(
 
   if (has_incumbent && settings_.submip_settings.mutation != 0) {
     root_heuristics.stop_old_workers(cut_pass, 1);
-    diving_worker_t<i_t, f_t>* worker = current_heuristic->create_mutation_worker(
-      cut_pass, lp, settings_, root_objective_, root_vstatus_, lp_solution.x);
+    diving_worker_t<i_t, f_t>* worker =
+      current_heuristic->create_mutation_worker(cut_pass,
+                                                lp,
+                                                settings_,
+                                                root_objective_,
+                                                root_vstatus_,
+                                                lp_solution.x,
+                                                root_heuristics.seed_rng_);
     mutex_upper_.lock();
     worker->current_incumbent = incumbent_.x;
     mutex_upper_.unlock();
@@ -3376,8 +3390,8 @@ void branch_and_bound_t<i_t, f_t>::launch_root_heuristics(
       root_heuristics.next_diving_type_ = j + 1 % diving_heuristics.size();
       search_strategy_t strategy        = diving_heuristics[j];
 
-      diving_worker_t<i_t, f_t>* worker =
-        current_heuristic->create_diving_worker(cut_pass, lp, settings_, root_node, strategy);
+      diving_worker_t<i_t, f_t>* worker = current_heuristic->create_diving_worker(
+        cut_pass, lp, settings_, root_node, strategy, root_heuristics.seed_rng_);
 
       if (strategy == search_strategy_t::GUIDED_DIVING) {
         mutex_upper_.lock();
@@ -4656,7 +4670,8 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                             pc_,
                             root_relax_soln_.x,
                             edge_norms_,
-                            new_slacks_);
+                            new_slacks_,
+                            seed_generator_);
       submip_worker_pool_.init(num_submip_workers,
                                original_lp_,
                                Arow_,
@@ -4667,7 +4682,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                                root_relax_soln_.x,
                                edge_norms_,
                                new_slacks_,
-                               num_bfs_workers);
+                               seed_generator_);
 
       diving_worker_pool_.init(num_diving_workers,
                                original_lp_,
@@ -4679,7 +4694,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                                root_relax_soln_.x,
                                edge_norms_,
                                new_slacks_,
-                               num_bfs_workers + num_submip_workers);
+                               seed_generator_);
 
       active_submip_solvers_mutex_.lock();
       active_submip_solvers_.assign(num_submip_workers, nullptr);
@@ -4884,7 +4899,8 @@ void branch_and_bound_t<i_t, f_t>::run_deterministic_coordinator(const csr_matri
                                                                 pc_,
                                                                 root_relax_soln_.x,
                                                                 edge_norms_,
-                                                                new_slacks_);
+                                                                new_slacks_,
+                                                                seed_generator_);
 
   if (num_diving_workers > 0) {
     // Extract diving types from search_strategies (skip BEST_FIRST at index 0)
@@ -4902,7 +4918,8 @@ void branch_and_bound_t<i_t, f_t>::run_deterministic_coordinator(const csr_matri
                                                                        pc_,
                                                                        root_relax_soln_.x,
                                                                        edge_norms_,
-                                                                       new_slacks_);
+                                                                       new_slacks_,
+                                                                       seed_generator_);
     }
   }
 
