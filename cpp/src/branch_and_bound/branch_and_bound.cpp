@@ -1967,6 +1967,7 @@ void branch_and_bound_t<i_t, f_t>::launch_bfs_worker(bfs_worker_t<i_t, f_t>* wor
 template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::work_stealing(bfs_worker_t<i_t, f_t>* worker)
 {
+  if (bfs_worker_pool_.size() < 2) { return; }
   i_t nodes_to_steal = settings_.branch_and_bound_settings.nodes_per_steal;
   i_t max_attempts   = settings_.branch_and_bound_settings.max_steal_attempts;
   for (i_t i = 0; i < max_attempts; ++i) {
@@ -4096,7 +4097,8 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   // are fixed before launch.
   root_heuristics_t<i_t, f_t> root_heuristics(settings_.num_threads, settings_.random_seed);
   const f_t root_fj_time_limit = settings_.time_limit - toc(exploration_stats_.start_time);
-  if (!settings_.deterministic && omp_in_parallel() && root_fj_time_limit > 0) {
+  if (!settings_.deterministic && omp_in_parallel() && root_fj_time_limit > 0 &&
+      settings_.branch_and_bound_settings.root_heuristics != 0) {
     std::vector<f_t> root_fj_incumbent;
     mutex_upper_.lock();
     if (incumbent_.has_incumbent && incumbent_.x.size() == (size_t)original_lp_.num_cols) {
