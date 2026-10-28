@@ -139,7 +139,7 @@ class branch_and_bound_worker_t {
       nonbasic_list(),
       node_presolver(leaf_problem, Arow, {}, var_type),
       bounds_changed(original_lp.num_cols, false),
-      rng(seed_gen.next_u64(), seed_gen.generate_stream()),
+      rng{seed_gen.next_u64(), seed_gen.generate_stream()},
       root_solution(root_solution),
       root_edge_norm(root_edge_norm),
       var_types(var_type),
