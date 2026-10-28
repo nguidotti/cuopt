@@ -208,18 +208,6 @@ class bfs_worker_t : public branch_and_bound_worker_t<i_t, f_t> {
 
   void set_inactive() { this->is_active = false; }
 
-  // Steal nodes from another worker
-  bool steal_from(bfs_worker_t* victim, i_t nodes_to_steal)
-  {
-    if (!victim || nodes_to_steal < 1) return false;
-    if (victim == this || !victim->is_active ||
-        victim->node_queue.best_first_queue_size() < 2 * nodes_to_steal) {
-      return false;
-    }
-
-    return node_queue.steal_from(victim->node_queue, nodes_to_steal);
-  }
-
   void calculate_max_diving_workers(i_t num_bfs_workers, i_t total_diving_workers)
   {
     auto [start, end] =

@@ -25,11 +25,15 @@ struct branch_and_bound_hyper_params_t {
   // Indicate the chance in which a worker can steal a node from another worker.
   f_t steal_chance = 0.05;
 
-  // Indicate the number of nodes to steal in each attempt
-  i_t nodes_per_steal = 10;
+  // Indicate the number of nodes to steal. Takes the best nodes from the victim heap.
+  // Keep this value low to avoid thrashing.
+  i_t nodes_to_steal = 10;
 
-  // Set the maximum number of steal attempts before giving up
-  i_t max_steal_attempts = 3;
+  // Indicate the number of nodes to steal if the worker has no nodes in the heap
+  i_t nodes_to_steal_when_empty = 1000;
+
+  // Number of victims considered when stealing nodes.
+  i_t num_victims = 3;
 
   // Root heuristics: -1 (automatic) / 0 (disable) / 1 (enable)
   i_t root_heuristics = -1;

@@ -127,15 +127,17 @@ class node_queue_t {
     return true;
   }
 
-  bool steal_from(node_queue_t& victim, i_t nodes_to_steal)
+  // Focus on quantity. Used when the thief queue is empty
+  i_t steal_from(node_queue_t& victim, i_t nodes_to_steal)
   {
     assert(this != &victim);
 
-    bool steal = false;
-    std::scoped_lock lock(mutex_, victim.mutex_);
+    i_t stolen = 0;
+    std::scoped_lock lock(victim.mutex_, mutex_);
+    nodes_to_steal = std::clamp(nodes_to_steal, 1, victim.best_first_queue_size() / 2 + 1);
 
-    for (i_t k = 0; k < nodes_to_steal; ++k) {
-      if (victim.best_first_heap_.size() < nodes_to_steal) break;
+    // Stops at half of the size difference between the victim and this queue
+    while (stolen < nodes_to_steal && best_first_queue_size() < victim.best_first_queue_size()) {
       auto entry = victim.best_first_heap_.pop();
 
       // Invalidate the node for diving
@@ -144,9 +146,42 @@ class node_queue_t {
       victim.lower_bound_ = victim.best_first_heap_.empty()
                               ? std::numeric_limits<f_t>::infinity()
                               : victim.best_first_heap_.top()->lower_bound;
-      steal               = true;
+      ++stolen;
     }
-    return steal;
+
+    return stolen;
+  }
+
+  // Focus on quality. This tries to balance the "best" node distribution across all
+  // workers
+  i_t steal_best_from(node_queue_t& victim, i_t nodes_to_steal)
+  {
+    assert(this != &victim);
+
+    f_t eps    = 1E-6;
+    f_t cutoff = lower_bound_ - eps;
+    i_t stolen = 0;
+
+    if (victim.get_lower_bound() >= cutoff) { return 0; }
+
+    std::scoped_lock lock(victim.mutex_, mutex_);
+    nodes_to_steal = std::min(nodes_to_steal, (victim.best_first_queue_size() + 1) / 2);
+
+    // Only takes nodes strictly better than the best node in this queue
+    while (stolen < nodes_to_steal && victim.best_first_queue_size() > 0 &&
+           victim.get_lower_bound() < cutoff) {
+      auto entry = victim.best_first_heap_.pop();
+
+      // Invalidate the node for diving
+      mip_node_t<i_t, f_t>* node = std::exchange(entry->node, nullptr);
+      push_lockfree(node);
+      victim.lower_bound_ = victim.best_first_heap_.empty()
+                              ? std::numeric_limits<f_t>::infinity()
+                              : victim.best_first_heap_.top()->lower_bound;
+      ++stolen;
+    }
+
+    return stolen;
   }
 
   i_t diving_queue_size() { return diving_heap_.size(); }

@@ -1945,15 +1945,16 @@ void branch_and_bound_t<i_t, f_t>::launch_bfs_worker(bfs_worker_t<i_t, f_t>* wor
   idle_worker->lower_bound = worker->node_queue.get_lower_bound();
   idle_worker->set_active();
 
-  bool success = idle_worker->node_queue.steal_from(worker->node_queue, 1);
-
-  // Update to the actual lower bound of the stolen node (another worker may attempt to
-  // steal the same node at the same time)
-  idle_worker->lower_bound = idle_worker->node_queue.get_lower_bound();
+  i_t stolen = idle_worker->node_queue.steal_from(
+    worker->node_queue, settings_.branch_and_bound_settings.nodes_to_steal_when_empty);
 
   // If the idle worker is set to active (i.e., its node queue has a valid node),
   // launch a openmp task to run the best-first search for that worker
-  if (success) {
+  if (stolen > 0) {
+    // Update to the actual lower bound of the stolen node (another worker may attempt to
+    // steal the same node at the same time)
+    idle_worker->lower_bound = idle_worker->node_queue.get_lower_bound();
+
 #pragma omp task affinity(*idle_worker) priority(CUOPT_CRITICAL_TASK_PRIORITY) default(none) \
   firstprivate(idle_worker)
     best_first_search_with(idle_worker);
@@ -1968,24 +1969,69 @@ template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::work_stealing(bfs_worker_t<i_t, f_t>* worker)
 {
   if (bfs_worker_pool_.size() < 2) { return; }
-  i_t nodes_to_steal = settings_.branch_and_bound_settings.nodes_per_steal;
-  i_t max_attempts   = settings_.branch_and_bound_settings.max_steal_attempts;
-  for (i_t i = 0; i < max_attempts; ++i) {
-    i_t victim_id                  = worker->rng.uniform(0, bfs_worker_pool_.size());
-    bfs_worker_t<i_t, f_t>* victim = bfs_worker_pool_[victim_id];
-    if (worker->steal_from(victim, nodes_to_steal)) { break; }
+
+  i_t num_victims          = settings_.branch_and_bound_settings.num_victims;
+  i_t nodes_to_steal       = settings_.branch_and_bound_settings.nodes_to_steal;
+  i_t nodes_to_steal_empty = settings_.branch_and_bound_settings.nodes_to_steal_when_empty;
+  f_t steal_chance         = settings_.branch_and_bound_settings.steal_chance;
+
+  bool is_empty = worker->node_queue.best_first_queue_size() == 0;
+
+  // Steal many nodes from the largest worker it can find when it is empty.
+  if (is_empty) {
+    i_t largest_size = 0;
+    i_t largest_id   = -1;
+
+    for (i_t i = 0; i < num_victims; ++i) {
+      i_t victim_id                  = worker->rng.uniform(0, bfs_worker_pool_.size());
+      bfs_worker_t<i_t, f_t>* victim = bfs_worker_pool_[victim_id];
+      if (!victim->is_active || victim == worker) continue;
+
+      if (victim->node_queue.best_first_queue_size() > largest_size) {
+        largest_size = victim->node_queue.best_first_queue_size();
+        largest_id   = victim_id;
+      }
+    }
+
+    if (largest_id >= 0) {
+      worker->node_queue.steal_from(bfs_worker_pool_[largest_id]->node_queue, nodes_to_steal_empty);
+    }
+  }
+
+  // Steal the best nodes it can find. This aims to balance the "best" node distribution across the
+  // workers.
+  if (is_empty || worker->rng.next_double() < steal_chance) {
+    f_t best_lower_bound = inf;
+    i_t best_id          = -1;
+
+    for (i_t i = 0; i < num_victims; ++i) {
+      i_t victim_id                  = worker->rng.uniform(0, bfs_worker_pool_.size());
+      bfs_worker_t<i_t, f_t>* victim = bfs_worker_pool_[victim_id];
+      if (!victim->is_active || victim == worker ||
+          victim->node_queue.get_lower_bound() > worker->node_queue.get_lower_bound()) {
+        continue;
+      }
+
+      if (victim->node_queue.get_lower_bound() < best_lower_bound) {
+        best_lower_bound = victim->node_queue.get_lower_bound();
+        best_id          = victim_id;
+      }
+    }
+
+    if (best_id >= 0) {
+      worker->node_queue.steal_best_from(bfs_worker_pool_[best_id]->node_queue, nodes_to_steal);
+    }
   }
 }
 
 template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::best_first_search_with(bfs_worker_t<i_t, f_t>* worker)
 {
-  f_t lower_bound  = get_lower_bound();
-  f_t user_obj     = compute_user_objective(worker->leaf_problem, upper_bound_.load());
-  f_t user_lower   = compute_user_objective(worker->leaf_problem, lower_bound);
-  f_t abs_gap      = compute_user_abs_gap(worker->leaf_problem, upper_bound_.load(), lower_bound);
-  f_t rel_gap      = user_relative_gap(user_obj, user_lower);
-  f_t steal_chance = settings_.branch_and_bound_settings.steal_chance;
+  f_t lower_bound = get_lower_bound();
+  f_t user_obj    = compute_user_objective(worker->leaf_problem, upper_bound_.load());
+  f_t user_lower  = compute_user_objective(worker->leaf_problem, lower_bound);
+  f_t abs_gap     = compute_user_abs_gap(worker->leaf_problem, upper_bound_.load(), lower_bound);
+  f_t rel_gap     = user_relative_gap(user_obj, user_lower);
   node_queue_t<i_t, f_t>& node_queue = worker->node_queue;
 
   diving_hyper_params_t<i_t, f_t> diving_settings = settings_.diving_settings;
@@ -2079,10 +2125,9 @@ void branch_and_bound_t<i_t, f_t>::best_first_search_with(bfs_worker_t<i_t, f_t>
       break;
     }
 
-    // Steal a node with some probability or when it is empty. The victim is determined at random.
-    if (node_queue.best_first_queue_size() == 0 || worker->rng.next_double() < steal_chance) {
-      work_stealing(worker);
-    }
+    // Steal nodes when the queue is empty, or the best nodes of another worker with some
+    // probability
+    work_stealing(worker);
   }
 
   if (solver_status_ != mip_status_t::UNSET) { halt_solver(); }
