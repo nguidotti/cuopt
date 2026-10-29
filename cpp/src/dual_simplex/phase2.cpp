@@ -2085,7 +2085,9 @@ bool recover_dual_feasibility_after_repair(const lp_problem_t<i_t, f_t>& lp,
       num_shifted++;
     }
   }
-  settings.log.debug("Shifted %d costs after basis repair\n", num_shifted);
+  if (num_shifted > 0)
+    settings.log.debug(
+      "Shifted %d costs after basis repair. perturbation=%.4g\n", num_shifted, sum_perturb);
   const f_t after =
     dual_infeasibility(lp, settings, vstatus, z, settings.tight_tol, settings.dual_tol);
   work_estimate += 8 * lp.num_cols;
