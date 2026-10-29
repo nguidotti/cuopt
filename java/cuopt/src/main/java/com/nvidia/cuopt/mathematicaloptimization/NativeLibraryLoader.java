@@ -55,9 +55,9 @@ final class NativeLibraryLoader {
   };
 
   /**
-   * cuOpt's own cuDSS threading-layer plugin, built against a modern libgomp instead of cuDSS's
-   * prebuilt one (see java/cuopt/ci/build_static_libcuopt.sh, cpp/CMakeLists.txt's
-   * CUOPT_BUILD_CUSTOM_CUDSS_MTLAYER). cudssSetThreadingLayer() dlopen()s it by bare filename
+   * cuOpt's own cuDSS threading-layer plugin, built against cuOpt's own OpenMP runtime (LLVM
+   * libomp) instead of cuDSS's prebuilt libgomp one (see java/cuopt/ci/build_static_libcuopt.sh,
+   * cpp/CMakeLists.txt's CUOPT_OPENMP_RUNTIME). cudssSetThreadingLayer() dlopen()s it by bare filename
    * from code running inside libcudss.so.0 itself -- not from this library -- so
    * libcuopt_jni.so's own {@code $ORIGIN} RPATH trick (see the class javadoc) never applies to
    * it: that dlopen() call uses libcudss.so.0's own search path instead (which is empty; a

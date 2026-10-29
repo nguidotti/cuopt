@@ -34,10 +34,10 @@ Dependencies are installed automatically when using the pip and Conda installati
       - On RHEL/Rocky/Alma 8, install the ``openssl3`` package from EPEL (see :doc:`faq`)
       - On Ubuntu 20.04, install OpenSSL 3 from a PPA/backport or use the cuOpt container
 
-   * GNU OpenMP runtime (for multi-threaded cuDSS/barrier solves):
-      - pip installs bundle their own; conda installs, and source builds using the conda dev environment, pull in ``libgomp`` automatically as a package dependency; none of these need a manual step
-      - a source build done entirely outside the conda dev environment needs ``libgomp.so.1`` on the host; install via ``libgomp1`` (Debian/Ubuntu) or ``libgomp`` (RHEL/Rocky/Fedora)
-      - Missing this degrades to single-threaded solves with a warning, not a failure (see :doc:`faq`)
+   * LLVM OpenMP runtime (``libomp``):
+      - pip installs bundle their own; conda installs, and source builds using the conda dev environment, pull in ``llvm-openmp`` automatically as a package dependency; none of these need a manual step
+      - a source build done entirely outside the conda dev environment needs ``libomp`` on the host; install via ``libomp-dev`` (Debian/Ubuntu) or ``libomp-devel`` (RHEL/Rocky/Fedora). Configuring with ``-DCUOPT_OPENMP_RUNTIME=GNU`` links the GNU runtime (``libgomp``) instead
+      - A missing cuDSS threading layer degrades barrier solves to single-threaded cuDSS with a warning, not a failure (see :doc:`faq`)
 
    * NVIDIA drivers:
       - 525.60.13+ (Linux)

@@ -241,6 +241,8 @@ For C++ naming (`snake_case`, `d_`/`h_` prefixes, `_t` suffix), file extensions 
 
 ## OpenMP task/runtime compatibility
 
+cuOpt is compiled with GCC but links LLVM libomp by default (`-DCUOPT_OPENMP_RUNTIME=LLVM`; `GNU` selects libgomp), so production code runs through libomp's GOMP compatibility layer. With libomp, CMake always builds cuOpt's own cuDSS threading layer (`libcudss_mtlayer_cuopt.so`), because cuDSS's prebuilt one links libgomp and would load a second runtime.
+
 Treat `#pragma omp task if(...) firstprivate(...)` with a non-trivial C++ capture as runtime-ABI-sensitive. In affected LLVM libomp versions, the GCC `GOMP_task` compatibility path skips the GCC copy function for an included (`if(false)`) task, so the task body can observe an unconstructed object. Branch explicitly instead: create the OpenMP task only when deferral is wanted, and call the body synchronously otherwise.
 
 When diagnosing OpenMP-only failures, test compiler/runtime pairs separately. A Clang + libomp pass exercises the `__kmpc_*` ABI and does not cover GCC + libomp's `GOMP_*` path; reduce suspicious cases to a direct runtime-ABI probe before attributing them to solver logic.

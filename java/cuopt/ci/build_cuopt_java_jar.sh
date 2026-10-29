@@ -105,13 +105,13 @@ echo "  native library -> ${RESOURCE_DIR}/libcuopt_jni.so"
 # Everything else DT_NEEDED names -- TBB (KaMinPar throws through it), NCCL (PDLP's multi-GPU
 # path references it unconditionally), cuDSS (kept dynamic deliberately, matching
 # CMakeLists.txt's CUOPT_CUDSS_LIBRARY comment), rmm and rapids_logger (prebuilt RAPIDS wheels,
-# not a static build -- see CMakeLists.txt and setup_java_static_env.sh), and the build host's
-# own GCC runtime (libgomp, libstdc++, libgcc_s, whose consumer-side copies can be too old) --
-# travels beside the JNI library, which finds it all through its $ORIGIN RPATH.
+# not a static build -- see CMakeLists.txt and setup_java_static_env.sh), LLVM's OpenMP runtime
+# (libomp), and the build host's own GCC runtime (libstdc++, libgcc_s, whose consumer-side copies
+# can be too old) -- travels beside the JNI library, which finds it all through its $ORIGIN RPATH.
 #
 # libcudss_mtlayer_cuopt.so is the one exception: cuOpt's own cuDSS threading-layer plugin
-# (built by build_static_libcuopt.sh against a modern libgomp -- see cpp/CMakeLists.txt's
-# CUOPT_BUILD_CUSTOM_CUDSS_MTLAYER and setup_java_static_env.sh), which cudssSetThreadingLayer
+# (built by build_static_libcuopt.sh against the same libomp -- see cpp/CMakeLists.txt's
+# CUOPT_OPENMP_RUNTIME and setup_java_static_env.sh), which cudssSetThreadingLayer
 # dlopen()s at runtime rather than linking directly, so it never appears in DT_NEEDED at all.
 # Without it that call fails and cuDSS writes the failure straight to the process's native
 # stdout, corrupting Maven Surefire's forked-JVM protocol, so it is always added explicitly.
@@ -133,10 +133,9 @@ CUDA_RUNTIME_LIBRARY_PATTERN='^lib(cublas|cublasLt|cusparse|cusolver|nvJitLink)\
 #     actually pinned and linked. The versioned directory libcudss.so.0 itself was found in is
 #     unambiguous, so once that is known, use it for anything else that must be its exact version
 #     match.
-#   - libgomp.so.1: Rocky 8's own libgomp (including gcc-toolset-14's copy) lacks the OpenMP 5.0
-#     symbol cuDSS's threading layer needs (see setup_java_static_env.sh), so the modern one
-#     fetched there has to be the one that actually ships, not whichever libgomp.so.1 a broad
-#     /usr/lib64 search happens to find first.
+#   - libomp.so: the JNI library and the threading-layer plugin were both linked against the
+#     libomp setup_java_static_env.sh resolved (LIBOMP_LIBRARY), so that copy has to be the one
+#     that actually ships, not whichever libomp.so a broad search happens to find first.
 find_companion() {
   local name="$1"
   local preferred_dir="${2:-}"
@@ -183,8 +182,8 @@ for companion in "${COMPANIONS[@]}"; do
   preferred_dir=""
   if [[ "${companion}" == "libcudss_mtlayer_gomp.so.0" && -n "${CUDSS_LIBRARY_DIR}" ]]; then
     preferred_dir="${CUDSS_LIBRARY_DIR}"
-  elif [[ "${companion}" == "libgomp.so.1" && -n "${CUOPT_MODERN_LIBGOMP_DIR:-}" ]]; then
-    preferred_dir="${CUOPT_MODERN_LIBGOMP_DIR}"
+  elif [[ "${companion}" == libomp.so* && -n "${LIBOMP_LIBRARY:-}" ]]; then
+    preferred_dir="$(dirname "${LIBOMP_LIBRARY}")"
   fi
   companion_path="$(find_companion "${companion}" "${preferred_dir}")"
   if [[ "${companion}" == "libcudss.so.0" ]]; then

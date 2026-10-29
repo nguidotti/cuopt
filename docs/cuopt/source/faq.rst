@@ -116,21 +116,21 @@ General FAQ
 
 .. dropdown:: Why does my MIP/LP solve run single-threaded, or log a "could not load cuDSS threading layer" warning?
 
-   cuDSS's threading layer (used by the barrier method) must be built against the *same* GNU OpenMP runtime as cuOpt itself. If it isn't, cuDSS falls back to single-threaded execution and logs a warning instead of failing the solve.
+   cuDSS's threading layer (used by the barrier method) must be built against the *same* OpenMP runtime as cuOpt itself, which is LLVM's ``libomp``. cuOpt therefore ships its own threading layer, ``libcudss_mtlayer_cuopt.so``, next to ``libcuopt_mathopt.so``. If it cannot be loaded, cuDSS falls back to single-threaded execution and logs a warning instead of failing the solve.
 
-   **pip installs**: the wheel bundles its own GNU OpenMP runtime and a cuDSS threading layer built against it, so this shouldn't happen out of the box; no host ``libgomp`` is required.
+   **pip installs**: the wheel bundles ``libomp`` and the threading layer built against it, so this shouldn't happen out of the box; no host OpenMP runtime is required.
 
-   **conda installs**: ``libgomp`` is a runtime dependency of the ``libcuopt`` package, so ``conda install`` pulls it in automatically, no manual step needed.
+   **conda installs**: ``llvm-openmp`` is a runtime dependency of the ``libcuopt`` packages, so ``conda install`` pulls it in automatically, no manual step needed.
 
-   **source builds**: building with the conda dev environment (``conda/environments/*.yaml``) already provides a matching ``libgomp``, the same one cuDSS itself uses via conda, so this shouldn't happen either. Only a build done entirely outside that conda environment (a bare system toolchain) needs ``libgomp.so.1`` installed manually: install your distribution's GNU OpenMP runtime package, typically ``libgomp1`` (Debian/Ubuntu) or ``libgomp`` (RHEL/Rocky/Fedora), then re-run the solve.
+   **source builds**: building with the conda dev environment (``conda/environments/*.yaml``) already provides ``llvm-openmp``, so this shouldn't happen either. Only a build done entirely outside that conda environment (a bare system toolchain) needs ``libomp`` installed manually: install your distribution's LLVM OpenMP runtime package, typically ``libomp-dev`` (Debian/Ubuntu) or ``libomp-devel`` (RHEL/Rocky/Fedora), then rebuild.
 
    If you want cuDSS to use a specific threading-layer library, set the ``CUDSS_THREADING_LIB`` environment variable to its absolute path before running:
 
    .. code-block:: bash
 
-       export CUDSS_THREADING_LIB=/path/to/libcudss_mtlayer_gomp.so.0
+       export CUDSS_THREADING_LIB=/path/to/libcudss_mtlayer_cuopt.so
 
-   .. warning:: Whatever threading-layer library you point cuDSS at must be built against the same OpenMP runtime cuOpt itself uses. For pip installs, that's the bundled GNU libgomp, not necessarily the host's. Pointing cuDSS at a library linked against a *different* OpenMP runtime reintroduces the exact dual-runtime conflict described in `#1219 <https://github.com/NVIDIA/cuopt/issues/1219>`_, including possible crashes.
+   .. warning:: Whatever threading-layer library you point cuDSS at must be built against the same OpenMP runtime cuOpt itself uses. For pip installs, that's the bundled ``libomp``, not necessarily the host's; cuDSS's own prebuilt ``libcudss_mtlayer_gomp.so.0`` links GNU ``libgomp`` and does not qualify. Pointing cuDSS at a library linked against a *different* OpenMP runtime reintroduces the exact dual-runtime conflict described in `#1219 <https://github.com/NVIDIA/cuopt/issues/1219>`_, including possible crashes.
 
 .. dropdown:: Why am I getting "libcuopt.so: cannot open shared object file: No such file or directory" error?
 

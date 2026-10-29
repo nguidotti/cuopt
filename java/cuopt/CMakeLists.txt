@@ -86,7 +86,11 @@ if(CUOPT_PREFIX)
 endif()
 
 if(CUOPT_STATIC_BUILD_DIR)
-  find_package(OpenMP REQUIRED)
+  # The same LLVM libomp the static archive was built against (CUOPT_OPENMP_RUNTIME in
+  # cpp/CMakeLists.txt), so the JNI library and cuDSS's threading layer share one runtime.
+  find_library(OpenMP_omp_LIBRARY NAMES omp REQUIRED)
+  set(OpenMP_CXX_LIB_NAMES "omp")
+  find_package(OpenMP REQUIRED COMPONENTS CXX)
 
   # rmm and rapids_logger have no static build here -- they come from prebuilt RAPIDS wheels
   # (see setup_java_static_env.sh), found via the CMAKE_PREFIX_PATH that build_static_libcuopt.sh

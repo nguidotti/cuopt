@@ -3,11 +3,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Fetch a modern GNU libgomp from conda-forge for wheel builds.
+Fetch a recent LLVM OpenMP runtime (libomp) from conda-forge for wheel builds.
 
-Rocky Linux 8's own libgomp is too old for OpenMP 5.0 detached tasks
-(omp_fulfill_event), so this resolves and fetches a newer build
-directly from conda-forge's repodata; no conda/mamba CLI needed,
+Rocky Linux 8's llvm-toolset libomp lags conda-forge's, so this resolves and
+fetches the newest llvm-openmp build satisfying the same floor the conda
+packages use, directly from conda-forge's repodata; no conda/mamba CLI needed,
 since .conda packages are just a zip containing a zstd-compressed tar.
 See https://github.com/NVIDIA/cuopt/issues/1219
 """
@@ -31,17 +31,20 @@ DEPENDENCIES_YAML = REPO_ROOT / "dependencies.yaml"
 
 ARCH_SUBDIRS = {"x86_64": "linux-64", "aarch64": "linux-aarch64"}
 
+# Newest GOMP ABI entry point cuOpt imports, plus OpenMP 5.0 detached tasks.
+REQUIRED_SYMBOLS = ("GOMP_taskwait_depend@GOMP_5.0", "omp_fulfill_event")
 
-def min_libgomp_major():
-    """Read the libgomp version floor from dependencies.yaml.
+
+def min_llvm_openmp_major():
+    """Read the llvm-openmp version floor from dependencies.yaml.
 
     Also used for conda/recipes/libcuopt/recipe.yaml, read from
     there so this can't drift from the version resolved below.
     """
-    match = re.search(r"- libgomp >=(\d+)", DEPENDENCIES_YAML.read_text())
+    match = re.search(r"- llvm-openmp >=(\d+)", DEPENDENCIES_YAML.read_text())
     if not match:
         sys.exit(
-            f"Could not find a 'libgomp >=N' floor in {DEPENDENCIES_YAML}"
+            f"Could not find an 'llvm-openmp >=N' floor in {DEPENDENCIES_YAML}"
         )
     return int(match.group(1))
 
@@ -58,8 +61,16 @@ def curl(url, dest):
     subprocess.run(["curl", "-fsSL", "-o", str(dest), url], check=True)
 
 
+def release_version(version):
+    """Version as an int tuple, or None for pre-releases."""
+    parts = version.split(".")
+    if not all(p.isdigit() for p in parts):
+        return None
+    return tuple(map(int, parts))
+
+
 def resolve_build(subdir, min_major, workdir):
-    """Find the newest libgomp build satisfying the floor.
+    """Find the newest llvm-openmp build satisfying the floor.
 
     Reads conda-forge's own repodata, the same host the package
     itself is downloaded from below.
@@ -72,23 +83,18 @@ def resolve_build(subdir, min_major, workdir):
     with open(repodata_path) as f:
         data = json.load(f)
 
-    candidates = [
-        (fn, v)
-        for fn, v in data["packages.conda"].items()
-        if v["name"] == "libgomp"
-        and int(v["version"].split(".")[0]) >= min_major
-    ]
+    candidates = []
+    for fn, v in data["packages.conda"].items():
+        if v["name"] != "llvm-openmp":
+            continue
+        version = release_version(v["version"])
+        if version is not None and version[0] >= min_major:
+            candidates.append((version, v["timestamp"], fn, v["sha256"]))
     if not candidates:
-        sys.exit(f"No libgomp >={min_major} build found for {subdir}")
+        sys.exit(f"No llvm-openmp >={min_major} build found for {subdir}")
 
-    fn, v = max(
-        candidates,
-        key=lambda c: (
-            tuple(map(int, c[1]["version"].split("."))),
-            c[1]["timestamp"],
-        ),
-    )
-    return fn, v["sha256"]
+    _, _, fn, sha256 = max(candidates)
+    return fn, sha256
 
 
 def download(subdir, pkg_file, sha256, dest):
@@ -106,8 +112,8 @@ def download(subdir, pkg_file, sha256, dest):
         )
 
 
-def extract_libgomp(pkg_path, out_dir):
-    """Extract libgomp.so.1.0.0 out of a .conda package."""
+def extract_libomp(pkg_path, out_dir):
+    """Extract lib/libomp.so out of a .conda package."""
     zf = zipfile.ZipFile(pkg_path)
     pkg_name = next(n for n in zf.namelist() if n.startswith("pkg-"))
     tar_bytes = zstandard.ZstdDecompressor().decompress(
@@ -115,24 +121,29 @@ def extract_libgomp(pkg_path, out_dir):
     )
     tarfile.open(fileobj=io.BytesIO(tar_bytes)).extractall(out_dir)
 
-    matches = list(Path(out_dir).rglob("libgomp.so.1.0.0"))
-    if not matches:
-        sys.exit(f"Could not find libgomp.so.1.0.0 in {pkg_path}")
-    return matches[0]
+    libomp_so = Path(out_dir) / "lib" / "libomp.so"
+    if not libomp_so.is_file() or libomp_so.is_symlink():
+        sys.exit(f"Could not find lib/libomp.so in {pkg_path}")
+    return libomp_so
 
 
-def verify_symbol(libgomp_so):
+def verify_symbols(libomp_so):
     """Verify it exports what we need rather than trusting the pin alone."""
     result = subprocess.run(
-        ["nm", "-D", str(libgomp_so)], capture_output=True, text=True
+        ["nm", "-D", "--defined-only", str(libomp_so)],
+        capture_output=True,
+        text=True,
+        check=True,
     )
-    if not re.search(
-        r" T omp_fulfill_event(@|$)", result.stdout, re.MULTILINE
-    ):
-        sys.exit(
-            "Fetched libgomp does not export omp_fulfill_event: "
-            "wrong package or bad extraction"
-        )
+    exported = {line.split()[-1] for line in result.stdout.splitlines()}
+    for symbol in REQUIRED_SYMBOLS:
+        if not any(
+            s == symbol or s.startswith(symbol + "@") for s in exported
+        ):
+            sys.exit(
+                f"Fetched libomp does not export {symbol}: "
+                "wrong package or bad extraction"
+            )
 
 
 def main():
@@ -144,27 +155,25 @@ def main():
     machine = platform.machine()
     subdir = ARCH_SUBDIRS.get(machine)
     if subdir is None:
-        sys.exit(
-            f"Unsupported architecture for modern libgomp fetch: {machine}"
-        )
+        sys.exit(f"Unsupported architecture for llvm-openmp fetch: {machine}")
 
     # Ephemeral CI container, no need to clean this up ourselves.
     workdir = Path(tempfile.mkdtemp())
 
-    min_major = min_libgomp_major()
+    min_major = min_llvm_openmp_major()
     pkg_file, sha256 = resolve_build(subdir, min_major, workdir)
 
     pkg_path = workdir / pkg_file
     download(subdir, pkg_file, sha256, pkg_path)
 
-    libgomp_so = extract_libgomp(pkg_path, workdir / "extracted")
-    verify_symbol(libgomp_so)
+    libomp_so = extract_libomp(pkg_path, workdir / "extracted")
+    verify_symbols(libomp_so)
 
-    dest_file = dest_dir / "libgomp.so.1.0.0"
-    dest_file.write_bytes(libgomp_so.read_bytes())
-    (dest_dir / "libgomp.so.1").symlink_to("libgomp.so.1.0.0")
+    # libomp's SONAME is the unversioned libomp.so, so one file is enough.
+    dest_file = dest_dir / "libomp.so"
+    dest_file.write_bytes(libomp_so.read_bytes())
 
-    print(f"Modern libgomp ready at {dest_file} (from {pkg_file})")
+    print(f"LLVM OpenMP runtime ready at {dest_file} (from {pkg_file})")
 
 
 if __name__ == "__main__":

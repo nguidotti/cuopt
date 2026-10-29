@@ -58,6 +58,8 @@ option(CUOPT_BUILD_STATIC_LIB "Build libcuopt_static.a for embedding into a self
 option(WRITE_FATBIN "Enable fatbin writing" ON)
 option(HOST_LINEINFO "Build with debug line information for host code" OFF)
 option(EXPORT_DEBUG_SYMBOLS "Expose internal symbols for debugging and profiling" OFF)
+set(CUOPT_OPENMP_RUNTIME "LLVM" CACHE STRING "OpenMP runtime to link against: LLVM (libomp) or GNU (libgomp)")
+set_property(CACHE CUOPT_OPENMP_RUNTIME PROPERTY STRINGS "LLVM" "GNU")
 
 message(VERBOSE "cuOpt: Enable nvcc -lineinfo: ${CMAKE_CUDA_LINEINFO}")
 message(VERBOSE "cuOpt: Build cuOpt unit-tests: ${BUILD_TESTS}")
@@ -69,6 +71,7 @@ message(VERBOSE "cuOpt: Skip routing build: ${SKIP_ROUTING_BUILD}")
 message(VERBOSE "cuOpt: Skip mathopt build: ${SKIP_MATHOPT_BUILD}")
 message(VERBOSE "cuOpt: Build with debug line information for host code: ${HOST_LINEINFO}")
 message(VERBOSE "cuOpt: Export debug symbols: ${EXPORT_DEBUG_SYMBOLS}")
+message(VERBOSE "cuOpt: OpenMP runtime: ${CUOPT_OPENMP_RUNTIME}")
 
 if (EXPORT_DEBUG_SYMBOLS)
     set(CUOPT_SYMBOL_VISIBILITY default)
@@ -223,8 +226,17 @@ if (PARALLEL_LEVEL AND NOT "${PARALLEL_LEVEL}" STREQUAL "")
     endif ()
 endif ()
 
-# The MIP solver requires OpenMP for both C++ and CUDA host code.
+# The MIP solver requires OpenMP for both C++ and CUDA host code. GCC still compiles with -fopenmp
+# and emits GOMP_* calls; libomp implements that ABI, so the runtime is only a link-time choice.
+if (CUOPT_OPENMP_RUNTIME STREQUAL "LLVM")
+    find_library(OpenMP_omp_LIBRARY NAMES omp REQUIRED)
+    set(OpenMP_CXX_LIB_NAMES "omp")
+    set(OpenMP_CUDA_LIB_NAMES "omp")
+elseif (NOT CUOPT_OPENMP_RUNTIME STREQUAL "GNU")
+    message(FATAL_ERROR "CUOPT_OPENMP_RUNTIME must be LLVM or GNU, got '${CUOPT_OPENMP_RUNTIME}'")
+endif ()
 find_package(OpenMP REQUIRED COMPONENTS CXX CUDA)
+message(STATUS "cuOpt: OpenMP runtime ${CUOPT_OPENMP_RUNTIME}: ${OpenMP_CXX_LIBRARIES}")
 message(VERBOSE "cuOpt: OpenMP found in ${OpenMP_CXX_INCLUDE_DIRS}")
 
 # MPS/QPS parser supports compressed inputs via bzip2, zlib and lz4
@@ -902,10 +914,13 @@ endif()
 # - cuDSS threading layer --------------------------------------------------------------------------
 message(STATUS "target include directories CUDSS_INCLUDES = ${CUDSS_INCLUDE}")
 
-# Build our own cuDSS threading layer against our own libgomp instead of cuDSS's prebuilt one,
-# which can resolve a different libgomp instance (#1219). Off by default; enabled for wheel
-# builds (ci/build_wheel_libcuopt.sh).
-option(CUOPT_BUILD_CUSTOM_CUDSS_MTLAYER "Build a cuDSS threading layer linked against our own libgomp" OFF)
+# Build our own cuDSS threading layer against our own OpenMP runtime instead of cuDSS's prebuilt
+# one, which links libgomp and can resolve a different runtime instance (#1219). Always on with
+# libomp, where the prebuilt layer would load a second runtime.
+option(CUOPT_BUILD_CUSTOM_CUDSS_MTLAYER "Build a cuDSS threading layer linked against our own OpenMP runtime" OFF)
+if (CUOPT_OPENMP_RUNTIME STREQUAL "LLVM")
+    set(CUOPT_BUILD_CUSTOM_CUDSS_MTLAYER ON)
+endif ()
 
 if (CUOPT_BUILD_CUSTOM_CUDSS_MTLAYER)
     add_library(cudss_mtlayer_cuopt SHARED src/barrier/cudss_mtlayer_cuopt.cpp)

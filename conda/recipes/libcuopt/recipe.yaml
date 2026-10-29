@@ -84,6 +84,8 @@ outputs:
       host:
         - cpp-argparse
         - cuda-version =${{ cuda_version }}
+        # libomp, linked through its GOMP_* compatibility layer (CUOPT_OPENMP_RUNTIME).
+        - llvm-openmp >=23
         - libraft-headers =${{ minor_version }}
         - librmm =${{ minor_version }}
         - rapids-logger =0.3
@@ -132,9 +134,9 @@ outputs:
         - ${{ stdlib("c") }}
         - binutils
       host:
-        # Run-exports _openmp_mutex, which owns the libgomp.so.1 SONAME. rattler-build
-        # 0.77 treats a run-only libgomp dependency as overlinking.
-        - libgomp >=${{ c_compiler_version }}
+        # Owns the libomp.so SONAME. rattler-build 0.77 treats a run-only OpenMP
+        # dependency as overlinking.
+        - llvm-openmp >=23
         - cuda-version =${{ cuda_version }}
         - rapids-logger =0.3
         - librmm =${{ minor_version }}
@@ -146,7 +148,7 @@ outputs:
         - libabseil
         - re2
       run:
-        - libgomp >=11
+        - llvm-openmp >=23
         # Every library libcuopt_client.so links. rmm and the CUDA runtime are host-only:
         # the client includes their headers but links neither.
         - rapids-logger =0.3
@@ -221,9 +223,9 @@ outputs:
         - binutils
       host:
         - ${{ pin_subpackage("libcuopt-client", exact=True) }}
-        # Run-exports _openmp_mutex, which owns the libgomp.so.1 SONAME. rattler-build
-        # 0.77 treats a run-only libgomp dependency as overlinking.
-        - libgomp >=${{ c_compiler_version }}
+        # Owns the libomp.so SONAME. rattler-build 0.77 treats a run-only OpenMP
+        # dependency as overlinking.
+        - llvm-openmp >=23
         - libboost-devel
         - cuda-version =${{ cuda_version }}
         - rapids-logger =0.3
@@ -245,7 +247,7 @@ outputs:
         - libcublas
         - libcudss >=0.7,<0.8
         - libcusparse
-        - libgomp >=11
+        - llvm-openmp >=23
         - nccl >=2.19
         - tbb
       ignore_run_exports:
@@ -261,6 +263,7 @@ outputs:
       - package_contents:
           files:
             - lib/libcuopt_mathopt.so
+            - lib/libcudss_mtlayer_cuopt.so
             - bin/cuopt_cli
       # Loads the library in an environment holding only this package and its declared
       # dependencies, with RTLD_NOW so every relocation has to resolve. A component that
@@ -299,16 +302,16 @@ outputs:
         - binutils
       host:
         - ${{ pin_subpackage("libcuopt-client", exact=True) }}
-        # Run-exports _openmp_mutex, which owns the libgomp.so.1 SONAME. rattler-build
-        # 0.77 treats a run-only libgomp dependency as overlinking.
-        - libgomp >=${{ c_compiler_version }}
+        # Owns the libomp.so SONAME. rattler-build 0.77 treats a run-only OpenMP
+        # dependency as overlinking.
+        - llvm-openmp >=23
         - libboost-devel
         - cuda-version =${{ cuda_version }}
         - rapids-logger =0.3
         - librmm =${{ minor_version }}
         - libcublas
       run:
-        - libgomp >=11
+        - llvm-openmp >=23
         - rapids-logger =0.3
         - ${{ pin_compatible("cuda-version", upper_bound="x", lower_bound="x") }}
         - ${{ pin_subpackage("libcuopt-client", exact=True) }}
@@ -368,9 +371,9 @@ outputs:
         - ${{ pin_subpackage("libcuopt-client", exact=True) }}
         - ${{ pin_subpackage("libcuopt-mathopt", exact=True) }}
         - ${{ pin_subpackage("libcuopt-routing", exact=True) }}
-        # Run-exports _openmp_mutex, which owns the libgomp.so.1 SONAME. rattler-build
-        # 0.77 treats a missing host libgomp dependency as overlinking.
-        - libgomp >=${{ c_compiler_version }}
+        # Owns the libomp.so SONAME. rattler-build 0.77 treats a missing host OpenMP
+        # dependency as overlinking.
+        - llvm-openmp >=23
         - cuda-version =${{ cuda_version }}
       run:
         - librmm =${{ minor_version }}
@@ -485,9 +488,9 @@ outputs:
         - ${{ pin_subpackage("libcuopt-client", exact=True) }}
         - ${{ pin_subpackage("libcuopt-mathopt", exact=True) }}
         - ${{ pin_subpackage("libcuopt-routing", exact=True) }}
-        # Run-exports _openmp_mutex, which owns the libgomp.so.1 SONAME. rattler-build
-        # 0.77 treats a run-only libgomp dependency as overlinking.
-        - libgomp >=${{ c_compiler_version }}
+        # Owns the libomp.so SONAME. rattler-build 0.77 treats a run-only OpenMP
+        # dependency as overlinking.
+        - llvm-openmp >=23
         - libboost-devel
         - libcublas
         - libcudss-dev >=0.7,<0.8
@@ -501,7 +504,7 @@ outputs:
       run:
         - libcublas
         - libcudss >=0.7,<0.8
-        - libgomp >=11
+        - llvm-openmp >=23
         - librmm =${{ minor_version }}
         - rapids-logger =0.3
         - libcusparse

@@ -290,7 +290,8 @@ class sparse_cholesky_cudss_t : public sparse_cholesky_base_t<i_t, f_t> {
         settings.log.printf(
           "cuDSS Threading layer       : could not pin '%s'; falling back to single-threaded "
           "cuDSS. Set the CUDSS_THREADING_LIB environment variable to an absolute path, or "
-          "ensure the host provides libgomp.so.1, to enable multi-threaded cuDSS.\n",
+          "ensure the host provides the OpenMP runtime it links, to enable multi-threaded "
+          "cuDSS.\n",
           cudss_mt_lib_file);
       } else {
         cudssStatus_t threading_status = cudssSetThreadingLayer(handle, cudss_mt_lib_file);
@@ -300,8 +301,8 @@ class sparse_cholesky_cudss_t : public sparse_cholesky_base_t<i_t, f_t> {
           settings.log.printf(
             "cuDSS Threading layer       : could not load '%s' (status = %d); falling back "
             "to single-threaded cuDSS. Set the CUDSS_THREADING_LIB environment variable to "
-            "an absolute path, or ensure the host provides libgomp.so.1, to enable "
-            "multi-threaded cuDSS.\n",
+            "an absolute path, or ensure the host provides the OpenMP runtime it links, to "
+            "enable multi-threaded cuDSS.\n",
             cudss_mt_lib_file,
             threading_status);
         }

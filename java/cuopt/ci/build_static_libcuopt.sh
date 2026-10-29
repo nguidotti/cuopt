@@ -29,11 +29,9 @@ CUDA_ARCHS="${CUOPT_CMAKE_CUDA_ARCHITECTURES:-RAPIDS}"
 # files so CMake resolves those instead of falling through to CPM's source-fetch fallback. raft
 # has no such wheel, so it is still CPM-fetched from source regardless (see get_raft.cmake).
 #
-# CUOPT_BUILD_CUSTOM_CUDSS_MTLAYER and OpenMP_gomp_LIBRARY mirror ci/build_wheel_libcuopt.sh's
-# fix for the same problem on the same conda-free environment: cuDSS's prebuilt threading-layer
-# plugin needs libgomp's OpenMP 5.0 detached-task support, which Rocky 8's own libgomp (including
-# gcc-toolset-14's copy) does not have, so cuopt_objs and cuOpt's own threading-layer plugin are
-# both built against a modern one fetched separately instead (setup_java_static_env.sh).
+# OpenMP_omp_LIBRARY mirrors ci/build_wheel_libcuopt.sh: cuopt_objs links LLVM libomp
+# (installed by setup_java_static_env.sh), and with libomp cpp/CMakeLists.txt also builds cuOpt's
+# own cuDSS threading-layer plugin against it, so both share one OpenMP runtime (#1219).
 cmake_args=(
   -S "${REPO_ROOT}/cpp"
   -B "${BUILD_DIR}"
@@ -45,8 +43,7 @@ cmake_args=(
   -DSKIP_GRPC_BUILD=ON
   -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHS}"
   -DCMAKE_PREFIX_PATH="${CUOPT_JAVA_STATIC_CMAKE_PREFIX_PATH:-}"
-  -DCUOPT_BUILD_CUSTOM_CUDSS_MTLAYER=ON
-  -DOpenMP_gomp_LIBRARY:FILEPATH="${CUOPT_MODERN_LIBGOMP_DIR}/libgomp.so.1.0.0"
+  -DOpenMP_omp_LIBRARY:FILEPATH="${LIBOMP_LIBRARY}"
 )
 
 echo "Configuring scoped static build in ${BUILD_DIR}"
