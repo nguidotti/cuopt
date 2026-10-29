@@ -293,6 +293,7 @@ TEST(pdlp_class, run_double_very_low_accuracy)
   settings.tolerances.absolute_gap_tolerance    = settings.minimal_absolute_tolerance;
   settings.tolerances.relative_gap_tolerance    = 0.0;
   settings.method                               = cuopt::mathematical_optimization::method_t::PDLP;
+  settings.iteration_limit                      = 100000;
 
   optimization_problem_solution_t<int, double> solution = solve_lp(&handle_, op_problem, settings);
   EXPECT_EQ((int)solution.get_termination_status(), CUOPT_TERMINATION_STATUS_OPTIMAL);
@@ -1275,7 +1276,9 @@ TEST(pdlp_class, batch_per_constraint_residual_stable3)
 
   // Mock a batch of size 2
   solver_settings.fixed_batch_size = batch_size;
-  auto batch_sol                   = solve_lp<int, double>(&handle, op_problem, solver_settings);
+  // solve_lp(const handle*, mps, settings) is now solve_lp<i_t, index_t, f_t>; let CTAD deduce
+  // all three from the arguments so this call site stays signature-neutral.
+  auto batch_sol = solve_lp(&handle, op_problem, solver_settings);
   RAFT_CUDA_TRY(cudaDeviceSynchronize());
 
   const auto& statuses = batch_sol.get_terminations_status();
