@@ -3963,6 +3963,23 @@ static dual_status_t dual_phase2_with_advanced_basis(
       }
     }
 
+    // The ratio test excludes |delta_z_j| <= pivot_tol from the slope, so such a variable must not
+    // flip: shift its cost so that z_j lands on zero after the dual step instead.
+    if (bound_flip_ratio) {
+      i_t num_kept = 0;
+      for (const i_t j : flip_indices) {
+        if (std::abs(delta_z[j]) > settings.pivot_tol) {
+          flip_indices[num_kept++] = j;
+          continue;
+        }
+        const f_t shift = -(z[j] + step_length * delta_z[j]);
+        objective[j] += shift;
+        z[j] += shift;
+        sum_perturb += std::abs(shift);
+      }
+      flip_indices.resize(num_kept);
+    }
+
     timers.start_timer(phase2_work_estimate + ft.work_estimate());
     // Update dual variables
     // y <- y + steplength * delta_y

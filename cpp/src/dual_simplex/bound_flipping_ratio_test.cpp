@@ -23,35 +23,32 @@ i_t bound_flipping_ratio_test_t<i_t, f_t>::compute_breakpoints(std::vector<i_t>&
   i_t n                  = n_;
   i_t m                  = m_;
   constexpr bool verbose = false;
-  f_t pivot_tol          = settings_.pivot_tol;
+  const f_t pivot_tol    = settings_.pivot_tol;
   const f_t dual_tol     = settings_.dual_tol / 10;
 
   i_t idx = 0;
-  while (idx == 0 && pivot_tol >= 1e-12) {
-    // Loop over the nonbasic variables j with non-zero delta_z
-    const i_t nz = delta_z_indices_.size();
-    for (i_t h = 0; h < nz; ++h) {
-      const i_t j = delta_z_indices_[h];
-      const i_t k = nonbasic_mark_[j];
-      if (vstatus_[j] == variable_status_t::NONBASIC_FIXED) { continue; }
-      if (vstatus_[j] == variable_status_t::NONBASIC_LOWER && delta_z_[j] < -pivot_tol) {
-        indicies[idx]      = k;
-        ratios[idx]        = std::max((-z_[j]) / delta_z_[j], 0.0);
-        harris_ratios[idx] = std::max((-dual_tol - z_[j]) / delta_z_[j], 0.0);
-        if constexpr (verbose) { settings_.log.printf("ratios[%d] = %e\n", idx, ratios[idx]); }
-        idx++;
-      }
-      if (vstatus_[j] == variable_status_t::NONBASIC_UPPER && delta_z_[j] > pivot_tol) {
-        indicies[idx]      = k;
-        ratios[idx]        = std::max((-z_[j]) / delta_z_[j], 0.0);
-        harris_ratios[idx] = std::max((dual_tol - z_[j]) / delta_z_[j], 0.0);
-        if constexpr (verbose) { settings_.log.printf("ratios[%d] = %e\n", idx, ratios[idx]); }
-        idx++;
-      }
+  // Loop over the nonbasic variables j with non-zero delta_z
+  const i_t nz = delta_z_indices_.size();
+  for (i_t h = 0; h < nz; ++h) {
+    const i_t j = delta_z_indices_[h];
+    const i_t k = nonbasic_mark_[j];
+    if (vstatus_[j] == variable_status_t::NONBASIC_FIXED) { continue; }
+    if (vstatus_[j] == variable_status_t::NONBASIC_LOWER && delta_z_[j] < -pivot_tol) {
+      indicies[idx]      = k;
+      ratios[idx]        = std::max((-z_[j]) / delta_z_[j], 0.0);
+      harris_ratios[idx] = std::max((-dual_tol - z_[j]) / delta_z_[j], 0.0);
+      if constexpr (verbose) { settings_.log.printf("ratios[%d] = %e\n", idx, ratios[idx]); }
+      idx++;
     }
-    work_estimate_ += 5 * nz + 5 * idx;
-    pivot_tol /= 10;
+    if (vstatus_[j] == variable_status_t::NONBASIC_UPPER && delta_z_[j] > pivot_tol) {
+      indicies[idx]      = k;
+      ratios[idx]        = std::max((-z_[j]) / delta_z_[j], 0.0);
+      harris_ratios[idx] = std::max((dual_tol - z_[j]) / delta_z_[j], 0.0);
+      if constexpr (verbose) { settings_.log.printf("ratios[%d] = %e\n", idx, ratios[idx]); }
+      idx++;
+    }
   }
+  work_estimate_ += 5 * nz + 5 * idx;
   return idx;
 }
 
