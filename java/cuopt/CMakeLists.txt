@@ -86,8 +86,8 @@ if(CUOPT_PREFIX)
 endif()
 
 if(CUOPT_STATIC_BUILD_DIR)
-  # The same LLVM libomp the static archive was built against (CUOPT_OPENMP_RUNTIME in
-  # cpp/CMakeLists.txt), so the JNI library and cuDSS's threading layer share one runtime.
+  # The same LLVM libomp the static archive was built against (cpp/CMakeLists.txt), so the JNI
+  # library and cuDSS's threading layer share one runtime.
   find_library(OpenMP_omp_LIBRARY NAMES omp REQUIRED)
   set(OpenMP_CXX_LIB_NAMES "omp")
   find_package(OpenMP REQUIRED COMPONENTS CXX)

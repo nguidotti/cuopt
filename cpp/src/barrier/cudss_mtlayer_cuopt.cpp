@@ -5,10 +5,9 @@
  */
 /* clang-format on */
 
-// cuDSS threading layer implemented against the same OpenMP runtime cuOpt itself links against
-// (CUOPT_OPENMP_RUNTIME in cpp/CMakeLists.txt), instead of NVIDIA's prebuilt
-// libcudss_mtlayer_gomp.so.0, which resolves libgomp.so.1 from the host and can end up a
-// different runtime than the one cuOpt uses. Adapted from cuDSS's own example
+// cuDSS threading layer implemented against LLVM libomp, the OpenMP runtime cuOpt itself links
+// against, instead of NVIDIA's prebuilt libcudss_mtlayer_gomp.so.0, which links libgomp.so.1 and
+// would load a second OpenMP runtime into the process. Adapted from cuDSS's own example
 // (cudss_mtlayer_gomp.cu); see https://github.com/NVIDIA/cuopt/issues/1219.
 
 #include <omp.h>

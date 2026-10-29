@@ -84,7 +84,7 @@ outputs:
       host:
         - cpp-argparse
         - cuda-version =${{ cuda_version }}
-        # libomp, linked through its GOMP_* compatibility layer (CUOPT_OPENMP_RUNTIME).
+        # libomp, linked through its GOMP_* compatibility layer.
         - llvm-openmp >=23
         - libraft-headers =${{ minor_version }}
         - librmm =${{ minor_version }}

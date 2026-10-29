@@ -39,7 +39,7 @@ final class NativeLibraryLoader {
    * SONAMEs are build-environment-dependent: e.g. conda-forge's TBB is {@code libtbb.so.12}, but
    * Rocky 8's dnf tbb-devel package is the much older {@code libtbb.so.2}. See that script's own
    * comment for the full list of what travels this way and why (rmm, rapids_logger, TBB, NCCL,
-   * cuDSS, and the build host's GCC runtime), and for why {@code libcudss_mtlayer_gomp.so.0} is
+   * cuDSS, and the build host's GCC runtime), and for why {@code libcudss_mtlayer_cuopt.so} is
    * always included even though it is dlopen()'d rather than linked.
    */
   private static final String COMPANION_MANIFEST = "companions.txt";
@@ -57,7 +57,7 @@ final class NativeLibraryLoader {
   /**
    * cuOpt's own cuDSS threading-layer plugin, built against cuOpt's own OpenMP runtime (LLVM
    * libomp) instead of cuDSS's prebuilt libgomp one (see java/cuopt/ci/build_static_libcuopt.sh,
-   * cpp/CMakeLists.txt's CUOPT_OPENMP_RUNTIME). cudssSetThreadingLayer() dlopen()s it by bare filename
+   * cpp/CMakeLists.txt). cudssSetThreadingLayer() dlopen()s it by bare filename
    * from code running inside libcudss.so.0 itself -- not from this library -- so
    * libcuopt_jni.so's own {@code $ORIGIN} RPATH trick (see the class javadoc) never applies to
    * it: that dlopen() call uses libcudss.so.0's own search path instead (which is empty; a

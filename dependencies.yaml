@@ -1004,7 +1004,7 @@ dependencies:
           - libcusparse-dev
           - cuda-nvtx-dev
           - libnvjitlink-dev
-          # libomp, linked through its GOMP_* compatibility layer (CUOPT_OPENMP_RUNTIME).
+          # libomp, linked through its GOMP_* compatibility layer.
           - llvm-openmp >=23
 
 

@@ -5,9 +5,9 @@
 
 # Fetch LLVM's OpenMP runtime from conda-forge and set LIBOMP_LIBRARY to it. Source this script:
 # cuOpt is compiled with GCC, which emits GOMP_* calls that libomp implements, and the build links
-# libomp through -DOpenMP_omp_LIBRARY=${LIBOMP_LIBRARY} (see CUOPT_OPENMP_RUNTIME in
-# cpp/CMakeLists.txt). The fetched build satisfies the same llvm-openmp floor as the conda packages
-# (dependencies.yaml), which the distribution's own libomp may not.
+# libomp through -DOpenMP_omp_LIBRARY=${LIBOMP_LIBRARY} (see cpp/CMakeLists.txt). The fetched
+# build satisfies the same llvm-openmp floor as the conda packages (dependencies.yaml), which the
+# distribution's own libomp may not.
 
 LIBOMP_DIR="$(pwd)/llvm_openmp"
 python3 -m pip install --quiet zstandard

@@ -110,8 +110,8 @@ echo "  native library -> ${RESOURCE_DIR}/libcuopt_jni.so"
 # can be too old) -- travels beside the JNI library, which finds it all through its $ORIGIN RPATH.
 #
 # libcudss_mtlayer_cuopt.so is the one exception: cuOpt's own cuDSS threading-layer plugin
-# (built by build_static_libcuopt.sh against the same libomp -- see cpp/CMakeLists.txt's
-# CUOPT_OPENMP_RUNTIME and setup_java_static_env.sh), which cudssSetThreadingLayer
+# (built by build_static_libcuopt.sh against the same libomp -- see cpp/CMakeLists.txt and
+# setup_java_static_env.sh), which cudssSetThreadingLayer
 # dlopen()s at runtime rather than linking directly, so it never appears in DT_NEEDED at all.
 # Without it that call fails and cuDSS writes the failure straight to the process's native
 # stdout, corrupting Maven Surefire's forked-JVM protocol, so it is always added explicitly.
@@ -125,17 +125,11 @@ CUDA_RUNTIME_LIBRARY_PATTERN='^lib(cublas|cublasLt|cusparse|cusolver|nvJitLink)\
 # ci/build_java_static.sh's paths produced this library.
 #
 # preferred_dir, when given, is searched first and exclusively -- no falling through to the
-# broad search below even on a miss. It exists for two cases where the broad search could match
-# the wrong file even though a name-only match succeeds:
-#   - libcudss_mtlayer_gomp.so.0 (when cuDSS's prebuilt plugin is used instead of the custom
-#     one): dnf's cuDSS package registers /usr/lib64/libcudss_mtlayer_gomp.so.0 as an
-#     `alternatives` symlink, which can point at a *different* cuDSS version's copy than the one
-#     actually pinned and linked. The versioned directory libcudss.so.0 itself was found in is
-#     unambiguous, so once that is known, use it for anything else that must be its exact version
-#     match.
-#   - libomp.so: the JNI library and the threading-layer plugin were both linked against the
-#     libomp setup_java_static_env.sh resolved (LIBOMP_LIBRARY), so that copy has to be the one
-#     that actually ships, not whichever libomp.so a broad search happens to find first.
+# broad search below even on a miss. It exists for libomp.so, where the broad search could match
+# the wrong file even though a name-only match succeeds: the JNI library and the threading-layer
+# plugin were both linked against the libomp setup_java_static_env.sh resolved (LIBOMP_LIBRARY),
+# so that copy has to be the one that actually ships, not whichever libomp.so a broad search
+# happens to find first.
 find_companion() {
   local name="$1"
   local preferred_dir="${2:-}"
@@ -177,18 +171,12 @@ COMPANIONS+=(libcudss_mtlayer_cuopt.so)
 
 MANIFEST="${STAGING}/${RESOURCE_DIR}/companions.txt"
 : > "${MANIFEST}"
-CUDSS_LIBRARY_DIR=""
 for companion in "${COMPANIONS[@]}"; do
   preferred_dir=""
-  if [[ "${companion}" == "libcudss_mtlayer_gomp.so.0" && -n "${CUDSS_LIBRARY_DIR}" ]]; then
-    preferred_dir="${CUDSS_LIBRARY_DIR}"
-  elif [[ "${companion}" == libomp.so* && -n "${LIBOMP_LIBRARY:-}" ]]; then
+  if [[ "${companion}" == libomp.so* && -n "${LIBOMP_LIBRARY:-}" ]]; then
     preferred_dir="$(dirname "${LIBOMP_LIBRARY}")"
   fi
   companion_path="$(find_companion "${companion}" "${preferred_dir}")"
-  if [[ "${companion}" == "libcudss.so.0" ]]; then
-    CUDSS_LIBRARY_DIR="$(dirname "${companion_path}")"
-  fi
   # Dereference, since these are commonly symlinks into a versioned file.
   cp -L "${companion_path}" "${STAGING}/${RESOURCE_DIR}/${companion}"
   echo "${companion}" >> "${MANIFEST}"

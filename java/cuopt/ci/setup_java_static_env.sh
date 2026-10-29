@@ -115,7 +115,7 @@ print(";".join(paths))
 export CUOPT_JAVA_STATIC_CMAKE_PREFIX_PATH
 
 # cuOpt links LLVM libomp, and cuOpt's own cuDSS threading-layer plugin is built against it too
-# (CUOPT_OPENMP_RUNTIME in cpp/CMakeLists.txt), mirroring ci/build_wheel_libcuopt.sh (#1219).
+# (cpp/CMakeLists.txt), mirroring ci/build_wheel_libcuopt.sh (#1219).
 # Exports LIBOMP_LIBRARY for build_static_libcuopt.sh, the JNI build and the companion search.
 rapids-logger "Fetching LLVM's OpenMP runtime from conda-forge"
 # shellcheck source=ci/utils/install_llvm_openmp.sh

@@ -41,7 +41,7 @@ source rapids-configure-sccache
 # Install Protobuf + gRPC (protoc + grpc_cpp_plugin)
 bash ci/utils/install_protobuf_grpc.sh
 
-# Compile with GCC, but bundle LLVM libomp as the OpenMP runtime. With libomp, CMake also builds
+# Compile with GCC, but bundle LLVM libomp as the OpenMP runtime. CMake also builds
 # our own cuDSS threading layer against it (see cpp/CMakeLists.txt,
 # cpp/src/barrier/cudss_mtlayer_cuopt.cpp), so cuOpt and cuDSS share one runtime (#1219).
 source ci/utils/install_llvm_openmp.sh

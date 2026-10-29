@@ -36,7 +36,7 @@ Dependencies are installed automatically when using the pip and Conda installati
 
    * LLVM OpenMP runtime (``libomp``):
       - pip installs bundle their own; conda installs, and source builds using the conda dev environment, pull in ``llvm-openmp`` automatically as a package dependency; none of these need a manual step
-      - a source build done entirely outside the conda dev environment needs ``libomp`` on the host; install via ``libomp-dev`` (Debian/Ubuntu) or ``libomp-devel`` (RHEL/Rocky/Fedora). Configuring with ``-DCUOPT_OPENMP_RUNTIME=GNU`` links the GNU runtime (``libgomp``) instead
+      - a source build done entirely outside the conda dev environment needs ``libomp`` on the host; install via ``libomp-dev`` (Debian/Ubuntu) or ``libomp-devel`` (RHEL/Rocky/Fedora)
       - A missing cuDSS threading layer degrades barrier solves to single-threaded cuDSS with a warning, not a failure (see :doc:`faq`)
 
    * NVIDIA drivers:
