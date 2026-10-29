@@ -372,7 +372,7 @@ class branch_and_bound_t {
   void plunge_with(bfs_worker_t<i_t, f_t>* worker, mip_node_t<i_t, f_t>* start_node);
 
   // A worker attempts to steal nodes from another worker
-  void work_stealing(bfs_worker_t<i_t, f_t>* worker);
+  void work_stealing(bfs_worker_t<i_t, f_t>* worker, f_t lower_bound);
 
   // Perform a deep dive in the subtree determined by the `start_node` in order
   // to find integer feasible solutions.

@@ -22,8 +22,10 @@ struct branch_and_bound_hyper_params_t {
   f_t diving_workers_ratio = 0.5;
   f_t submip_workers_ratio = 0.125;
 
-  // Indicate the chance in which a worker can steal a node from another worker.
-  f_t steal_chance = 0.05;
+  // Maximum difference between the best node of a worker and the global lower bound, as a
+  // fraction of the open gap. A larger difference triggers stealing the best nodes of another
+  // worker.
+  f_t max_lower_bound_degradation = 0.05;
 
   // Indicate the number of nodes to steal. Takes the best nodes from the victim heap.
   // Keep this value low to avoid thrashing.

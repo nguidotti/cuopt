@@ -229,7 +229,7 @@ f_t compute_user_abs_gap(const lp_problem_t<i_t, f_t>& lp, f_t obj_value, f_t lo
 }
 
 template <typename f_t>
-f_t user_relative_gap(f_t user_obj, f_t user_lower_bound)
+f_t relative_gap(f_t user_obj, f_t user_lower_bound)
 {
   f_t user_mip_gap = user_obj == 0.0
                        ? (user_lower_bound == 0.0 ? 0.0 : std::numeric_limits<f_t>::infinity())
@@ -379,7 +379,7 @@ void branch_and_bound_t<i_t, f_t>::report_heuristic(f_t obj, heuristics_origin_t
     f_t lower_bound           = get_lower_bound();
     f_t user_obj              = compute_user_objective(original_lp_, obj);
     f_t user_lower            = compute_user_objective(original_lp_, lower_bound);
-    f_t user_gap              = user_relative_gap(user_obj, user_lower);
+    f_t user_gap              = relative_gap(user_obj, user_lower);
     std::string user_gap_text = to_percentage(user_gap);
 
     std::string log_line =
@@ -401,7 +401,7 @@ void branch_and_bound_t<i_t, f_t>::report_heuristic(f_t obj, heuristics_origin_t
     if (solving_root_relaxation_.load()) {
       f_t user_obj   = compute_user_objective(original_lp_, obj);
       f_t user_lower = compute_user_objective(original_lp_, root_lp_current_lower_bound_.load());
-      f_t user_gap   = user_relative_gap(user_obj, user_lower);
+      f_t user_gap   = relative_gap(user_obj, user_lower);
       std::string user_gap_text = to_percentage(user_gap);
       settings_.log.print_format(
         "New solution from primal heuristics. Objective {:+.6e}. Gap {}. Time {:.2f}\n",
@@ -432,7 +432,7 @@ void branch_and_bound_t<i_t, f_t>::report(const lp_problem_t<i_t, f_t>& lp,
   const f_t user_lower       = compute_user_objective(lp, lower_bound);
   const f_t iters            = static_cast<f_t>(exploration_stats_.total_simplex_iters);
   const f_t iter_node        = nodes_explored > 0 ? iters / nodes_explored : iters;
-  f_t user_gap               = user_relative_gap(user_obj, user_lower);
+  f_t user_gap               = relative_gap(user_obj, user_lower);
   std::string user_gap_text  = to_percentage(user_gap);
 
   std::string log_line =
@@ -535,7 +535,7 @@ bool branch_and_bound_t<i_t, f_t>::set_solution_from_heuristics(const std::vecto
     f_t user_lower  = compute_user_objective(original_lp_, lower_bound);
     f_t user_obj    = compute_user_objective(original_lp_, obj);
     f_t abs_gap     = compute_user_abs_gap(original_lp_, obj, lower_bound);
-    f_t rel_gap     = user_relative_gap(user_obj, user_lower);
+    f_t rel_gap     = relative_gap(user_obj, user_lower);
 
     if (rel_gap <= settings_.relative_mip_gap_tol || abs_gap <= settings_.absolute_mip_gap_tol) {
       solver_status_        = mip_status_t::OPTIMAL;
@@ -826,7 +826,7 @@ void branch_and_bound_t<i_t, f_t>::set_final_solution(mip_solution_t<i_t, f_t>& 
   f_t user_obj         = compute_user_objective(original_lp_, upper_bound_.load());
   f_t user_bound       = compute_user_objective(original_lp_, lower_bound);
   f_t gap              = std::abs(user_obj - user_bound);
-  f_t gap_rel          = user_relative_gap(user_obj, user_bound);
+  f_t gap_rel          = relative_gap(user_obj, user_bound);
   bool is_maximization = original_lp_.obj_scale < 0.0;
 
   settings_.log.print_format("Explored {} nodes ({} simplex iterations) in {:.2f}s.",
@@ -941,7 +941,7 @@ void branch_and_bound_t<i_t, f_t>::add_feasible_solution(const lp_problem_t<i_t,
     f_t user_lower  = compute_user_objective(original_lp_, lower_bound);
     f_t user_obj    = compute_user_objective(original_lp_, leaf_objective);
     f_t abs_gap     = compute_user_abs_gap(original_lp_, leaf_objective, lower_bound);
-    f_t rel_gap     = user_relative_gap(user_obj, user_lower);
+    f_t rel_gap     = relative_gap(user_obj, user_lower);
 
     if (rel_gap <= settings_.relative_mip_gap_tol || abs_gap <= settings_.absolute_mip_gap_tol) {
       solver_status_        = mip_status_t::OPTIMAL;
@@ -1737,7 +1737,7 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
   f_t upper_bound = upper_bound_;
   f_t user_obj    = compute_user_objective(worker->leaf_problem, upper_bound);
   f_t user_lower  = compute_user_objective(worker->leaf_problem, lower_bound);
-  f_t rel_gap     = user_relative_gap(user_obj, user_lower);
+  f_t rel_gap     = relative_gap(user_obj, user_lower);
   f_t abs_gap     = compute_user_abs_gap(worker->leaf_problem, upper_bound, lower_bound);
 
   bool can_launch_new_submip = true;
@@ -1906,7 +1906,7 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
     upper_bound = upper_bound_;
     user_obj    = compute_user_objective(worker->leaf_problem, upper_bound);
     user_lower  = compute_user_objective(worker->leaf_problem, lower_bound);
-    rel_gap     = user_relative_gap(user_obj, user_lower);
+    rel_gap     = relative_gap(user_obj, user_lower);
     abs_gap     = compute_user_abs_gap(worker->leaf_problem, upper_bound, lower_bound);
   }
 
@@ -1966,14 +1966,14 @@ void branch_and_bound_t<i_t, f_t>::launch_bfs_worker(bfs_worker_t<i_t, f_t>* wor
 }
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::work_stealing(bfs_worker_t<i_t, f_t>* worker)
+void branch_and_bound_t<i_t, f_t>::work_stealing(bfs_worker_t<i_t, f_t>* worker, f_t lower_bound)
 {
   if (bfs_worker_pool_.size() < 2) { return; }
 
   i_t num_victims          = settings_.branch_and_bound_settings.num_victims;
   i_t nodes_to_steal       = settings_.branch_and_bound_settings.nodes_to_steal;
   i_t nodes_to_steal_empty = settings_.branch_and_bound_settings.nodes_to_steal_when_empty;
-  f_t steal_chance         = settings_.branch_and_bound_settings.steal_chance;
+  f_t max_degradation      = settings_.branch_and_bound_settings.max_lower_bound_degradation;
 
   bool is_empty = worker->node_queue.best_first_queue_size() == 0;
 
@@ -1994,13 +1994,21 @@ void branch_and_bound_t<i_t, f_t>::work_stealing(bfs_worker_t<i_t, f_t>* worker)
     }
 
     if (largest_id >= 0) {
+      // Pre-emptively set the lower bound of the worker for the top of the victim heap,
+      // so it is visible to all workers while the nodes are moved.
+      worker->lower_bound = bfs_worker_pool_[largest_id]->node_queue.get_lower_bound();
       worker->node_queue.steal_from(bfs_worker_pool_[largest_id]->node_queue, nodes_to_steal_empty);
     }
   }
 
   // Steal the best nodes it can find. This aims to balance the "best" node distribution across the
   // workers.
-  if (is_empty || worker->rng.next_double() < steal_chance) {
+  // The degradation is measured as a fraction of the open gap.
+  f_t upper_bound        = upper_bound_.load();
+  f_t open_gap           = std::isfinite(upper_bound) ? upper_bound - lower_bound
+                                                      : std::max(std::abs(lower_bound), f_t(1));
+  f_t worker_lower_bound = worker->node_queue.get_lower_bound();
+  if (worker_lower_bound - lower_bound > max_degradation * open_gap) {
     f_t best_lower_bound = inf;
     i_t best_id          = -1;
 
@@ -2019,6 +2027,7 @@ void branch_and_bound_t<i_t, f_t>::work_stealing(bfs_worker_t<i_t, f_t>* worker)
     }
 
     if (best_id >= 0) {
+      worker->lower_bound = std::min(worker->lower_bound.load(), best_lower_bound);
       worker->node_queue.steal_best_from(bfs_worker_pool_[best_id]->node_queue, nodes_to_steal);
     }
   }
@@ -2031,7 +2040,7 @@ void branch_and_bound_t<i_t, f_t>::best_first_search_with(bfs_worker_t<i_t, f_t>
   f_t user_obj    = compute_user_objective(worker->leaf_problem, upper_bound_.load());
   f_t user_lower  = compute_user_objective(worker->leaf_problem, lower_bound);
   f_t abs_gap     = compute_user_abs_gap(worker->leaf_problem, upper_bound_.load(), lower_bound);
-  f_t rel_gap     = user_relative_gap(user_obj, user_lower);
+  f_t rel_gap     = relative_gap(user_obj, user_lower);
   node_queue_t<i_t, f_t>& node_queue = worker->node_queue;
 
   diving_hyper_params_t<i_t, f_t> diving_settings = settings_.diving_settings;
@@ -2118,16 +2127,16 @@ void branch_and_bound_t<i_t, f_t>::best_first_search_with(bfs_worker_t<i_t, f_t>
     user_obj    = compute_user_objective(worker->leaf_problem, upper_bound_.load());
     user_lower  = compute_user_objective(worker->leaf_problem, lower_bound);
     abs_gap     = compute_user_abs_gap(worker->leaf_problem, upper_bound_.load(), lower_bound);
-    rel_gap     = user_relative_gap(user_obj, user_lower);
+    rel_gap     = relative_gap(user_obj, user_lower);
 
     if (abs_gap <= settings_.absolute_mip_gap_tol || rel_gap <= settings_.relative_mip_gap_tol) {
       solver_status_ = mip_status_t::OPTIMAL;
       break;
     }
 
-    // Steal nodes when the queue is empty, or the best nodes of another worker with some
-    // probability
-    work_stealing(worker);
+    // Steal nodes when the queue is empty, or the best nodes of another worker when its best
+    // node is far from the global lower bound
+    work_stealing(worker, lower_bound);
   }
 
   if (solver_status_ != mip_status_t::UNSET) { halt_solver(); }
@@ -2174,7 +2183,7 @@ void branch_and_bound_t<i_t, f_t>::dive_with(diving_worker_t<i_t, f_t>* worker,
   f_t upper_bound = upper_bound_;
   f_t user_obj    = compute_user_objective(worker->leaf_problem, upper_bound);
   f_t user_lower  = compute_user_objective(worker->leaf_problem, lower_bound);
-  f_t rel_gap     = user_relative_gap(user_obj, user_lower);
+  f_t rel_gap     = relative_gap(user_obj, user_lower);
   f_t abs_gap     = compute_user_abs_gap(worker->leaf_problem, upper_bound, lower_bound);
 
   while (stack.size() > 0 && (solver_status_ == mip_status_t::UNSET && is_running_) &&
@@ -2244,7 +2253,7 @@ void branch_and_bound_t<i_t, f_t>::dive_with(diving_worker_t<i_t, f_t>* worker,
     upper_bound = upper_bound_;
     user_obj    = compute_user_objective(worker->leaf_problem, upper_bound);
     user_lower  = compute_user_objective(worker->leaf_problem, lower_bound);
-    rel_gap     = user_relative_gap(user_obj, user_lower);
+    rel_gap     = relative_gap(user_obj, user_lower);
     abs_gap     = compute_user_abs_gap(worker->leaf_problem, upper_bound, lower_bound);
   }
 
@@ -2388,7 +2397,7 @@ void branch_and_bound_t<i_t, f_t>::solve_submip(diving_worker_t<i_t, f_t>* worke
   i_t submip_level       = settings_.submip_settings.level + 1;
   f_t user_lower         = compute_user_objective(worker->leaf_problem, get_lower_bound());
   f_t user_obj           = compute_user_objective(worker->leaf_problem, upper_bound_.load());
-  f_t rel_gap            = user_relative_gap(user_obj, user_lower);
+  f_t rel_gap            = relative_gap(user_obj, user_lower);
   i_t explored           = exploration_stats_.nodes_explored;
 
   submip_settings.print_presolve_stats                     = false;
@@ -4020,7 +4029,7 @@ typename branch_and_bound_t<i_t, f_t>::cut_pass_action_t branch_and_bound_t<i_t,
 
   f_t user_obj   = compute_user_objective(original_lp_, upper_bound_.load());
   f_t user_lower = compute_user_objective(original_lp_, root_objective_);
-  f_t rel_gap    = user_relative_gap(user_obj, user_lower);
+  f_t rel_gap    = relative_gap(user_obj, user_lower);
   f_t abs_gap    = compute_user_abs_gap(original_lp_, upper_bound_.load(), root_objective_);
   if (rel_gap < settings_.relative_mip_gap_tol || abs_gap < settings_.absolute_mip_gap_tol) {
     if (num_fractional == 0) { set_solution_at_root(solution, cut_info); }
@@ -4451,7 +4460,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     f_t user_obj   = compute_user_objective(original_lp_, upper_bound_.load());
     f_t user_lower = compute_user_objective(original_lp_, root_objective_);
     f_t abs_gap    = compute_user_abs_gap(original_lp_, upper_bound_.load(), root_objective_);
-    f_t rel_gap    = user_relative_gap(user_obj, user_lower);
+    f_t rel_gap    = relative_gap(user_obj, user_lower);
 
     if (abs_gap <= settings_.absolute_mip_gap_tol || rel_gap <= settings_.relative_mip_gap_tol) {
       if (settings_.benchmark_info_ptr != nullptr) {
@@ -5210,7 +5219,7 @@ void branch_and_bound_t<i_t, f_t>::deterministic_sync_callback()
   f_t user_obj    = compute_user_objective(original_lp_, upper_bound);
   f_t user_lower  = compute_user_objective(original_lp_, lower_bound);
   f_t abs_gap     = compute_user_abs_gap(original_lp_, upper_bound, lower_bound);
-  f_t rel_gap     = user_relative_gap(user_obj, user_lower);
+  f_t rel_gap     = relative_gap(user_obj, user_lower);
 
   // Apply limit-based statuses first so a definitive answer (gap closure or tree exhaustion)
   // detected in the same callback can override them. Otherwise a long producer wait that
@@ -5250,7 +5259,7 @@ void branch_and_bound_t<i_t, f_t>::deterministic_sync_callback()
     exploration_stats_.last_log = tic();
   }
 
-  f_t user_gap              = user_relative_gap(user_obj, user_lower);
+  f_t user_gap              = relative_gap(user_obj, user_lower);
   std::string user_gap_text = to_percentage(user_gap);
 
   std::string idle_workers;

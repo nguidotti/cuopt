@@ -168,7 +168,7 @@ solver_settings_t<i_t, f_t>::solver_settings_t() : pdlp_settings(), mip_settings
     {CUOPT_MIP_HYPER_BNB_BFS_WORKERS_RATIO, &mip_settings.branch_and_bound_params.bfs_workers_ratio, f_t(0.0), f_t(1.0), f_t(0.5), "best-first search workers as a fraction of the B&B threads (at least 1)"},
     {CUOPT_MIP_HYPER_BNB_DIVING_WORKERS_RATIO, &mip_settings.branch_and_bound_params.diving_workers_ratio, f_t(0.0), f_t(1.0), f_t(0.5), "diving workers as a fraction of the B&B threads (at least 1)"},
     {CUOPT_MIP_HYPER_BNB_SUBMIP_WORKERS_RATIO, &mip_settings.branch_and_bound_params.submip_workers_ratio, f_t(0.0), f_t(1.0), f_t(0.125), "sub-MIP workers as a fraction of the B&B threads (at least 1)"},
-    {CUOPT_MIP_HYPER_BNB_STEAL_CHANCE, &mip_settings.branch_and_bound_params.steal_chance, f_t(0.0), f_t(1.0), f_t(0.05), "probability that a best-first worker steals the best nodes from another worker"},
+    {CUOPT_MIP_HYPER_BNB_MAX_LOWER_BOUND_DEGRADATION, &mip_settings.branch_and_bound_params.max_lower_bound_degradation, f_t(0.0), f_t(1.0), f_t(0.05), "gap between the best node of a best-first worker and the global lower bound, as a fraction of the open gap, above which it steals the best nodes from another worker"},
    };
 
   // Int parameters

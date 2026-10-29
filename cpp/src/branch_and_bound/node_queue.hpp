@@ -134,7 +134,6 @@ class node_queue_t {
 
     i_t stolen = 0;
     std::scoped_lock lock(victim.mutex_, mutex_);
-    nodes_to_steal = std::clamp(nodes_to_steal, 1, victim.best_first_queue_size() / 2 + 1);
 
     // Stops at half of the size difference between the victim and this queue
     while (stolen < nodes_to_steal && best_first_queue_size() < victim.best_first_queue_size()) {

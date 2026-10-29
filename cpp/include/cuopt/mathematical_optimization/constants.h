@@ -159,14 +159,14 @@
 #define CUOPT_MIP_HYPER_SUBMIP_ENABLE_CPUFJ           "mip_hyper_submip_enable_cpufj"
 
 /* @brief Branch-and-bound hyper-parameters */
-#define CUOPT_MIP_HYPER_BNB_BFS_WORKERS_RATIO         "mip_hyper_bnb_bfs_workers_ratio"
-#define CUOPT_MIP_HYPER_BNB_DIVING_WORKERS_RATIO      "mip_hyper_bnb_diving_workers_ratio"
-#define CUOPT_MIP_HYPER_BNB_SUBMIP_WORKERS_RATIO      "mip_hyper_bnb_submip_workers_ratio"
-#define CUOPT_MIP_HYPER_BNB_STEAL_CHANCE              "mip_hyper_bnb_steal_chance"
-#define CUOPT_MIP_HYPER_BNB_NODES_TO_STEAL            "mip_hyper_bnb_nodes_to_steal"
-#define CUOPT_MIP_HYPER_BNB_NODES_TO_STEAL_WHEN_EMPTY "mip_hyper_bnb_nodes_to_steal_when_empty"
-#define CUOPT_MIP_HYPER_BNB_NUM_VICTIMS               "mip_hyper_bnb_num_victims"
-#define CUOPT_MIP_HYPER_BNB_ROOT_HEURISTICS           "mip_hyper_bnb_root_heuristics"
+#define CUOPT_MIP_HYPER_BNB_BFS_WORKERS_RATIO           "mip_hyper_bnb_bfs_workers_ratio"
+#define CUOPT_MIP_HYPER_BNB_DIVING_WORKERS_RATIO        "mip_hyper_bnb_diving_workers_ratio"
+#define CUOPT_MIP_HYPER_BNB_SUBMIP_WORKERS_RATIO        "mip_hyper_bnb_submip_workers_ratio"
+#define CUOPT_MIP_HYPER_BNB_MAX_LOWER_BOUND_DEGRADATION "mip_hyper_bnb_max_lower_bound_degradation"
+#define CUOPT_MIP_HYPER_BNB_NODES_TO_STEAL              "mip_hyper_bnb_nodes_to_steal"
+#define CUOPT_MIP_HYPER_BNB_NODES_TO_STEAL_WHEN_EMPTY   "mip_hyper_bnb_nodes_to_steal_when_empty"
+#define CUOPT_MIP_HYPER_BNB_NUM_VICTIMS                 "mip_hyper_bnb_num_victims"
+#define CUOPT_MIP_HYPER_BNB_ROOT_HEURISTICS             "mip_hyper_bnb_root_heuristics"
 
 /* @brief Block bounded-variable-elimination step of cuOpt's internal MIP presolve */
 #define CUOPT_MIP_HYPER_BLOCK_BVE "mip_hyper_block_bve"
