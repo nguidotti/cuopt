@@ -227,16 +227,15 @@ TEST_F(cli_test_t, cudss_threading_layer_fallback_does_not_crash)
 
   int exit_code = -1;
   // Disable presolve so --method 3 actually reaches cudssSetThreadingLayer.
-  auto output =
-    run_cli_with_exit_code({mps_file.string(),
-                            "--method",
-                            "3",
-                            "--presolve",
-                            "0",
-                            "--solution-file",
-                            expected_sol_file.string()},
-                           "CUDSS_THREADING_LIB=/nonexistent/libcudss_mtlayer_gomp.so.0",
-                           exit_code);
+  auto output = run_cli_with_exit_code({mps_file.string(),
+                                        "--method",
+                                        "3",
+                                        "--presolve",
+                                        "0",
+                                        "--solution-file",
+                                        expected_sol_file.string()},
+                                       "CUDSS_THREADING_LIB=/nonexistent/libcudss_mtlayer_cuopt.so",
+                                       exit_code);
   std::cout << "Output: " << output << std::endl;
 
   EXPECT_EQ(exit_code, 0);

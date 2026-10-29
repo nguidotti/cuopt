@@ -31,7 +31,7 @@ ALLOWED_CUDA_LIBRARIES=(
 
 # Present on any Linux that can run a JVM.
 ALLOWED_SYSTEM_LIBRARIES=(
-  libc.so libm.so libdl.so librt.so libpthread.so libstdc++.so libgcc_s.so libgomp.so
+  libc.so libm.so libdl.so librt.so libpthread.so libstdc++.so libgcc_s.so
   ld-linux-x86-64.so ld-linux-aarch64.so libresolv.so
 )
 
