@@ -224,8 +224,8 @@ bool domain_t<i_t, f_t>::tighten_bounds(i_t k,
   } else if (lp.A.col_start[k + 1] - lp.A.col_start[k] == 1) {
     // A continuous column singleton (e.g., a slack) is only bounded, never tightened: its
     // finite bounds are implied by its only row and only make the LP harder to solve.
-    tighten_lb = lb == -inf && new_lower > -inf;
-    tighten_ub = ub == inf && new_upper < inf;
+    tighten_lb = false;  // lb == -inf && new_lower > -inf;
+    tighten_ub = false;  // ub == inf && new_upper < inf;
   } else {
     const f_t lb_range = ub < inf ? ub - lb : std::max(std::abs(lb), std::abs(new_lower));
     const f_t ub_range = lb > -inf ? ub - lb : std::max(std::abs(ub), std::abs(new_upper));
