@@ -12,7 +12,7 @@
 #include <dual_simplex/user_problem.hpp>
 #include <linear_algebra/sparse_vector.hpp>
 #include <math_optimization/types.hpp>
-#include <mip_heuristics/presolve/probing_implied_bound.hpp>
+#include <presolve/probing_implied_bound.hpp>
 
 #include <algorithm>
 #include <array>

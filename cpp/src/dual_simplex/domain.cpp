@@ -7,8 +7,8 @@
 
 #include <dual_simplex/domain.hpp>
 
-#include <mip_heuristics/presolve/conflict_graph/clique_table.cuh>
-#include <mip_heuristics/presolve/probing_implied_bound.hpp>
+#include <presolve/conflict_graph/clique_table.cuh>
+#include <presolve/probing_implied_bound.hpp>
 
 #include <algorithm>
 #include <cassert>
