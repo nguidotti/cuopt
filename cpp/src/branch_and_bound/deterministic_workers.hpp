@@ -8,9 +8,10 @@
 #pragma once
 
 #include <branch_and_bound/bb_event.hpp>
-#include <branch_and_bound/diving_heuristics.hpp>
 #include <branch_and_bound/node_queue.hpp>
 #include <branch_and_bound/worker.hpp>
+
+#include <mip_heuristics/diving_heuristics.hpp>
 
 #include <utilities/work_limit_context.hpp>
 
@@ -93,6 +94,7 @@ class deterministic_worker_base_t : public branch_and_bound_worker_t<i_t, f_t> {
                               const std::vector<f_t>& root_solution,
                               const std::vector<f_t>& root_edge_norm,
                               const std::vector<i_t>& new_slacks,
+                              branch_and_bound_t<i_t, f_t>* branch_and_bound_ptr,
                               splitmix64_t& seed_gen,
                               const std::string& context_name)
     : base_t(id,
@@ -104,6 +106,7 @@ class deterministic_worker_base_t : public branch_and_bound_worker_t<i_t, f_t> {
              root_solution,
              root_edge_norm,
              new_slacks,
+             branch_and_bound_ptr,
              seed_gen),
       work_context(context_name),
       pc_snapshot(1, settings)
@@ -158,6 +161,7 @@ class deterministic_bfs_worker_t
                                       const std::vector<f_t>& root_solution,
                                       const std::vector<f_t>& root_edge_norm,
                                       const std::vector<i_t>& new_slacks,
+                                      branch_and_bound_t<i_t, f_t>* branch_and_bound_ptr,
                                       splitmix64_t& seed_gen)
     : base_t(id,
              original_lp,
@@ -168,6 +172,7 @@ class deterministic_bfs_worker_t
              root_solution,
              root_edge_norm,
              new_slacks,
+             branch_and_bound_ptr,
              seed_gen,
              "BB_Worker_" + std::to_string(id))
   {
@@ -315,6 +320,7 @@ class deterministic_diving_worker_t
     const std::vector<f_t>& root_solution,
     const std::vector<f_t>& root_edge_norm,
     const std::vector<i_t>& new_slacks,
+    branch_and_bound_t<i_t, f_t>* branch_and_bound_ptr,
     splitmix64_t& seed_gen)
     : base_t(id,
              original_lp,
@@ -325,6 +331,7 @@ class deterministic_diving_worker_t
              root_solution,
              root_edge_norm,
              new_slacks,
+             branch_and_bound_ptr,
              seed_gen,
              "Diving_Worker_" + std::to_string(id)),
       diving_type(type)
@@ -435,6 +442,7 @@ class deterministic_bfs_worker_pool_t
                                   const std::vector<f_t>& root_solution,
                                   const std::vector<f_t>& root_edge_norm,
                                   const std::vector<i_t>& new_slacks,
+                                  branch_and_bound_t<i_t, f_t>* branch_and_bound_ptr,
                                   splitmix64_t& seed_gen)
   {
     this->workers_.reserve(num_workers);
@@ -448,6 +456,7 @@ class deterministic_bfs_worker_pool_t
                                   root_solution,
                                   root_edge_norm,
                                   new_slacks,
+                                  branch_and_bound_ptr,
                                   seed_gen);
     }
   }
@@ -484,6 +493,7 @@ class deterministic_diving_worker_pool_t
                                      const std::vector<f_t>& root_solution,
                                      const std::vector<f_t>& root_edge_norm,
                                      const std::vector<i_t>& new_slacks,
+                                     branch_and_bound_t<i_t, f_t>* branch_and_bound_ptr,
                                      splitmix64_t& seed_gen)
   {
     this->workers_.reserve(num_workers);
@@ -499,6 +509,7 @@ class deterministic_diving_worker_pool_t
                                   root_solution,
                                   root_edge_norm,
                                   new_slacks,
+                                  branch_and_bound_ptr,
                                   seed_gen);
     }
   }

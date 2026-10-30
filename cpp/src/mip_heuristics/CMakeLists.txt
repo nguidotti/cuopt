@@ -12,6 +12,7 @@ set(MIP_LP_NECESSARY_FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/solver_solution.cu
   ${CMAKE_CURRENT_SOURCE_DIR}/local_search/rounding/simple_rounding.cu
   ${CMAKE_CURRENT_SOURCE_DIR}/solution/solution.cu
+  ${CMAKE_CURRENT_SOURCE_DIR}/diving_heuristics.cpp
 )
 
 # Files that are MIP-specific and not needed for pure LP
