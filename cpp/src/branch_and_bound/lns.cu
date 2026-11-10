@@ -10,18 +10,22 @@
 #include <branch_and_bound/branch_and_bound.hpp>
 #include <branch_and_bound/fractional.hpp>
 #include <branch_and_bound/utils.hpp>
+
 #include <dual_simplex/presolve.hpp>
+
 #include <mip_heuristics/feasibility_jump/fj_cpu_worker.cuh>
+
 #include <presolve/third_party_presolve.hpp>
+
 #include <utilities/scope_guard.hpp>
 
 #include <raft/core/nvtx.hpp>
 
 #define SUBMIP_VERBOSE false
 #if SUBMIP_VERBOSE
-#define DEBUG_SUBMIP(settings, fmt, ...) settings.log.print_format(fmt, __VA_ARGS__);
+#define DEBUG_SUBMIP(...) settings.log.print_format(__VA_ARGS__);
 #else
-#define DEBUG_SUBMIP(settings, fmt, ...)
+#define DEBUG_SUBMIP(...)
 #endif
 
 namespace cuopt::mathematical_optimization::mip {
@@ -150,10 +154,22 @@ i_t extend_variable_fixings(const csr_matrix_t<i_t, f_t>& Arow,
     i_t start = domain.size();
     simplex::bound_change_t<i_t, f_t> bound_change{
       .var       = j,
+      .old_upper = lp.upper[j],
       .new_upper = fixed_val,
+      .old_lower = lp.lower[j],
       .new_lower = fixed_val,
       .origin    = simplex::bound_change_origin_t::BRANCH};
-    if (!domain.apply_and_propagate(Arow, var_types, settings, bound_change, lp)) { return -1; }
+    if (!domain.apply_and_propagate(Arow, var_types, settings, bound_change, lp)) {
+      DEBUG_SUBMIP(
+        "Bound propagation detect infeasibility. var={}, lower={:.4g} -> {:.4g}, "
+        "upper={:.4g} -> {:.4g}",
+        j,
+        bound_change.old_lower,
+        bound_change.new_lower,
+        bound_change.old_upper,
+        bound_change.new_upper);
+      domain.backtrack_to_parent(lp);
+    }
     num_fixed += calculate_fixrate(var_types, settings, domain, start);
 
     // Limit the amount of fixing to the current LP.
@@ -187,9 +203,7 @@ bool solve_lp(const branch_and_bound_stats_t<i_t, f_t>& bnb_stats,
   int64_t simplex_iter_limit = iter_offset + simplex_iter * iter_ratio;
   int64_t max_iter           = simplex_iter_limit - stats.total_simplex_iters;
   if (max_iter <= 0) {
-    DEBUG_SUBMIP(settings,
-                 "{}Max iteration reached! {}/{}",
-                 settings.log.log_prefix,
+    DEBUG_SUBMIP("Max iteration reached! {}/{}",
                  stats.total_simplex_iters.load(std::memory_order::relaxed),
                  simplex_iter_limit)
     return false;
@@ -204,10 +218,7 @@ bool solve_lp(const branch_and_bound_stats_t<i_t, f_t>& bnb_stats,
     worker->classify_node(node, lp_status, upper_bound, settings, fractional, leaf_obj);
 
   if (node_status == node_status_t::FATHOMED) {
-    DEBUG_SUBMIP(settings,
-                 "{}Round {}: simplex returned {}. leaf_obj={:.4g}, upper_bound={:.4g}",
-                 settings.log.log_prefix,
-                 round,
+    DEBUG_SUBMIP("Dual simplex returned {}. leaf_obj={:.4g}, upper_bound={:.4g}",
                  simplex::dual_status_to_string(lp_status),
                  leaf_obj,
                  upper_bound)
@@ -218,10 +229,7 @@ bool solve_lp(const branch_and_bound_stats_t<i_t, f_t>& bnb_stats,
   if (node_status == node_status_t::INTEGER_FEASIBLE) {
     bnb_ptr->set_solution_from_worker(
       worker->leaf_problem, leaf_obj, worker->leaf_solution.x, -1, worker->search_strategy);
-    DEBUG_SUBMIP(settings,
-                 "{}Round {}: found a solution with obj={:.4g}. upper_bound={:.4g}",
-                 settings.log.log_prefix,
-                 round,
+    DEBUG_SUBMIP("Found an integer-feasible solution with obj={:.4g}. upper_bound={:.4g}",
                  leaf_obj,
                  bnb_ptr->get_upper_bound())
     return false;
@@ -240,24 +248,24 @@ void solve_submip(diving_worker_t<i_t, f_t>* worker,
                   submip_stats_t& submip_stats,
                   f_t fixrate,
                   int64_t simplex_iter_used,
-                  simplex_solver_settings_t<i_t, f_t> submip_settings)
+                  simplex_solver_settings_t<i_t, f_t> settings)
 {
-  f_t time_limit = submip_settings.time_limit - toc(bnb_stats.start_time);
+  f_t time_limit = settings.time_limit - toc(bnb_stats.start_time);
   if (time_limit <= 0) { return; }
 
   double start_time                     = tic();
   branch_and_bound_t<i_t, f_t>* bnb_ptr = worker->branch_and_bound_ptr;
-  bool inside_submip                    = submip_settings.inside_submip;
+  bool inside_submip                    = settings.inside_submip;
 
   // If not enough variables was fixed (the neighbourhood is too loose) or the sub-MIP already
   // found a solution that improved the incumbent, then do a DFS with a backtrack_limit of 5
   // levels up to try to find a feasible solution quickly from the neighbourhood.
-  if (fixrate < submip_settings.submip_settings.min_fixrate_cap ||
+  if (fixrate < settings.submip_settings.min_fixrate_cap ||
       (inside_submip && submip_stats.total_success != 0)) {
     worker->start_node.packed_vstatus = simplex::compress_vstatus(worker->leaf_vstatus);
 
     fj_cpu_worker_t<i_t, f_t> submip_fj_cpu_worker;
-    if (submip_settings.submip_settings.enable_cpufj) {
+    if (settings.submip_settings.enable_cpufj) {
       submip_fj_cpu_worker.improvement_callback =
         [bnb_ptr](f_t obj, const std::vector<f_t>& assignment, double work_units) {
           bnb_ptr->set_solution_from_cpu_fj(obj, assignment, work_units);
@@ -268,105 +276,95 @@ void solve_submip(diving_worker_t<i_t, f_t>* worker,
                                          worker->var_types,
                                          original_problem.num_cols,
                                          worker->leaf_solution.x,
-                                         submip_settings,
-                                         std::format("{} [CPU FJ]", submip_settings.log.log_prefix),
+                                         settings,
+                                         std::format("{} [CPU FJ]", settings.log.log_prefix),
                                          worker->rng.next_i64());
       submip_fj_cpu_worker.run_sync(time_limit, work_limit);
     }
 
-    DEBUG_SUBMIP(submip_settings,
-                 "{}Running a quick DFS. fixrate={:.4g}",
-                 submip_settings.log.log_prefix,
-                 fixrate);
+    DEBUG_SUBMIP("Running a quick DFS. fixrate={:.4g}", fixrate);
 
-    simplex_solver_settings_t<i_t, f_t> dfs_settings = submip_settings;
+    simplex_solver_settings_t<i_t, f_t> dfs_settings = settings;
     dfs_settings.diving_settings.backtrack_limit = dfs_settings.submip_settings.dfs_max_backtrack;
     worker->domain.clear();
     worker->dive(dfs_settings, bnb_stats);
     return;
   }
 
-  bool is_root_heuristic = submip_settings.inside_root_node;
-  i_t submip_level       = submip_settings.submip_settings.level + 1;
+  bool is_root_heuristic = settings.inside_root_node;
+  i_t submip_level       = settings.submip_settings.level + 1;
   f_t upper_bound        = bnb_ptr->get_upper_bound();
   f_t user_lower         = compute_user_objective(worker->leaf_problem, bnb_ptr->get_lower_bound());
   f_t user_obj           = compute_user_objective(worker->leaf_problem, upper_bound);
   f_t rel_gap            = user_relative_gap(user_obj, user_lower);
   i_t explored           = bnb_stats.nodes_explored;
 
-  bool max_recursion = submip_level > submip_settings.submip_settings.max_level;
-  submip_settings.submip_settings.rins =
-    submip_settings.submip_settings.rins != 0 && !max_recursion;
-  submip_settings.submip_settings.rens =
-    submip_settings.submip_settings.rens != 0 && !max_recursion;
+  bool max_recursion            = submip_level > settings.submip_settings.max_level;
+  settings.submip_settings.rins = settings.submip_settings.rins != 0 && !max_recursion;
+  settings.submip_settings.rens = settings.submip_settings.rens != 0 && !max_recursion;
 
-  submip_settings.node_limit = submip_settings.submip_settings.node_limit_offset + explored / 20;
+  settings.node_limit = settings.submip_settings.node_limit_offset + explored / 20;
 
   // Add offset only on the top call, we want number of simplex iteration to decay
   // as we go down the recursion to avoid spending too much time in the deeper levels.
-  int64_t iter_offset  = inside_submip ? 0 : submip_settings.submip_settings.iteration_limit_offset;
+  int64_t iter_offset  = inside_submip ? 0 : settings.submip_settings.iteration_limit_offset;
   int64_t simplex_iter = bnb_stats.total_simplex_iters;
-  f_t iter_ratio       = submip_settings.submip_settings.iteration_limit_ratio;
+  f_t iter_ratio       = settings.submip_settings.iteration_limit_ratio;
 
-  submip_settings.branch_and_bound_simplex_iteration_limit =
+  settings.branch_and_bound_simplex_iteration_limit =
     iter_offset + simplex_iter * iter_ratio - simplex_iter_used;
-  if (submip_settings.branch_and_bound_simplex_iteration_limit <= 0) { return; }
+  if (settings.branch_and_bound_simplex_iteration_limit <= 0) { return; }
 
-  submip_settings.time_limit = time_limit;
+  settings.time_limit = time_limit;
 
-  submip_settings.relative_mip_gap_tol =
-    std::min(submip_settings.submip_settings.target_mip_gap, rel_gap);
+  settings.relative_mip_gap_tol = std::min(settings.submip_settings.target_mip_gap, rel_gap);
 
-  submip_settings.print_presolve_stats                     = false;
-  submip_settings.num_threads                              = 1;
-  submip_settings.reliability_branching                    = 0;
-  submip_settings.clique_cuts                              = 0;
-  submip_settings.zero_half_cuts                           = 0;
-  submip_settings.inside_submip                            = 1;
-  submip_settings.strong_branching_simplex_iteration_limit = 50;
-  submip_settings.inside_root_node                         = 0;
-  submip_settings.submip_settings.level                    = submip_level;
-  submip_settings.benchmark_info_ptr                       = nullptr;
-  submip_settings.log.log                                  = SUBMIP_VERBOSE;
-  std::string_view log_prefix                              = submip_settings.log.log_prefix;
+  settings.print_presolve_stats                     = false;
+  settings.num_threads                              = 1;
+  settings.reliability_branching                    = 0;
+  settings.clique_cuts                              = 0;
+  settings.zero_half_cuts                           = 0;
+  settings.inside_submip                            = 1;
+  settings.strong_branching_simplex_iteration_limit = 50;
+  settings.inside_root_node                         = 0;
+  settings.submip_settings.level                    = submip_level;
+  settings.benchmark_info_ptr                       = nullptr;
+  settings.log.log                                  = SUBMIP_VERBOSE;
+  std::string_view log_prefix                       = settings.log.log_prefix;
 
-  DEBUG_SUBMIP(submip_settings, "{}Sub-MIP: fixrate={:.2f}", log_prefix, fixrate)
+  DEBUG_SUBMIP("Sub-MIP: fixrate={:.2f}", fixrate)
   DEBUG_SUBMIP(
-    submip_settings,
-    "{}Sub-MIP solve settings: time_limit={:.2f}, node_limit={}, iter_limit={} (current_iter={}), "
+    "Sub-MIP solve settings: time_limit={:.2f}, node_limit={}, iter_limit={} (current_iter={}), "
     "tol={:g}",
-    log_prefix,
-    submip_settings.time_limit,
-    submip_settings.node_limit,
-    submip_settings.branch_and_bound_simplex_iteration_limit,
+    settings.time_limit,
+    settings.node_limit,
+    settings.branch_and_bound_simplex_iteration_limit,
     bnb_stats.total_simplex_iters.load(std::memory_order::relaxed),
-    submip_settings.relative_mip_gap_tol);
+    settings.relative_mip_gap_tol);
 
   // The `worker->leaf_problem` is directly converted to an `user_problem_t`, meaning that
   // there is only equality rows (the range row vector is empty) and it contains
   // structural + slacks + cuts constraints/variables.
   user_problem_t<i_t, f_t> submip_problem(original_problem.handle_ptr);
   simplex::convert_lp_to_user_problem(
-    worker->leaf_problem, worker->var_types, submip_settings, submip_problem);
+    worker->leaf_problem, worker->var_types, settings, submip_problem);
 
   third_party_presolve_t<i_t, f_t> presolver;
-  f_t presolve_time_limit = std::min(0.1 * submip_settings.time_limit, 60.0);
+  f_t presolve_time_limit = std::min(0.1 * settings.time_limit, 60.0);
   third_party_presolve_status_t presolver_status =
-    presolver.apply_to_subproblem(submip_problem, submip_settings, presolve_time_limit, 1);
+    presolver.apply_to_subproblem(submip_problem, settings, presolve_time_limit, 1);
 
   if (presolver_status == third_party_presolve_status_t::INFEASIBLE ||
       presolver_status == third_party_presolve_status_t::UNBNDORINFEAS ||
       presolver_status == third_party_presolve_status_t::UNBOUNDED) {
-    DEBUG_SUBMIP(submip_settings, "{}Presolve detected infeasibility", log_prefix);
+    DEBUG_SUBMIP("Presolve detected infeasibility");
     submip_stats.save_infeasible(fixrate);
     return;
   }
 
   // Also handle optimal
   if (submip_problem.num_rows == 0 || submip_problem.num_cols == 0) {
-    DEBUG_SUBMIP(submip_settings,
-                 "{}Reduced to a trivial {} x {} problem; solving by bound pushing",
-                 log_prefix,
+    DEBUG_SUBMIP("Reduced to a trivial {} x {} problem; solving by bound pushing",
                  submip_problem.num_rows,
                  submip_problem.num_cols);
     submip_stats.save_empty();
@@ -375,30 +373,27 @@ void solve_submip(diving_worker_t<i_t, f_t>* worker,
 
   double presolve_time = toc(start_time);
 
-  if (submip_settings.received_halt_signal()) { return; }
+  if (settings.received_halt_signal()) { return; }
 
-  submip_settings.heuristic_preemption_callback   = nullptr;
-  submip_settings.dual_simplex_objective_callback = nullptr;
-  submip_settings.set_simplex_solution_callback   = nullptr;
-  submip_settings.solution_callback =
-    [bnb_ptr, &presolver, fixrate, &submip_stats, log_prefix, worker](
-      const std::vector<f_t>& solution, f_t obj) {
-      bnb_ptr->set_solution_from_submip(
-        worker->leaf_problem, solution, presolver, submip_stats, fixrate, log_prefix);
-    };
+  settings.heuristic_preemption_callback   = nullptr;
+  settings.dual_simplex_objective_callback = nullptr;
+  settings.set_simplex_solution_callback   = nullptr;
+  settings.solution_callback = [bnb_ptr, &presolver, fixrate, &submip_stats, log_prefix, worker](
+                                 const std::vector<f_t>& solution, f_t obj) {
+    bnb_ptr->set_solution_from_submip(
+      worker->leaf_problem, solution, presolver, submip_stats, fixrate, log_prefix);
+  };
 
-  DEBUG_SUBMIP(submip_settings,
-               "{}Sub-MIP: {} constraints, {} variables, {} nonzeros\n",
-               log_prefix,
+  DEBUG_SUBMIP("Sub-MIP: {} constraints, {} variables, {} nonzeros\n",
                submip_problem.num_rows,
                submip_problem.num_cols,
                submip_problem.A.nnz());
 
   probing_implied_bound_t<i_t, f_t> empty_probing(submip_problem.num_cols);
-  submip_settings.time_limit -= presolve_time;
-  if (submip_settings.time_limit <= 0.0) { return; }
+  settings.time_limit -= presolve_time;
+  if (settings.time_limit <= 0.0) { return; }
 
-  branch_and_bound_t submip_bnb(submip_problem, submip_settings, tic(), empty_probing);
+  branch_and_bound_t submip_bnb(submip_problem, settings, tic(), empty_probing);
   simplex::mip_solution_t<i_t, f_t> submip_solution(submip_problem.num_cols);
 
   std::vector<f_t> presolved_incumbent;
@@ -440,7 +435,7 @@ void solve_submip(diving_worker_t<i_t, f_t>* worker,
 
   fj_cpu_worker_t<i_t, f_t> submip_fj_cpu_worker;
 
-  if (submip_settings.submip_settings.enable_cpufj) {
+  if (settings.submip_settings.enable_cpufj) {
     // Since we do not have an incumbent, use the LP solution of the last round of variable fixing
     // in RENS.
     if (worker->search_strategy == search_strategy_t::RENS) {
@@ -472,7 +467,7 @@ void solve_submip(diving_worker_t<i_t, f_t>* worker,
                                        submip_bnb.settings_,
                                        std::format("{} [CPU FJ]", log_prefix),
                                        worker->rng.next_i64());
-    submip_fj_cpu_worker.run_async(submip_settings.time_limit, work_limit);
+    submip_fj_cpu_worker.run_async(settings.time_limit, work_limit);
   }
 
   bnb_ptr->active_submip_solvers_mutex_.lock();
@@ -492,9 +487,7 @@ void solve_submip(diving_worker_t<i_t, f_t>* worker,
   f_t submip_time            = toc(start_time);
 
   DEBUG_SUBMIP(
-    submip_settings,
-    "{}Sub-MIP: status={}, iterations={} (total={}), presolve_time={:.2f}, total_time={:.2f} \n",
-    log_prefix,
+    "Sub-MIP: status={}, iterations={} (total={}), presolve_time={:.2f}, total_time={:.2f} \n",
     mip_status_to_string(submip_status),
     submip_solution.simplex_iterations,
     bnb_stats.total_simplex_iters.load(std::memory_order::relaxed),
@@ -527,7 +520,7 @@ void mutation(diving_worker_t<i_t, f_t>* worker,
   if (worker->orbital_fixing) { worker->orbital_fixing->disable(); }
 
   i_t submip_level = settings.submip_settings.level + 1;
-  settings.log.log_prefix =
+  settings.log.log_prefix +=
     std::format("[{} {}] ", search_strategy_to_string(worker->search_strategy), submip_level);
 
   assert((worker->search_strategy == search_strategy_t::MUTATION) &&
@@ -551,12 +544,12 @@ void mutation(diving_worker_t<i_t, f_t>* worker,
 
   for (i_t j : integer_list) {
     if (toc(bnb_stats.start_time) >= settings.time_limit) {
-      DEBUG_SUBMIP(settings, "{}Time limit reached.", settings.log.log_prefix)
+      DEBUG_SUBMIP("Time limit reached.")
       return;
     }
 
     if (settings.received_halt_signal()) {
-      DEBUG_SUBMIP(settings, "{}Halt signal received.", settings.log.log_prefix)
+      DEBUG_SUBMIP("Halt signal received.")
       return;
     }
 
@@ -567,19 +560,23 @@ void mutation(diving_worker_t<i_t, f_t>* worker,
     i_t start     = domain.size();
     simplex::bound_change_t<i_t, f_t> bound_change{
       .var       = j,
+      .old_upper = lp.upper[j],
       .new_upper = fixed_val,
+      .old_lower = lp.lower[j],
       .new_lower = fixed_val,
       .origin    = simplex::bound_change_origin_t::BRANCH};
 
     if (!domain.apply_and_propagate(worker->Arow, worker->var_types, settings, bound_change, lp)) {
-      DEBUG_SUBMIP(settings,
-                   "{}Bound propagation detected infeasibility. fixed={}/{}, target={} ({:.4g})",
-                   settings.log.log_prefix,
-                   num_fixed,
-                   integer_list.size(),
-                   target_num_fixed,
-                   target_fixrate)
-      return;
+      DEBUG_SUBMIP(
+        "Bound propagation detect infeasibility. var={}, lower={:.4g} -> {:.4g}, "
+        "upper={:.4g} -> {:.4g}",
+        j,
+        bound_change.old_lower,
+        bound_change.new_lower,
+        bound_change.old_upper,
+        bound_change.new_upper);
+
+      domain.backtrack_to_parent(lp);
     }
 
     num_fixed += calculate_fixrate(worker->var_types, settings, domain, start);
@@ -587,9 +584,7 @@ void mutation(diving_worker_t<i_t, f_t>* worker,
 
   f_t fixrate = static_cast<f_t>(num_fixed) / integer_list.size();
 
-  DEBUG_SUBMIP(settings,
-               "{} fixed variables = {:.0f} ({:.2f}), target fixrate = {} ({:.2f})",
-               settings.log.log_prefix,
+  DEBUG_SUBMIP("fixed variables = {:.0f} ({:.2f}), target fixrate = {} ({:.2f})",
                fixrate * integer_list.size(),
                fixrate,
                target_num_fixed,
@@ -598,9 +593,7 @@ void mutation(diving_worker_t<i_t, f_t>* worker,
   solve_submip(worker, bnb_stats, original_problem, submip_stats, fixrate, 0, settings);
 
   DEBUG_SUBMIP(
-    settings,
-    "{}success={}, infeasible={}, calls={}, fixrate={:.4g} ({:.0f}/{}), max_fixrate={:.4g}\n",
-    settings.log.log_prefix,
+    "success={}, infeasible={}, calls={}, fixrate={:.4g} ({:.0f}/{}), max_fixrate={:.4g}\n",
     submip_stats.total_success.load(std::memory_order::relaxed),
     submip_stats.total_infeasible.load(std::memory_order::relaxed),
     submip_stats.total_calls.load(std::memory_order::relaxed),
@@ -621,7 +614,7 @@ void rins(diving_worker_t<i_t, f_t>* worker,
   if (worker->orbital_fixing) { worker->orbital_fixing->disable(); }
 
   i_t submip_level = settings.submip_settings.level + 1;
-  settings.log.log_prefix =
+  settings.log.log_prefix +=
     std::format("[{} {}] ", search_strategy_to_string(worker->search_strategy), submip_level);
   branch_and_bound_t<i_t, f_t>* bnb_ptr = worker->branch_and_bound_ptr;
 
@@ -678,13 +671,13 @@ void rins(diving_worker_t<i_t, f_t>* worker,
     // that it can within our budget.
     for (i_t j : integer_list) {
       if (toc(bnb_stats.start_time) >= settings.time_limit) {
-        DEBUG_SUBMIP(settings, "{}Time limit reached.", settings.log.log_prefix)
+        DEBUG_SUBMIP("Time limit reached.")
         has_stopped = true;
         break;
       }
 
       if (settings.received_halt_signal()) {
-        DEBUG_SUBMIP(settings, "{}Halt signal received.", settings.log.log_prefix)
+        DEBUG_SUBMIP("Halt signal received.")
         has_stopped = true;
         break;
       }
@@ -696,21 +689,23 @@ void rins(diving_worker_t<i_t, f_t>* worker,
         i_t start     = domain.size();
         simplex::bound_change_t<i_t, f_t> bound_change{
           .var       = j,
+          .old_upper = lp.upper[j],
           .new_upper = fixed_val,
+          .old_lower = lp.lower[j],
           .new_lower = fixed_val,
           .origin    = simplex::bound_change_origin_t::BRANCH};
         if (!domain.apply_and_propagate(
               worker->Arow, worker->var_types, settings, bound_change, lp)) {
-          DEBUG_SUBMIP(settings,
-                       "{}Bound propagation detected infeasibility. fixed={}/{}, "
-                       "max_fixrate={:.4g}, min_fixrate={:.4g}",
-                       settings.log.log_prefix,
-                       num_fixed + new_fixings,
-                       num_integers,
-                       max_fixrate,
-                       min_fixrate)
-          has_stopped = true;
-          break;
+          DEBUG_SUBMIP(
+            "Bound propagation detect infeasibility. var={}, lower={:.4g} -> {:.4g}, "
+            "upper={:.4g} -> {:.4g}",
+            j,
+            bound_change.old_lower,
+            bound_change.new_lower,
+            bound_change.old_upper,
+            bound_change.new_upper);
+
+          domain.backtrack_to_parent(lp);
         }
 
         new_fixings += calculate_fixrate(worker->var_types, settings, domain, start);
@@ -745,10 +740,7 @@ void rins(diving_worker_t<i_t, f_t>* worker,
                                             worker->leaf_problem,
                                             worker->domain);
       if (new_fixings < 0) {
-        DEBUG_SUBMIP(settings,
-                     "{}Round {}: stopped fixing (infeasible, halted or time limit reached).",
-                     settings.log.log_prefix,
-                     round)
+        DEBUG_SUBMIP("Round {}: stopped fixing (infeasible, halted or time limit reached).", round)
         break;
       }
 
@@ -762,11 +754,9 @@ void rins(diving_worker_t<i_t, f_t>* worker,
     }
 
     DEBUG_SUBMIP(
-      settings,
-      "{}Round {}: fixed {:.0f} ({:.2f}) -> {:.0f} ({:.2f}) variables ({:+}). round target = {} "
+      "Round {}: fixed {:.0f} ({:.2f}) -> {:.0f} ({:.2f}) variables ({:+}). round target = {} "
       "({:.2f}). "
       "max fixrate = {:.4g}",
-      settings.log.log_prefix,
       round,
       prev_fixrate * num_integers,
       prev_fixrate,
@@ -803,10 +793,8 @@ void rins(diving_worker_t<i_t, f_t>* worker,
   }
 
   DEBUG_SUBMIP(
-    settings,
-    "{}success={}, infeasible={}, calls={}, fixrate={:.4g} ({:.0f}/{}), max_fixrate={:.4g}, "
+    "success={}, infeasible={}, calls={}, fixrate={:.4g} ({:.0f}/{}), max_fixrate={:.4g}, "
     "min_fixrate={:.4g}\n",
-    settings.log.log_prefix,
     submip_stats.total_success.load(std::memory_order::relaxed),
     submip_stats.total_infeasible.load(std::memory_order::relaxed),
     submip_stats.total_calls.load(std::memory_order::relaxed),
@@ -828,7 +816,7 @@ void rens(diving_worker_t<i_t, f_t>* worker,
   if (worker->orbital_fixing) { worker->orbital_fixing->disable(); }
 
   i_t submip_level = settings.submip_settings.level + 1;
-  settings.log.log_prefix =
+  settings.log.log_prefix +=
     std::format("[{} {}] ", search_strategy_to_string(worker->search_strategy), submip_level);
   branch_and_bound_t<i_t, f_t>* bnb_ptr = worker->branch_and_bound_ptr;
 
@@ -886,13 +874,13 @@ void rens(diving_worker_t<i_t, f_t>* worker,
 
     for (i_t j : integer_list) {
       if (toc(bnb_stats.start_time) >= settings.time_limit) {
-        DEBUG_SUBMIP(settings, "{}Time limit reached.", settings.log.log_prefix)
+        DEBUG_SUBMIP("Time limit reached.")
         has_stopped = true;
         break;
       }
 
       if (settings.received_halt_signal()) {
-        DEBUG_SUBMIP(settings, "{}Halt signal received.", settings.log.log_prefix)
+        DEBUG_SUBMIP("Halt signal received.")
         has_stopped = true;
         break;
       }
@@ -902,6 +890,8 @@ void rens(diving_worker_t<i_t, f_t>* worker,
 
       simplex::bound_change_t<i_t, f_t> bound_change{
         .var = j, .origin = simplex::bound_change_origin_t::BRANCH};
+      bound_change.old_lower = lp.lower[j];
+      bound_change.old_upper = lp.upper[j];
       bound_change.new_lower = std::clamp(std::floor(current_sol[j]), lp.lower[j], lp.upper[j]);
       bound_change.new_upper = std::clamp(std::ceil(current_sol[j]), lp.lower[j], lp.upper[j]);
 
@@ -909,16 +899,15 @@ void rens(diving_worker_t<i_t, f_t>* worker,
         i_t start = domain.size();
         if (!domain.apply_and_propagate(
               worker->Arow, worker->var_types, settings, bound_change, lp)) {
-          DEBUG_SUBMIP(settings,
-                       "{}Bound propagation detected infeasibility. fixed={}/{}, "
-                       "max_fixrate={:.4g}, min_fixrate={:.4g}",
-                       settings.log.log_prefix,
-                       num_fixed + new_fixings,
-                       num_integers,
-                       max_fixrate,
-                       min_fixrate)
-          has_stopped = true;
-          break;
+          DEBUG_SUBMIP(
+            "Bound propagation detect infeasibility. var={}, lower={:.4g} -> {:.4g}, "
+            "upper={:.4g} -> {:.4g}",
+            j,
+            bound_change.old_lower,
+            bound_change.new_lower,
+            bound_change.old_upper,
+            bound_change.new_upper);
+          domain.backtrack_to_parent(lp);
         }
 
         new_fixings += calculate_fixrate(worker->var_types, settings, domain, start);
@@ -946,10 +935,7 @@ void rens(diving_worker_t<i_t, f_t>* worker,
                                             worker->leaf_problem,
                                             worker->domain);
       if (new_fixings < 0) {
-        DEBUG_SUBMIP(settings,
-                     "{}Round {}: stopped fixing (infeasible, halted or time limit reached).",
-                     settings.log.log_prefix,
-                     round)
+        DEBUG_SUBMIP("Round {}: stopped fixing (infeasible, halted or time limit reached).", round)
         break;
       }
 
@@ -963,11 +949,9 @@ void rens(diving_worker_t<i_t, f_t>* worker,
     }
 
     DEBUG_SUBMIP(
-      settings,
-      "{}Round {}: fixed {:.0f} ({:.2f}) -> {:.0f} ({:.2f}) variables ({:+}). round target = {} "
+      "Round {}: fixed {:.0f} ({:.2f}) -> {:.0f} ({:.2f}) variables ({:+}). round target = {} "
       "({:.2f}). "
       "max fixrate = {:.4g}",
-      settings.log.log_prefix,
       round,
       prev_fixrate * num_integers,
       prev_fixrate,
@@ -1004,10 +988,8 @@ void rens(diving_worker_t<i_t, f_t>* worker,
   }
 
   DEBUG_SUBMIP(
-    settings,
-    "{}success={}, infeasible={}, calls={}, fixrate={:.4g} ({:.0f}/{}), max_fixrate={:.4g}, "
+    "success={}, infeasible={}, calls={}, fixrate={:.4g} ({:.0f}/{}), max_fixrate={:.4g}, "
     "min_fixrate={:.4g}\n",
-    settings.log.log_prefix,
     submip_stats.total_success.load(std::memory_order::relaxed),
     submip_stats.total_infeasible.load(std::memory_order::relaxed),
     submip_stats.total_calls.load(std::memory_order::relaxed),
