@@ -316,17 +316,22 @@ void submip_manager_t<i_t, f_t>::update_stats(const simplex_solver_settings_t<i_
   ++status_count_[status];
   fixrate_sum_per_status_[status] += fixrate;
 
-  settings.log.print_format(
-    "Updated controller with status={}, fixrate={:.4g}, count={}/{}, mean fixrate={:.4g}, "
-    "lower_guide={:.4g}, peak={:.4g}, upper_guide={:.4g}",
-    (int)status,
-    fixrate,
-    status_count_[status],
-    num_calls_.load(std::memory_order_acquire),
-    fixrate_sum_per_status_[status] / status_count_[status],
-    lower_guide_,
-    peak_,
-    upper_guide_);
+  if (settings.mip_hyper_params.submip_level < 2) {
+    simplex::logger_t log;
+    log.log_prefix = settings.log.log_prefix;
+
+    log.print_format(
+      "Updated controller with status={}, fixrate={:.4g}, count={}/{}, mean fixrate={:.4g}, "
+      "lower_guide={:.4g}, peak={:.4g}, upper_guide={:.4g}",
+      (int)status,
+      fixrate,
+      status_count_[status],
+      num_calls_.load(std::memory_order_acquire),
+      fixrate_sum_per_status_[status] / status_count_[status],
+      lower_guide_,
+      peak_,
+      upper_guide_);
+  }
 }
 
 template <typename i_t, typename f_t>
@@ -344,7 +349,7 @@ void solve_submip(diving_worker_t<i_t, f_t>* worker,
   double start_time                     = tic();
   branch_and_bound_t<i_t, f_t>* bnb_ptr = worker->branch_and_bound_ptr;
   bool inside_submip                    = settings.inside_submip;
-  omp_atomic_t<bool> improved_incumbent = false;
+  omp_atomic_t<i_t> num_success         = 0;
 
   submip_manager.mutex_.lock();
   i_t past_success_count = submip_manager.status_count_[SUCCESS];
@@ -502,9 +507,9 @@ void solve_submip(diving_worker_t<i_t, f_t>* worker,
   settings.heuristic_preemption_callback   = nullptr;
   settings.dual_simplex_objective_callback = nullptr;
   settings.set_simplex_solution_callback   = nullptr;
-  settings.solution_callback               = [bnb_ptr, &improved_incumbent, &presolver, worker](
+  settings.solution_callback               = [bnb_ptr, &num_success, &presolver, worker](
                                  const std::vector<f_t>& solution, f_t obj) {
-    improved_incumbent |= bnb_ptr->set_solution_from_submip(
+    num_success += bnb_ptr->set_solution_from_submip(
       worker->leaf_problem, solution, presolver, worker->search_strategy);
   };
 
@@ -620,11 +625,11 @@ void solve_submip(diving_worker_t<i_t, f_t>* worker,
   if (inside_submip) { bnb_stats.total_simplex_iters += submip_solution.simplex_iterations; }
 
   if (submip_solution.has_incumbent) {
-    improved_incumbent |= bnb_ptr->set_solution_from_submip(
+    num_success += bnb_ptr->set_solution_from_submip(
       worker->leaf_problem, submip_solution.x, presolver, worker->search_strategy);
   }
 
-  submip_status_t status = convert_bnb_status(submip_status, improved_incumbent);
+  submip_status_t status = convert_bnb_status(submip_status, num_success > 0);
   if (status != UNSET) { submip_manager.update_stats(settings, status, fixrate); }
 }
 

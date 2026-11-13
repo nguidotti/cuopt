@@ -94,8 +94,6 @@ class omp_atomic_t {
   operator T() const { return load(std::memory_order::relaxed); }
   T operator+=(T inc) { return fetch_add(inc, std::memory_order::relaxed) + inc; }
   T operator-=(T inc) { return fetch_sub(inc, std::memory_order::relaxed) - inc; }
-  T operator&=(T x) { return fetch_and(x, std::memory_order::relaxed) & x; }
-  T operator|=(T x) { return fetch_or(x, std::memory_order::relaxed) | x; }
 
   // In theory, this should be enabled only for integers,
   // but it works for any numerical types.
@@ -211,80 +209,6 @@ class omp_atomic_t {
   }
 
   T fetch_sub(T inc, std::memory_order memory_order) { return fetch_add(-inc, memory_order); }
-
-  T fetch_or(T inc, std::memory_order memory_order)
-  {
-    T old;
-    if (memory_order == std::memory_order::seq_cst) {
-#pragma omp atomic capture seq_cst
-      {
-        old = val;
-        val |= inc;
-      }
-    } else if (memory_order == std::memory_order::acquire) {
-#pragma omp atomic capture acquire
-      {
-        old = val;
-        val |= inc;
-      }
-    } else if (memory_order == std::memory_order::release) {
-#pragma omp atomic capture release
-      {
-        old = val;
-        val |= inc;
-      }
-    } else if (memory_order == std::memory_order::acq_rel) {
-#pragma omp atomic capture acq_rel
-      {
-        old = val;
-        val |= inc;
-      }
-    } else {
-#pragma omp atomic capture relaxed
-      {
-        old = val;
-        val |= inc;
-      }
-    }
-    return old;
-  }
-
-  T fetch_and(T inc, std::memory_order memory_order)
-  {
-    T old;
-    if (memory_order == std::memory_order::seq_cst) {
-#pragma omp atomic capture seq_cst
-      {
-        old = val;
-        val &= inc;
-      }
-    } else if (memory_order == std::memory_order::acquire) {
-#pragma omp atomic capture acquire
-      {
-        old = val;
-        val &= inc;
-      }
-    } else if (memory_order == std::memory_order::release) {
-#pragma omp atomic capture release
-      {
-        old = val;
-        val &= inc;
-      }
-    } else if (memory_order == std::memory_order::acq_rel) {
-#pragma omp atomic capture acq_rel
-      {
-        old = val;
-        val &= inc;
-      }
-    } else {
-#pragma omp atomic capture relaxed
-      {
-        old = val;
-        val &= inc;
-      }
-    }
-    return old;
-  }
 
   T fetch_min(T other, std::memory_order memory_order)
   {
