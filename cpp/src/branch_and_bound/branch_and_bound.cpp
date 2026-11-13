@@ -835,7 +835,7 @@ void branch_and_bound_t<i_t, f_t>::set_final_solution(mip_solution_t<i_t, f_t>& 
 }
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::set_solution_from_worker(const lp_problem_t<i_t, f_t>& lp,
+bool branch_and_bound_t<i_t, f_t>::set_solution_from_worker(const lp_problem_t<i_t, f_t>& lp,
                                                             f_t leaf_objective,
                                                             const std::vector<f_t>& leaf_solution,
                                                             i_t leaf_depth,
@@ -889,6 +889,8 @@ void branch_and_bound_t<i_t, f_t>::set_solution_from_worker(const lp_problem_t<i
       node_concurrent_halt_ = true;
     }
   }
+
+  return success;
 }
 
 template <typename i_t, typename f_t>

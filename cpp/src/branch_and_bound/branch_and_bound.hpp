@@ -145,7 +145,7 @@ class branch_and_bound_t {
 
   // Update the incumbent solution with the new feasible solution
   // found during branch and bound.
-  void set_solution_from_worker(const simplex::lp_problem_t<i_t, f_t>& lp,
+  bool set_solution_from_worker(const simplex::lp_problem_t<i_t, f_t>& lp,
                                 f_t leaf_objective,
                                 const std::vector<f_t>& leaf_solution,
                                 i_t leaf_depth,

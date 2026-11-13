@@ -23,7 +23,7 @@
 
 #include <raft/core/nvtx.hpp>
 
-#define SUBMIP_VERBOSE true
+#define SUBMIP_VERBOSE false
 #if SUBMIP_VERBOSE
 #define DEBUG_SUBMIP(...) settings.log.print_format(__VA_ARGS__);
 #else
@@ -158,9 +158,11 @@ i_t extend_variable_fixings(const csr_matrix_t<i_t, f_t>& Arow,
 template <typename i_t, typename f_t>
 bool solve_lp(const branch_and_bound_stats_t<i_t, f_t>& bnb_stats,
               const simplex_solver_settings_t<i_t, f_t>& settings,
+              f_t fixrate,
               diving_worker_t<i_t, f_t>* worker,
               branch_and_bound_stats_t<i_t, f_t>& stats,
-              std::vector<i_t>& fractional)
+              std::vector<i_t>& fractional,
+              submip_manager_t<i_t, f_t>& submip_manager)
 {
   branch_and_bound_t<i_t, f_t>* bnb_ptr = worker->branch_and_bound_ptr;
   mip_node_t<i_t, f_t>* node            = &worker->start_node;
@@ -197,16 +199,24 @@ bool solve_lp(const branch_and_bound_stats_t<i_t, f_t>& bnb_stats,
                  simplex::dual_status_to_string(lp_status),
                  leaf_obj,
                  upper_bound)
+    if (lp_status == simplex::dual_status_t::DUAL_UNBOUNDED) {
+      submip_manager.update_stats(settings, INFEASIBLE, fixrate);
+    } else if (lp_status == simplex::dual_status_t::CUTOFF ||
+               lp_status == simplex::dual_status_t::OPTIMAL) {
+      submip_manager.update_stats(settings, EMPTY, fixrate);
+    }
+
     return false;
   }
 
   // We found a feasible solution when fixing the variables in RINS/RENS.
   if (node_status == node_status_t::INTEGER_FEASIBLE) {
-    bnb_ptr->set_solution_from_worker(
+    bool success = bnb_ptr->set_solution_from_worker(
       worker->leaf_problem, leaf_obj, worker->leaf_solution.x, -1, worker->search_strategy);
     DEBUG_SUBMIP("Found an integer-feasible solution with obj={:.4g}. upper_bound={:.4g}",
                  leaf_obj,
                  bnb_ptr->get_upper_bound())
+    submip_manager.update_stats(settings, success ? SUCCESS : EMPTY, fixrate);
     return false;
   }
 
@@ -306,8 +316,8 @@ void submip_manager_t<i_t, f_t>::update_stats(const simplex_solver_settings_t<i_
   ++status_count_[status];
   fixrate_sum_per_status_[status] += fixrate;
 
-  DEBUG_SUBMIP(
-    "Updated controller with status={}, fixrate={}, count={}/{}, mean fixrate={}, "
+  settings.log.print_format(
+    "Updated controller with status={}, fixrate={:.4g}, count={}/{}, mean fixrate={:.4g}, "
     "lower_guide={:.4g}, peak={:.4g}, upper_guide={:.4g}",
     (int)status,
     fixrate,
@@ -416,7 +426,7 @@ void solve_submip(diving_worker_t<i_t, f_t>* worker,
   settings.inside_root_node                         = 0;
   settings.mip_hyper_params.submip_level            = submip_level;
   settings.benchmark_info_ptr                       = nullptr;
-  settings.log.log                                  = false;
+  settings.log.log                                  = SUBMIP_VERBOSE;
   std::string_view log_prefix                       = settings.log.log_prefix;
 
   DEBUG_SUBMIP("Sub-MIP: fixrate={:.2f}", fixrate)
@@ -870,7 +880,8 @@ void rins(diving_worker_t<i_t, f_t>* worker,
 
     if (toc(bnb_stats.start_time) >= settings.time_limit) { break; }
 
-    bool continue_dive = solve_lp(bnb_stats, settings, worker, stats, fractional);
+    bool continue_dive =
+      solve_lp(bnb_stats, settings, fixrate, worker, stats, fractional, submip_manager);
     if (!continue_dive) { break; }
     ++round;
   }
@@ -1059,7 +1070,8 @@ void rens(diving_worker_t<i_t, f_t>* worker,
 
     if (toc(bnb_stats.start_time) >= settings.time_limit) { break; }
 
-    bool continue_dive = solve_lp(bnb_stats, settings, worker, stats, fractional);
+    bool continue_dive =
+      solve_lp(bnb_stats, settings, fixrate, worker, stats, fractional, submip_manager);
     if (!continue_dive) { break; }
     ++round;
   }
