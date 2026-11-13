@@ -158,7 +158,16 @@ solver_settings_t<i_t, f_t>::solver_settings_t() : pdlp_settings(), mip_settings
     // Diving heuristic hyper-parameters (hidden from default --help: name contains "hyper_")
     {CUOPT_MIP_HYPER_DIVING_ITERATION_LIMIT_FACTOR, &mip_settings.mip_hyper_params.diving_iteration_limit_factor, f_t(0.0), f_t(1.0), f_t(0.05), "fraction of best-first iterations allowed per dive"},
     // Recursive sub-MIP (RINS) hyper-parameters (hidden from default --help: name contains "hyper_")
-    {CUOPT_MIP_HYPER_SUBMIP_BASE_TARGET_FIXRATE, &mip_settings.mip_hyper_params.submip_base_target_fixrate, f_t(0.0), f_t(1.0), f_t(0.6), "base target fix rate for the RINS neighbourhood"},
+    {CUOPT_MIP_HYPER_SUBMIP_OBSERVATION_DECAY, &mip_settings.mip_hyper_params.submip_observation_decay, f_t(0.0), f_t(1.0), f_t(0.9), "decay pulling the fix-rate guides back to their base values"},
+    {CUOPT_MIP_HYPER_SUBMIP_BASE_FIXRATE, &mip_settings.mip_hyper_params.submip_base_fixrate, f_t(0.0), f_t(1.0), f_t(0.6), "initial peak of the target fix-rate distribution"},
+    {CUOPT_MIP_HYPER_SUBMIP_BASE_LOWER_GUIDE, &mip_settings.mip_hyper_params.submip_base_lower_guide, f_t(0.0), f_t(1.0), f_t(0.25), "initial lower guide of the target fix-rate distribution"},
+    {CUOPT_MIP_HYPER_SUBMIP_BASE_UPPER_GUIDE, &mip_settings.mip_hyper_params.submip_base_upper_guide, f_t(0.0), f_t(1.0), f_t(0.9), "initial upper guide of the target fix-rate distribution"},
+    {CUOPT_MIP_HYPER_SUBMIP_SUCCESS_WEIGHT, &mip_settings.mip_hyper_params.submip_success_weight, f_t(0.0), f_t(1.0), f_t(0.7), "fix-rate controller gain after a sub-MIP improves the incumbent"},
+    {CUOPT_MIP_HYPER_SUBMIP_INFEASIBLE_WEIGHT, &mip_settings.mip_hyper_params.submip_infeasible_weight, f_t(0.0), f_t(1.0), f_t(0.3), "fix-rate controller gain after an infeasible sub-MIP"},
+    {CUOPT_MIP_HYPER_SUBMIP_EMPTY_WEIGHT, &mip_settings.mip_hyper_params.submip_empty_weight, f_t(0.0), f_t(1.0), f_t(0.1), "fix-rate controller gain after a sub-MIP without an improving solution"},
+    {CUOPT_MIP_HYPER_SUBMIP_TRUNCATED_WEIGHT, &mip_settings.mip_hyper_params.submip_truncated_weight, f_t(0.0), f_t(1.0), f_t(0.3), "fix-rate controller gain after a sub-MIP hits its limits"},
+    {CUOPT_MIP_HYPER_SUBMIP_MIN_SIGMA, &mip_settings.mip_hyper_params.submip_min_sigma, f_t(1e-3), f_t(1.0), f_t(0.02), "minimum spread of the target fix-rate distribution"},
+    {CUOPT_MIP_HYPER_SUBMIP_MAX_FIXRATE, &mip_settings.mip_hyper_params.submip_max_fixrate, f_t(0.0), f_t(1.0), f_t(0.9), "maximum target fix rate for a sub-MIP"},
     {CUOPT_MIP_HYPER_SUBMIP_MIN_FIXRATE, &mip_settings.mip_hyper_params.submip_min_fixrate, f_t(0.0), f_t(1.0), f_t(0.25), "minimum fix rate for accepting the RINS neighbourhood"},
     {CUOPT_MIP_HYPER_SUBMIP_MIN_FIXRATE_CAP, &mip_settings.mip_hyper_params.submip_min_fixrate_cap, f_t(0.0), f_t(1.0), f_t(0.1), "hard cap on the minimum fix rate for solving a sub-MIP"},
     {CUOPT_MIP_HYPER_SUBMIP_TARGET_MIP_GAP, &mip_settings.mip_hyper_params.submip_target_mip_gap, f_t(0.0), f_t(1.0), f_t(0.01), "MIP gap target for the sub-MIP"},
@@ -277,7 +286,7 @@ solver_settings_t<i_t, f_t>::solver_settings_t() : pdlp_settings(), mip_settings
     {CUOPT_MIP_PROBING, &mip_settings.probing, true},
     {CUOPT_MIP_HEURISTICS_ONLY, &deprecated_heuristics_only, false, "deprecated; has no effect", true},
     // Diving heuristic hyper-parameters (hidden from default --help: name contains "hyper_")
-    {CUOPT_MIP_HYPER_DIVING_SHOW_TYPE, &mip_settings.mip_hyper_params.diving_show_type, false, "log diving heuristic type when it finds a new incumbent"},
+    {CUOPT_MIP_HYPER_DIVING_SHOW_TYPE, &mip_settings.mip_hyper_params.heuristic_show_type, false, "log diving heuristic type when it finds a new incumbent"},
     // Recursive sub-MIP (RINS) hyper-parameters (hidden from default --help: name contains "hyper_")
     {CUOPT_MIP_HYPER_SUBMIP_ENABLE_CPUFJ, &mip_settings.mip_hyper_params.submip_enable_cpufj, true, "run CPU FJ over the sub-MIP"},
     {CUOPT_MIP_HYPER_BLOCK_BVE, &mip_settings.mip_hyper_params.presolve_block_bve, true, "eliminate blocks of binaries in cuOpt's MIP presolve (needs " CUOPT_MIP_PROBING ")"},

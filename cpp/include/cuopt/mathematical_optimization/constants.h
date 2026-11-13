@@ -144,7 +144,16 @@
 #define CUOPT_MIP_HYPER_DIVING_SHOW_TYPE "mip_hyper_diving_show_type"
 
 /* @brief Recursive sub-MIP (RINS) hyper-parameters */
-#define CUOPT_MIP_HYPER_SUBMIP_BASE_TARGET_FIXRATE    "mip_hyper_submip_base_target_fixrate"
+#define CUOPT_MIP_HYPER_SUBMIP_OBSERVATION_DECAY      "mip_hyper_submip_observation_decay"
+#define CUOPT_MIP_HYPER_SUBMIP_BASE_FIXRATE           "mip_hyper_submip_base_fixrate"
+#define CUOPT_MIP_HYPER_SUBMIP_BASE_LOWER_GUIDE       "mip_hyper_submip_base_lower_guide"
+#define CUOPT_MIP_HYPER_SUBMIP_BASE_UPPER_GUIDE       "mip_hyper_submip_base_upper_guide"
+#define CUOPT_MIP_HYPER_SUBMIP_SUCCESS_WEIGHT         "mip_hyper_submip_success_weight"
+#define CUOPT_MIP_HYPER_SUBMIP_INFEASIBLE_WEIGHT      "mip_hyper_submip_infeasible_weight"
+#define CUOPT_MIP_HYPER_SUBMIP_EMPTY_WEIGHT           "mip_hyper_submip_empty_weight"
+#define CUOPT_MIP_HYPER_SUBMIP_TRUNCATED_WEIGHT       "mip_hyper_submip_truncated_weight"
+#define CUOPT_MIP_HYPER_SUBMIP_MIN_SIGMA              "mip_hyper_submip_min_sigma"
+#define CUOPT_MIP_HYPER_SUBMIP_MAX_FIXRATE            "mip_hyper_submip_max_fixrate"
 #define CUOPT_MIP_HYPER_SUBMIP_MIN_FIXRATE            "mip_hyper_submip_min_fixrate"
 #define CUOPT_MIP_HYPER_SUBMIP_MIN_FIXRATE_CAP        "mip_hyper_submip_min_fixrate_cap"
 #define CUOPT_MIP_HYPER_SUBMIP_TARGET_MIP_GAP         "mip_hyper_submip_target_mip_gap"

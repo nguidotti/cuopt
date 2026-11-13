@@ -8,6 +8,8 @@
 #pragma once
 
 #include <stdint.h>
+#include <cmath>
+#include <numbers>
 #include <utility>
 #include <vector>
 
@@ -180,6 +182,55 @@ class pcgenerator_t {
       size_t j = uniform(i, seq.size());
       if (j != i) std::swap(seq[i], seq[j]);
     }
+  }
+
+  /**
+   * @brief Draw a random number from a normal distribution N(mu, sigma)
+   * via Box-Muller.
+   */
+  template <typename T>
+  T normal(T mu = T(0), T sigma = T(1))
+  {
+    T u1 = T{1} - next<T>();  // (0, 1], avoiding log(0).
+    T u2 = next<T>();
+    T x  = std::sqrt(-2 * std::log(u1)) * std::cos(2 * std::numbers::pi_v<T> * u2);
+    return mu + sigma * x;
+  }
+
+  /**
+   * @brief Draw two random numbers from a normal distribution N(mu, sigma)
+   * via Box-Muller.
+   */
+  template <typename T>
+  std::pair<T, T> normal2(T mu = T(0), T sigma = T(1))
+  {
+    T u1 = T{1} - next<T>();  // (0, 1], avoiding log(0).
+    T u2 = next<T>();
+    T x  = std::sqrt(-2 * std::log(u1)) * std::cos(2 * std::numbers::pi_v<T> * u2);
+    T y  = std::sqrt(-2 * std::log(u1)) * std::sin(2 * std::numbers::pi_v<T> * u2);
+    return {mu + sigma * x, mu + sigma * y};
+  }
+
+  /**
+   * @brief Draw a random number from a split normal distribution:
+   * f(x; c, \sigma_L, \sigma_R) =
+   * \begin{cases}
+   * \sqrt{\frac{2}{\pi (\sigma_L + \sigma_R)^2}} \exp\!\left(-\dfrac{(x-c)^2}{2\sigma_L^2}\right),
+   * & L\leq x < c,\\
+   * \sqrt{\frac{2}{\pi (\sigma_L + \sigma_R)^2}} \exp\!\left(-\dfrac{(x-c)^2}{2\sigma_R^2}\right),
+   * & c\leq x \leq U,
+   * \end{cases}
+   */
+  template <typename T>
+  T split_normal(T c, T sigma_r, T sigma_l)
+  {
+    T u1 = T{1} - next<T>();  // (0, 1], avoiding log(0).
+    T u2 = next<T>();
+    T z  = std::abs(std::sqrt(-2 * std::log(u1)) * std::cos(2 * std::numbers::pi_v<T> * u2));
+
+    T p_left  = sigma_l / (sigma_l + sigma_r);
+    bool left = next<T>() < p_left;
+    return left ? c - sigma_l * z : c + sigma_r * z;
   }
 
  private:

@@ -176,6 +176,7 @@ branch_and_bound_t<i_t, f_t>::branch_and_bound_t(
     root_crossover_soln_(1, 1),
     seed_generator_(solver_settings.random_seed),
     pc_(1, solver_settings),
+    submip_manager_(solver_settings),
     solver_status_(mip_status_t::UNSET)
 {
   exploration_stats_.start_time = start_time;
@@ -256,12 +257,8 @@ void branch_and_bound_t<i_t, f_t>::set_initial_pseudocost(
 template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::halt_solver()
 {
-  std::lock_guard lock(active_submip_solvers_mutex_);
   node_concurrent_halt_.store(true, std::memory_order::release);
-
-  for (i_t i = 0; i < active_submip_solvers_.size(); ++i) {
-    if (active_submip_solvers_[i]) { active_submip_solvers_[i]->halt_solver(); }
-  }
+  submip_manager_.halt_submip();
 }
 
 template <typename i_t, typename f_t>
@@ -283,7 +280,7 @@ void branch_and_bound_t<i_t, f_t>::print_table_header()
 }
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::report_heuristic(f_t obj, heuristics_origin_t origin)
+void branch_and_bound_t<i_t, f_t>::report_heuristic(f_t obj, char symbol)
 {
   if (is_running_) {
     f_t lower_bound           = get_lower_bound();
@@ -294,7 +291,7 @@ void branch_and_bound_t<i_t, f_t>::report_heuristic(f_t obj, heuristics_origin_t
 
     std::string log_line =
       std::format("{} {:>12} {:>12} {:^+19.6e} {:^+15.6e} {:>8} {:>7} {:^11} {:^11}",
-                  feasible_solution_symbol(origin),
+                  symbol,
                   "",  // nodes explored
                   "",  // nodes unexplored
                   user_obj,
@@ -394,7 +391,7 @@ bool branch_and_bound_t<i_t, f_t>::accept_new_incumbent(f_t obj)
 
 template <typename i_t, typename f_t>
 bool branch_and_bound_t<i_t, f_t>::set_solution_from_heuristics(const std::vector<f_t>& solution,
-                                                                heuristics_origin_t origin)
+                                                                char symbol)
 {
   mutex_original_lp_.lock();
   if (solution.size() != original_problem_.num_cols) {
@@ -411,9 +408,8 @@ bool branch_and_bound_t<i_t, f_t>::set_solution_from_heuristics(const std::vecto
   bool attempt_repair = false;
   bool success        = false;
 
-  settings_.log.debug_format("{} found solution with obj={:.4g}",
-                             feasible_solution_symbol(origin),
-                             compute_user_objective(original_lp_, obj));
+  settings_.log.debug_format(
+    "{} found solution with obj={:.4g}", symbol, compute_user_objective(original_lp_, obj));
 
   if (accept_new_incumbent(obj)) {
     f_t primal_err;
@@ -444,7 +440,7 @@ bool branch_and_bound_t<i_t, f_t>::set_solution_from_heuristics(const std::vecto
         upper_bound_            = std::min(current_upper_bound, obj);
         incumbent_.set_incumbent_solution(obj, crushed_solution);
         if (current_upper_bound > upper_bound_.load(std::memory_order::relaxed)) {
-          report_heuristic(obj, origin);
+          report_heuristic(obj, symbol);
           success = true;
         }
       }
@@ -554,7 +550,8 @@ void branch_and_bound_t<i_t, f_t>::set_solution_from_cpu_fj(f_t obj,
     if (settings_.solution_callback != nullptr) {
       settings_.solution_callback(user_assignment, obj);
     }
-    set_solution_from_heuristics(user_assignment, heuristics_origin_t::HEURISTICS);
+    set_solution_from_heuristics(user_assignment,
+                                 settings_.mip_hyper_params.heuristic_show_type ? 'J' : 'H');
   }
 }
 
@@ -563,13 +560,11 @@ void branch_and_bound_t<i_t, f_t>::set_solution_from_cpu_fj(f_t obj,
 // expects a solution on the user space. So we go from presolved space -> augmented space ->
 // user space.
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::set_solution_from_submip(
+bool branch_and_bound_t<i_t, f_t>::set_solution_from_submip(
   const lp_problem_t<i_t, f_t>& lp,
   const std::vector<f_t>& solution,
   const third_party_presolve_t<i_t, f_t>& presolver,
-  submip_stats_t& submip_stats,
-  f_t fixrate,
-  [[maybe_unused]] std::string_view log_prefix)
+  search_strategy_t type)
 {
   bool check_postsolve = false;
   std::vector<f_t> leaf_sol;
@@ -581,15 +576,13 @@ void branch_and_bound_t<i_t, f_t>::set_solution_from_submip(
   uncrush_primal_solution(original_problem_, lp, leaf_sol, user_sol);
   mutex_original_lp_.unlock();
 
-  settings_.log.debug_format("{}Sub-MIP found a feasible solution with obj={:.4g}",
-                             log_prefix,
-                             compute_user_objective(lp, obj));
-
-  bool success = set_solution_from_heuristics(user_sol, heuristics_origin_t::SUBMIP);
+  bool success = set_solution_from_heuristics(
+    user_sol, feasible_solution_symbol(type, settings_.mip_hyper_params.heuristic_show_type));
   if (success) {
-    submip_stats.save_success(fixrate);
     if (settings_.solution_callback != nullptr) { settings_.solution_callback(user_sol, obj); }
   }
+
+  return success;
 }
 
 template <typename i_t, typename f_t>
@@ -697,7 +690,7 @@ void branch_and_bound_t<i_t, f_t>::repair_heuristic_solutions()
         if (accept_new_incumbent(repaired_obj)) {
           upper_bound_ = std::min(upper_bound_.load(std::memory_order::relaxed), repaired_obj);
           incumbent_.set_incumbent_solution(repaired_obj, repaired_solution);
-          report_heuristic(repaired_obj, heuristics_origin_t::HEURISTICS);
+          report_heuristic(repaired_obj, 'H');
 
           if (settings_.solution_callback != nullptr) {
             std::vector<f_t> original_x;
@@ -863,7 +856,7 @@ void branch_and_bound_t<i_t, f_t>::set_solution_from_worker(const lp_problem_t<i
   bool success = false;
   settings_.log.debug(
     "%c found a feasible solution with obj=%.10e.\n",
-    feasible_solution_symbol(thread_type, settings_.mip_hyper_params.diving_show_type),
+    feasible_solution_symbol(thread_type, settings_.mip_hyper_params.heuristic_show_type),
     compute_user_objective(lp, leaf_objective));
 
   mutex_upper_.lock();
@@ -872,7 +865,7 @@ void branch_and_bound_t<i_t, f_t>::set_solution_from_worker(const lp_problem_t<i
     upper_bound_.fetch_min(leaf_objective, std::memory_order::relaxed);
 
     char symbol =
-      feasible_solution_symbol(thread_type, settings_.mip_hyper_params.diving_show_type);
+      feasible_solution_symbol(thread_type, settings_.mip_hyper_params.heuristic_show_type);
     report(lp, symbol, leaf_objective, get_lower_bound(), leaf_depth, 0);
     success = true;
 
@@ -1851,7 +1844,7 @@ bool branch_and_bound_t<i_t, f_t>::launch_submip_worker(const std::vector<f_t>& 
     worker->search_strategy = search_strategy_t::MUTATION;
 #pragma omp task priority(CUOPT_DEFAULT_TASK_PRIORITY) affinity(worker) firstprivate(worker)
     {
-      mutation(worker, exploration_stats_, original_problem_, mutation_stats_, submip_settings);
+      mutation(worker, exploration_stats_, original_problem_, submip_manager_, submip_settings);
       submip_worker_pool_.return_worker_to_pool(worker);
     }
     return true;
@@ -1862,13 +1855,13 @@ bool branch_and_bound_t<i_t, f_t>::launch_submip_worker(const std::vector<f_t>& 
     if (settings_.inside_submip) {
       // LLVM libomp's GOMP compatibility path skips GCC's firstprivate copy
       // function for included tasks.
-      rins(worker, exploration_stats_, original_problem_, rins_stats_, submip_settings);
+      rins(worker, exploration_stats_, original_problem_, submip_manager_, submip_settings);
       submip_worker_pool_.return_worker_to_pool(worker);
     } else {
 #pragma omp task priority(CUOPT_DEFAULT_TASK_PRIORITY) affinity(worker) \
   firstprivate(worker, submip_settings)
       {
-        rins(worker, exploration_stats_, original_problem_, rins_stats_, submip_settings);
+        rins(worker, exploration_stats_, original_problem_, submip_manager_, submip_settings);
         submip_worker_pool_.return_worker_to_pool(worker);
       }
     }
@@ -1879,13 +1872,13 @@ bool branch_and_bound_t<i_t, f_t>::launch_submip_worker(const std::vector<f_t>& 
   if (settings_.inside_submip) {
     // LLVM libomp's GOMP compatibility path skips GCC's firstprivate copy
     // function for included tasks.
-    rens(worker, exploration_stats_, original_problem_, rens_stats_, submip_settings);
+    rens(worker, exploration_stats_, original_problem_, submip_manager_, submip_settings);
     submip_worker_pool_.return_worker_to_pool(worker);
   } else {
 #pragma omp task priority(CUOPT_DEFAULT_TASK_PRIORITY) affinity(worker) \
   firstprivate(worker, submip_settings)
     {
-      rens(worker, exploration_stats_, original_problem_, rens_stats_, submip_settings);
+      rens(worker, exploration_stats_, original_problem_, submip_manager_, submip_settings);
       submip_worker_pool_.return_worker_to_pool(worker);
     }
   }
@@ -2000,9 +1993,9 @@ void branch_and_bound_t<i_t, f_t>::launch_root_heuristics(
       // LLVM libomp's GOMP compatibility path skips GCC's firstprivate copy
       // function for included tasks.
       if (use_rins) {
-        rins(worker, exploration_stats_, original_problem_, rins_stats_, submip_settings);
+        rins(worker, exploration_stats_, original_problem_, submip_manager_, submip_settings);
       } else {
-        rens(worker, exploration_stats_, original_problem_, rens_stats_, submip_settings);
+        rens(worker, exploration_stats_, original_problem_, submip_manager_, submip_settings);
       }
       worker->cleanup();
     } else {
@@ -2012,9 +2005,9 @@ void branch_and_bound_t<i_t, f_t>::launch_root_heuristics(
   firstprivate(current_heuristic, worker_count, submip_settings) depend(out : *worker)
       {
         if (use_rins) {
-          rins(worker, exploration_stats_, original_problem_, rins_stats_, submip_settings);
+          rins(worker, exploration_stats_, original_problem_, submip_manager_, submip_settings);
         } else {
-          rens(worker, exploration_stats_, original_problem_, rens_stats_, submip_settings);
+          rens(worker, exploration_stats_, original_problem_, submip_manager_, submip_settings);
         }
         worker->cleanup();
         --(*worker_count);
@@ -2048,7 +2041,7 @@ void branch_and_bound_t<i_t, f_t>::launch_root_heuristics(
     if (settings_.inside_submip) {
       // LLVM libomp's GOMP compatibility path skips GCC's firstprivate copy
       // function for included tasks.
-      mutation(worker, exploration_stats_, original_problem_, mutation_stats_, submip_settings);
+      mutation(worker, exploration_stats_, original_problem_, submip_manager_, submip_settings);
       worker->cleanup();
     } else {
       ++current_heuristic->active_workers_;
@@ -2056,7 +2049,7 @@ void branch_and_bound_t<i_t, f_t>::launch_root_heuristics(
 #pragma omp task priority(CUOPT_DEFAULT_TASK_PRIORITY) affinity(worker) \
   firstprivate(current_heuristic, worker_count, submip_settings) depend(out : *worker)
       {
-        mutation(worker, exploration_stats_, original_problem_, mutation_stats_, submip_settings);
+        mutation(worker, exploration_stats_, original_problem_, submip_manager_, submip_settings);
         worker->cleanup();
         --(*worker_count);
         --current_heuristic->active_workers_;
@@ -2741,10 +2734,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   exploration_stats_.nodes_explored   = 0;
   lower_bound_numerical_              = inf;
   original_lp_.A.to_compressed_row(Arow_);
-
-  active_submip_solvers_mutex_.lock();
-  active_submip_solvers_.assign(settings_.max_cut_passes, nullptr);
-  active_submip_solvers_mutex_.unlock();
+  submip_manager_.resize_bnb_slots(settings_.max_cut_passes);
 
   settings_.log.debug("Reduced cost strengthening enabled: %d\n",
                       settings_.reduced_cost_strengthening);
@@ -3414,6 +3404,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                                root_relax_work_estimate_,
                                this,
                                seed_generator_);
+      submip_manager_.resize_bnb_slots(num_submip_workers);
 
       diving_worker_pool_.init(num_diving_workers,
                                original_lp_,
@@ -3430,10 +3421,6 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                                root_relax_work_estimate_,
                                this,
                                seed_generator_);
-
-      active_submip_solvers_mutex_.lock();
-      active_submip_solvers_.assign(num_submip_workers, nullptr);
-      active_submip_solvers_mutex_.unlock();
 
       bfs_worker_t<i_t, f_t>* initial_worker = bfs_worker_pool_.pop_idle_worker();
       node_queue_t<i_t, f_t>& node_queue     = initial_worker->node_queue;
@@ -3475,18 +3462,6 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 
     if (!std::isfinite(lower_bound)) { lower_bound = search_tree_.root.lower_bound; }
   }
-
-  settings_.log.debug_format("RINS: success={}, infeasible={}, empty={}, calls={}",
-                             rins_stats_.total_success.load(std::memory_order::relaxed),
-                             rins_stats_.total_infeasible.load(std::memory_order::relaxed),
-                             rins_stats_.total_empty.load(std::memory_order::relaxed),
-                             rins_stats_.total_calls.load(std::memory_order::relaxed));
-
-  settings_.log.debug_format("RENS: success={}, infeasible={}, empty={}, calls={}",
-                             rens_stats_.total_success.load(std::memory_order::relaxed),
-                             rens_stats_.total_infeasible.load(std::memory_order::relaxed),
-                             rens_stats_.total_empty.load(std::memory_order::relaxed),
-                             rens_stats_.total_calls.load(std::memory_order::relaxed));
 
   set_final_solution(solution, lower_bound);
   return solver_status_;
@@ -4138,7 +4113,7 @@ void branch_and_bound_t<i_t, f_t>::deterministic_process_worker_solutions(
 
       search_strategy_t worker_type = get_worker_type(pool, sol->worker_id);
       report(original_lp_,
-             feasible_solution_symbol(worker_type, settings_.mip_hyper_params.diving_show_type),
+             feasible_solution_symbol(worker_type, settings_.mip_hyper_params.heuristic_show_type),
              sol->objective,
              deterministic_lower,
              sol->depth,
@@ -4316,7 +4291,7 @@ void branch_and_bound_t<i_t, f_t>::deterministic_sort_replay_events(
       }
 
       if (new_upper < std::numeric_limits<f_t>::infinity()) {
-        report_heuristic(new_upper, heuristics_origin_t::HEURISTICS);
+        report_heuristic(new_upper, 'H');
 
         if (settings_.solution_callback != nullptr) {
           std::vector<f_t> original_x;
