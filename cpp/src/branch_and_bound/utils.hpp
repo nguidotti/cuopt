@@ -41,14 +41,17 @@ inline simplex::dual_status_t convert_lp_status_to_dual_status(simplex::lp_statu
   }
 }
 
-// When `log_diving_type` is true, each diving strategy gets its own letter;
-// otherwise every dive collapses to 'D'.
+// When `show_diving` is true, each diving and sub-MIP strategy gets its own letter;
+// otherwise every dive collapses to 'D' and every sub-MIP to 'S'.
 inline char feasible_solution_symbol(search_strategy_t strategy, bool show_diving)
 {
   if (strategy == search_strategy_t::BEST_FIRST) return 'B';
 
   if (!show_diving) {
-    if (strategy == search_strategy_t::RINS || strategy == search_strategy_t::RENS) return 'S';
+    if (strategy == search_strategy_t::RINS || strategy == search_strategy_t::RENS ||
+        strategy == search_strategy_t::MUTATION) {
+      return 'S';
+    }
     return 'D';
   }
 

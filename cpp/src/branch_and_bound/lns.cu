@@ -291,7 +291,7 @@ void submip_fixrate_controller_t<i_t, f_t>::update_stats(
     // fixrate.
     case TRUNCATED:
       upper_guide_ = base_upper + lambda * (upper_guide_ - base_upper);
-      lower_guide_ += omega_T * (fixrate - lower_guide_);
+      lower_guide_ += omega_T * std::max(fixrate - lower_guide_, f_t(0));
       peak_ += omega_T * (0.5 * (std::max(fixrate, peak_) + upper_guide_) - peak_);
       break;
 
@@ -299,7 +299,7 @@ void submip_fixrate_controller_t<i_t, f_t>::update_stats(
     // fixrate.
     case EMPTY:
       lower_guide_ = base_lower + lambda * (lower_guide_ - base_lower);
-      upper_guide_ += omega_E * (fixrate - upper_guide_);
+      upper_guide_ += omega_E * std::min(fixrate - upper_guide_, f_t(0));
       peak_ += omega_E * (0.5 * (std::min(fixrate, peak_) + lower_guide_) - peak_);
       break;
 
@@ -307,7 +307,7 @@ void submip_fixrate_controller_t<i_t, f_t>::update_stats(
     // fixrate.
     case INFEASIBLE:
       lower_guide_ = base_lower + lambda * (lower_guide_ - base_lower);
-      upper_guide_ += omega_I * (fixrate - upper_guide_);
+      upper_guide_ += omega_I * std::min(fixrate - upper_guide_, f_t(0));
       peak_ += omega_I * (0.5 * (std::min(fixrate, peak_) + lower_guide_) - peak_);
       break;
 
@@ -602,14 +602,13 @@ void solve_submip(diving_worker_t<i_t, f_t>* worker,
 
   submip_manager.child_bnb_mutex_.lock();
   submip_manager.child_bnb_[worker->worker_id] = &submip_bnb;
+  if (settings.received_halt_signal()) { submip_bnb.halt_solver(); }
   submip_manager.child_bnb_mutex_.unlock();
 
   scope_guard solver_scope([&]() {
     std::lock_guard lock(submip_manager.child_bnb_mutex_);
     submip_manager.child_bnb_[worker->worker_id] = nullptr;
   });
-
-  if (bnb_ptr->received_halt_signal()) { submip_bnb.halt_solver(); }
 
   mip_status_t submip_status = submip_bnb.solve(submip_solution);
   f_t submip_time            = toc(start_time);
@@ -855,8 +854,13 @@ void rins(diving_worker_t<i_t, f_t>* worker,
                                             bnb_stats.start_time,
                                             worker->leaf_problem,
                                             worker->domain);
+      if (new_fixings == 0) {
+        has_submip = fixrate > 0;
+        break;
+      }
+
       if (new_fixings < 0) {
-        DEBUG_SUBMIP("Round {}: stopped fixing (infeasible, halted or time limit reached).", round)
+        DEBUG_SUBMIP("Round {}: stopped fixing (halted or time limit reached).", round)
         break;
       }
 
@@ -1044,8 +1048,14 @@ void rens(diving_worker_t<i_t, f_t>* worker,
                                             bnb_stats.start_time,
                                             worker->leaf_problem,
                                             worker->domain);
+
+      if (new_fixings == 0) {
+        has_submip = fixrate > 0;
+        break;
+      }
+
       if (new_fixings < 0) {
-        DEBUG_SUBMIP("Round {}: stopped fixing (infeasible, halted or time limit reached).", round)
+        DEBUG_SUBMIP("Round {}: stopped fixing (halted or time limit reached).", round)
         break;
       }
 

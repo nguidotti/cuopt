@@ -56,14 +56,20 @@ struct mip_hyper_params_t {
   f_t heuristic_related_vars_time_limit            = 2.0;     // related-variable structure build
 
   // If a given diving or sub-MIP heuristic found a new incumbent, show the corresponding
-  // symbol in the first column of the log row. When false, every dive collapses
-  // to 'D'. Otherwise,
+  // symbol in the first column of the log row. When false, every dive collapses to 'D',
+  // every sub-MIP to 'S' and CPU FJ to 'H'. Otherwise,
   //   B = best-first
   //   H = heuristics
   //   C = coefficient diving
   //   L = line-search diving
   //   P = pseudocost diving
   //   G = guided diving
+  //   F = Farkas diving
+  //   V = vector-length diving
+  //   I = RINS
+  //   E = RENS
+  //   M = mutation
+  //   J = CPU FJ
   //   U = unknown
   bool heuristic_show_type = false;
 
@@ -150,7 +156,7 @@ struct mip_hyper_params_t {
   f_t submip_empty_weight      = 0.1;
   f_t submip_truncated_weight  = 0.3;
 
-  // Minimum fix rate for solving the sub-MIP.
+  // Minimum fix rate for accepting a RINS/RENS neighbourhood once no more variables can be fixed.
   f_t submip_min_fixrate = 0.25;
 
   // Hard cap for the minimum fix rate for solving a sub-MIP.
