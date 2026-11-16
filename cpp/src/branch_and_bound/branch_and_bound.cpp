@@ -371,9 +371,10 @@ void branch_and_bound_t<i_t, f_t>::update_user_bound(const lp_problem_t<i_t, f_t
 template <typename i_t, typename f_t>
 bool branch_and_bound_t<i_t, f_t>::accept_new_incumbent(f_t obj)
 {
-  if (!incumbent_.has_incumbent) return true;
+  f_t upper_bound = upper_bound_.load(std::memory_order::relaxed);
+  if (!std::isfinite(upper_bound)) return true;
 
-  f_t threshold = incumbent_.objective - settings_.primal_tol;
+  f_t threshold = upper_bound - settings_.primal_tol;
   f_t step      = 0.0;
   if (original_lp_.objective_step.has_step()) {
     step = original_lp_.objective_step.step_size;
@@ -381,9 +382,9 @@ bool branch_and_bound_t<i_t, f_t>::accept_new_incumbent(f_t obj)
     step = 1.0;
   }
   if (step > 0.0) {
-    // Half a step above the greatest lattice value strictly below the incumbent.
+    // Half a step above the greatest lattice value strictly below the upper bound.
     const f_t lattice_below =
-      compute_node_cutoff(original_lp_, settings_, incumbent_.objective) - settings_.dual_tol;
+      compute_node_cutoff(original_lp_, settings_, upper_bound) - settings_.dual_tol;
     threshold = std::min(threshold, lattice_below + 0.5 * step);
   }
   return obj < threshold;

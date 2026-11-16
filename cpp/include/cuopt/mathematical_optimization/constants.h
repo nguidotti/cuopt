@@ -155,7 +155,6 @@
 #define CUOPT_MIP_HYPER_SUBMIP_EMPTY_WEIGHT           "mip_hyper_submip_empty_weight"
 #define CUOPT_MIP_HYPER_SUBMIP_TRUNCATED_WEIGHT       "mip_hyper_submip_truncated_weight"
 #define CUOPT_MIP_HYPER_SUBMIP_MIN_SIGMA              "mip_hyper_submip_min_sigma"
-#define CUOPT_MIP_HYPER_SUBMIP_MAX_FIXRATE            "mip_hyper_submip_max_fixrate"
 #define CUOPT_MIP_HYPER_SUBMIP_MIN_FIXRATE            "mip_hyper_submip_min_fixrate"
 #define CUOPT_MIP_HYPER_SUBMIP_MIN_FIXRATE_CAP        "mip_hyper_submip_min_fixrate_cap"
 #define CUOPT_MIP_HYPER_SUBMIP_TARGET_MIP_GAP         "mip_hyper_submip_target_mip_gap"

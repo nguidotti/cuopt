@@ -167,7 +167,6 @@ solver_settings_t<i_t, f_t>::solver_settings_t() : pdlp_settings(), mip_settings
     {CUOPT_MIP_HYPER_SUBMIP_EMPTY_WEIGHT, &mip_settings.mip_hyper_params.submip_empty_weight, f_t(0.0), f_t(1.0), f_t(0.1), "fix-rate controller gain after a sub-MIP without an improving solution"},
     {CUOPT_MIP_HYPER_SUBMIP_TRUNCATED_WEIGHT, &mip_settings.mip_hyper_params.submip_truncated_weight, f_t(0.0), f_t(1.0), f_t(0.3), "fix-rate controller gain after a sub-MIP hits its limits"},
     {CUOPT_MIP_HYPER_SUBMIP_MIN_SIGMA, &mip_settings.mip_hyper_params.submip_min_sigma, f_t(1e-3), f_t(1.0), f_t(0.02), "minimum spread of the target fix-rate distribution"},
-    {CUOPT_MIP_HYPER_SUBMIP_MAX_FIXRATE, &mip_settings.mip_hyper_params.submip_max_fixrate, f_t(0.0), f_t(1.0), f_t(0.9), "maximum target fix rate for a sub-MIP"},
     {CUOPT_MIP_HYPER_SUBMIP_MIN_FIXRATE, &mip_settings.mip_hyper_params.submip_min_fixrate, f_t(0.0), f_t(1.0), f_t(0.25), "minimum fix rate for accepting the RINS neighbourhood"},
     {CUOPT_MIP_HYPER_SUBMIP_MIN_FIXRATE_CAP, &mip_settings.mip_hyper_params.submip_min_fixrate_cap, f_t(0.0), f_t(1.0), f_t(0.1), "hard cap on the minimum fix rate for solving a sub-MIP"},
     {CUOPT_MIP_HYPER_SUBMIP_TARGET_MIP_GAP, &mip_settings.mip_hyper_params.submip_target_mip_gap, f_t(0.0), f_t(1.0), f_t(0.01), "MIP gap target for the sub-MIP"},

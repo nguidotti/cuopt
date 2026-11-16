@@ -138,19 +138,17 @@ struct mip_hyper_params_t {
   // Base target fix rate
   f_t submip_base_fixrate = 0.6;
 
-  // Minimum sigma (or spread) allowed in the normal distribution.
+  // Minimum sigma (or spread) allowed in the split normal distribution.
   f_t submip_min_sigma = 0.02;
 
-  //
+  // The target fix rate is randomly generated from a split normal distribution that is
+  // defined based on the parameters below.
   f_t submip_base_lower_guide  = 0.25;
   f_t submip_base_upper_guide  = 0.9;
   f_t submip_success_weight    = 0.7;
   f_t submip_infeasible_weight = 0.3;
   f_t submip_empty_weight      = 0.1;
   f_t submip_truncated_weight  = 0.3;
-
-  // Maximum target fix rate for a sub-MIP.
-  f_t submip_max_fixrate = 0.9;
 
   // Minimum fix rate for solving the sub-MIP.
   f_t submip_min_fixrate = 0.25;
