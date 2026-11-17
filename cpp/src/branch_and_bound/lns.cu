@@ -182,6 +182,7 @@ bool solve_lp(const branch_and_bound_stats_t<i_t, f_t>& bnb_stats,
     DEBUG_SUBMIP("Max iteration reached! {}/{}",
                  stats.total_simplex_iters.load(std::memory_order::relaxed),
                  simplex_iter_limit)
+    controller.update_stats(settings, TRUNCATED, fixrate);
     return false;
   }
 
@@ -203,6 +204,8 @@ bool solve_lp(const branch_and_bound_stats_t<i_t, f_t>& bnb_stats,
     } else if (lp_status == simplex::dual_status_t::CUTOFF ||
                lp_status == simplex::dual_status_t::OPTIMAL) {
       controller.update_stats(settings, EMPTY, fixrate);
+    } else if (lp_status == simplex::dual_status_t::ITERATION_LIMIT) {
+      controller.update_stats(settings, TRUNCATED, fixrate);
     }
 
     return false;
