@@ -22,7 +22,7 @@
 
 #include <raft/core/nvtx.hpp>
 
-#define SUBMIP_VERBOSE true
+#define SUBMIP_VERBOSE false
 #if SUBMIP_VERBOSE
 #define DEBUG_SUBMIP(...) settings.log.print_format(__VA_ARGS__);
 #else
