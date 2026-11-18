@@ -89,6 +89,7 @@ struct submip_manager_t {
 template <typename i_t, typename f_t>
 void solve_submip(diving_worker_t<i_t, f_t>* worker,
                   branch_and_bound_stats_t<i_t, f_t>& bnb_stats,
+                  branch_and_bound_stats_t<i_t, f_t>& heuristic_stats,
                   const simplex::user_problem_t<i_t, f_t>& original_problem,
                   submip_manager_t<i_t, f_t>& submip_manager,
                   f_t fixrate,
@@ -98,6 +99,7 @@ void solve_submip(diving_worker_t<i_t, f_t>* worker,
 template <typename i_t, typename f_t>
 void mutation(diving_worker_t<i_t, f_t>* worker,
               branch_and_bound_stats_t<i_t, f_t>& bnb_stats,
+              branch_and_bound_stats_t<i_t, f_t>& heuristic_stats,
               const simplex::user_problem_t<i_t, f_t>& original_problem,
               submip_manager_t<i_t, f_t>& submip_manager,
               simplex::simplex_solver_settings_t<i_t, f_t> settings);
@@ -105,6 +107,7 @@ void mutation(diving_worker_t<i_t, f_t>* worker,
 template <typename i_t, typename f_t>
 void rins(diving_worker_t<i_t, f_t>* worker,
           branch_and_bound_stats_t<i_t, f_t>& bnb_stats,
+          branch_and_bound_stats_t<i_t, f_t>& heuristic_stats,
           const simplex::user_problem_t<i_t, f_t>& original_problem,
           submip_manager_t<i_t, f_t>& submip_manager,
           simplex::simplex_solver_settings_t<i_t, f_t> submip_settings);
@@ -112,6 +115,7 @@ void rins(diving_worker_t<i_t, f_t>* worker,
 template <typename i_t, typename f_t>
 void rens(diving_worker_t<i_t, f_t>* worker,
           branch_and_bound_stats_t<i_t, f_t>& bnb_stats,
+          branch_and_bound_stats_t<i_t, f_t>& heuristic_stats,
           const simplex::user_problem_t<i_t, f_t>& original_problem,
           submip_manager_t<i_t, f_t>& submip_manager,
           simplex::simplex_solver_settings_t<i_t, f_t> submip_settings);

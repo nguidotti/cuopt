@@ -255,8 +255,11 @@ class branch_and_bound_t {
   // Solver-space incumbent tracked directly by B&B.
   simplex::mip_solution_t<i_t, f_t> incumbent_;
 
-  // Structure with the general info of the solver.
+  // Tree exploration stats (e.g., node explored, simplex iterations, etc.)
   branch_and_bound_stats_t<i_t, f_t> exploration_stats_;
+
+  // Heuristics (diving, sub-MIP) stats
+  branch_and_bound_stats_t<i_t, f_t> heuristic_stats_;
 
   // Mutex for repair
   omp_mutex_t mutex_repair_;
@@ -414,6 +417,7 @@ class branch_and_bound_t {
 
   friend void solve_submip<i_t, f_t>(diving_worker_t<i_t, f_t>* worker,
                                      branch_and_bound_stats_t<i_t, f_t>& bnb_stats,
+                                     branch_and_bound_stats_t<i_t, f_t>& heuristic_stats,
                                      const simplex::user_problem_t<i_t, f_t>& original_problem,
                                      submip_manager_t<i_t, f_t>& submip_manager,
                                      f_t fixrate,
