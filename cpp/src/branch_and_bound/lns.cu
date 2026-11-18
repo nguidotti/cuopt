@@ -10,7 +10,6 @@
 #include <branch_and_bound/branch_and_bound.hpp>
 #include <branch_and_bound/fractional.hpp>
 #include <branch_and_bound/utils.hpp>
-#include <dual_simplex/crossover.hpp>
 
 #include <dual_simplex/presolve.hpp>
 #include <dual_simplex/primal.hpp>
@@ -23,7 +22,7 @@
 
 #include <raft/core/nvtx.hpp>
 
-#define SUBMIP_VERBOSE false
+#define SUBMIP_VERBOSE true
 #if SUBMIP_VERBOSE
 #define DEBUG_SUBMIP(...) settings.log.print_format(__VA_ARGS__);
 #else
@@ -83,6 +82,7 @@ i_t extend_variable_fixings(const csr_matrix_t<i_t, f_t>& Arow,
                             const simplex_solver_settings_t<i_t, f_t>& settings,
                             const std::vector<f_t>& obj_coeffs,
                             const std::vector<i_t>& fractional,
+                            std::vector<bool>& integer_blacklist,
                             const std::vector<f_t>& current_sol,
                             const std::vector<f_t>& root_solution,
                             i_t target_num_fixed,
@@ -92,6 +92,7 @@ i_t extend_variable_fixings(const csr_matrix_t<i_t, f_t>& Arow,
 {
   std::vector<std::tuple<f_t, i_t, f_t>> candidates;
   for (i_t j : fractional) {
+    if (integer_blacklist[j]) { continue; }
     if (std::abs(lp.lower[j] - lp.upper[j]) <= settings.fixed_tol) { continue; }
     if (toc(start_time) >= settings.time_limit || settings.received_halt_signal()) return -1;
 
@@ -144,6 +145,7 @@ i_t extend_variable_fixings(const csr_matrix_t<i_t, f_t>& Arow,
         bound_change.old_upper,
         bound_change.new_upper);
       domain.backtrack_to_parent(lp);
+      integer_blacklist[j] = true;
     }
     num_fixed += calculate_fixrate(var_types, settings, domain, start);
 
@@ -255,8 +257,8 @@ f_t submip_fixrate_controller_t<i_t, f_t>::get_target_fixrate(
 {
   mutex_.lock();
   f_t peak    = peak_;
-  f_t sigma_r = std::max(settings.submip_min_sigma, (upper_guide_ - peak_) / 2);
-  f_t sigma_l = std::max(settings.submip_min_sigma, (peak_ - lower_guide_) / 2);
+  f_t sigma_r = std::max(settings.submip_min_sigma, (upper_guide_ - peak_) / 6);
+  f_t sigma_l = std::max(settings.submip_min_sigma, (peak_ - lower_guide_) / 6);
   mutex_.unlock();
 
   return std::clamp(rng.split_normal(peak, sigma_r, sigma_l), f_t(0), f_t(1));
@@ -758,17 +760,17 @@ void rins(diving_worker_t<i_t, f_t>* worker,
   std::vector<i_t> integer_list;
   get_unfixed_integer_variables(
     lp.lower, lp.upper, worker->var_types, settings.fixed_tol, integer_list);
+  std::vector<bool> integer_blacklist(lp.num_cols, false);
 
   i_t num_integers   = integer_list.size();
   f_t target_fixrate = controller.get_target_fixrate(settings.mip_hyper_params, worker->rng);
   f_t min_fixrate    = settings.mip_hyper_params.submip_min_fixrate;
   f_t fixrate        = 0;
   i_t num_fixed      = 0;
-  bool has_stopped   = false;
-
-  i_t round = 0;
+  i_t round          = 0;
 
   while (!bnb_ptr->has_solver_stopped() && !settings.received_halt_signal()) {
+    bool has_stopped    = false;
     f_t prev_stack_size = worker->domain.size();
     f_t prev_fixrate    = fixrate;
     i_t new_fixings     = 0;
@@ -801,6 +803,7 @@ void rins(diving_worker_t<i_t, f_t>* worker,
       }
 
       if (new_fixings >= round_num_fixed) break;
+      if (integer_blacklist[j]) continue;
       if (std::abs(lp.lower[j] - lp.upper[j]) <= settings.fixed_tol) continue;
       if (std::abs(current_sol[j] - incumbent[j]) <= settings.integer_tol) {
         f_t fixed_val = std::clamp(std::round(incumbent[j]), lp.lower[j], lp.upper[j]);
@@ -824,6 +827,7 @@ void rins(diving_worker_t<i_t, f_t>* worker,
             bound_change.new_upper);
 
           domain.backtrack_to_parent(lp);
+          integer_blacklist[j] = true;
         }
 
         new_fixings += calculate_fixrate(worker->var_types, settings, domain, start);
@@ -851,6 +855,7 @@ void rins(diving_worker_t<i_t, f_t>* worker,
                                             settings,
                                             worker->leaf_problem.objective,
                                             fractional,
+                                            integer_blacklist,
                                             current_sol,
                                             worker->root_solution,
                                             round_num_fixed,
@@ -957,6 +962,7 @@ void rens(diving_worker_t<i_t, f_t>* worker,
   std::vector<i_t> integer_list;
   get_unfixed_integer_variables(
     lp.lower, lp.upper, worker->var_types, settings.fixed_tol, integer_list);
+  std::vector<bool> integer_blacklist(lp.num_cols, false);
 
   i_t num_integers   = integer_list.size();
   f_t target_fixrate = controller.get_target_fixrate(settings.mip_hyper_params, worker->rng);
@@ -1003,6 +1009,7 @@ void rens(diving_worker_t<i_t, f_t>* worker,
       }
 
       if (new_fixings >= round_num_fixed) break;
+      if (integer_blacklist[j]) continue;
       if (std::abs(lp.lower[j] - lp.upper[j]) <= settings.fixed_tol) continue;
 
       simplex::bound_change_t<i_t, f_t> bound_change{
@@ -1025,6 +1032,7 @@ void rens(diving_worker_t<i_t, f_t>* worker,
             bound_change.old_upper,
             bound_change.new_upper);
           domain.backtrack_to_parent(lp);
+          integer_blacklist[j] = true;
         }
 
         new_fixings += calculate_fixrate(worker->var_types, settings, domain, start);
@@ -1045,6 +1053,7 @@ void rens(diving_worker_t<i_t, f_t>* worker,
                                             settings,
                                             worker->leaf_problem.objective,
                                             fractional,
+                                            integer_blacklist,
                                             current_sol,
                                             worker->root_solution,
                                             round_num_fixed,
