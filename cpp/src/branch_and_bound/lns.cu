@@ -176,7 +176,7 @@ bool solve_lp(const branch_and_bound_stats_t<i_t, f_t>& bnb_stats,
     DEBUG_SUBMIP("Dual simplex returned {}. leaf_obj={:.4g}, upper_bound={:.4g}",
                  simplex::dual_status_to_string(lp_status),
                  leaf_obj,
-                 upper_bound)
+                 bnb_ptr->get_upper_bound())
     if (lp_status == simplex::dual_status_t::DUAL_UNBOUNDED) {
       controller.update_stats(settings, INFEASIBLE, fixrate);
     } else if (lp_status == simplex::dual_status_t::ITERATION_LIMIT) {
