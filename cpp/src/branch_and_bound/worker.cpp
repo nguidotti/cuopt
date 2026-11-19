@@ -21,14 +21,19 @@ bool branch_and_bound_worker_t<i_t, f_t>::apply_symmetry_reductions(
   mip_node_t<i_t, f_t>* node_ptr,
   branch_and_bound_stats_t<i_t, f_t>& stats)
 {
-  i_t start_stack_index = domain.size();
+  i_t start_stack_index = domain_propagation.size();
 
   // Perform orbital fixing
   if (orbital_fixing != nullptr && !orbital_fixing->disabled()) {
     i_t prev_fix  = node_ptr->orbital_fix_zero.size() + node_ptr->orbital_fix_one.size();
-    i_t conflicts = orbital_fixing->orbital_fixing(
-      symmetry_ptr, settings, node_ptr, leaf_problem, root_lp.lower, root_lp.upper, domain);
-    i_t new_fix = node_ptr->orbital_fix_zero.size() + node_ptr->orbital_fix_one.size();
+    i_t conflicts = orbital_fixing->orbital_fixing(symmetry_ptr,
+                                                   settings,
+                                                   node_ptr,
+                                                   leaf_problem,
+                                                   root_lp.lower,
+                                                   root_lp.upper,
+                                                   domain_propagation);
+    i_t new_fix   = node_ptr->orbital_fix_zero.size() + node_ptr->orbital_fix_one.size();
     if (new_fix > prev_fix) {
       ++stats.orbital_fixing_nodes;
       stats.orbital_fixings_applied += (new_fix - prev_fix);
@@ -40,7 +45,7 @@ bool branch_and_bound_worker_t<i_t, f_t>::apply_symmetry_reductions(
 
   if (settings.symmetry == 2 && lexical_reduction != nullptr) {
     i_t lexical_reductions_info =
-      lexical_reduction->lexical_reduce(symmetry_ptr, node_ptr, leaf_problem, domain);
+      lexical_reduction->lexical_reduce(symmetry_ptr, node_ptr, leaf_problem, domain_propagation);
     if (lexical_reductions_info > 0) {
       ++stats.lexical_reduction_nodes;
       stats.lexical_reduction_fixings_applied += lexical_reductions_info;
@@ -51,7 +56,8 @@ bool branch_and_bound_worker_t<i_t, f_t>::apply_symmetry_reductions(
     }
   }
 
-  return domain.propagate_from_stack(Arow, var_types, settings, leaf_problem, start_stack_index);
+  return domain_propagation.propagate_from_stack(
+    Arow, var_types, settings, leaf_problem, start_stack_index);
 }
 
 template <typename i_t, typename f_t>
@@ -150,7 +156,7 @@ simplex::dual_status_t branch_and_bound_worker_t<i_t, f_t>::solve_node_lp(
       if (lp_settings.time_limit <= 0.0) { return simplex::dual_status_t::TIME_LIMIT; }
 
       if (search_strategy == search_strategy_t::BEST_FIRST) {
-        if (!domain.propagate_objective(
+        if (!domain_propagation.propagate_objective(
               Arow, var_types, settings, leaf_problem, lp_settings.cut_off)) {
           return simplex::dual_status_t::CUTOFF;
         }

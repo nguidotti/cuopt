@@ -8,8 +8,8 @@
 #pragma once
 
 #include <branch_and_bound/constants.hpp>
+#include <branch_and_bound/domain_propagation.hpp>
 
-#include <dual_simplex/domain.hpp>
 #include <dual_simplex/initial_basis.hpp>
 #include <math_optimization/types.hpp>
 
@@ -27,15 +27,16 @@ namespace cuopt::mathematical_optimization::mip {
 enum class node_status_t : int {
   PENDING          = 0,  // Node is still in the tree, waiting to be solved
   INTEGER_FEASIBLE = 1,  // Node has an integer feasible solution
-  FATHOMED         = 2,  // Node is infeasible or has objective is greater than the upper bound
-  HAS_CHILDREN     = 3,  // Node has children to explore
-  NUMERICAL        = 4   // Encountered numerical issue when solving the LP relaxation
+  INFEASIBLE       = 2,  // Node is infeasible
+  FATHOMED         = 3,  // Node objective is greater than the upper bound
+  HAS_CHILDREN     = 4,  // Node has children to explore
+  NUMERICAL        = 5   // Encountered numerical issue when solving the LP relaxation
 };
 
 inline bool inactive_status(node_status_t status)
 {
   return (status == node_status_t::FATHOMED || status == node_status_t::INTEGER_FEASIBLE ||
-          status == node_status_t::NUMERICAL);
+          status == node_status_t::INFEASIBLE || status == node_status_t::NUMERICAL);
 }
 
 template <typename i_t, typename f_t>
@@ -133,9 +134,9 @@ class mip_node_t {
 
   // Rebuild the variable bounds from the tree, traversing from this node
   // to the root node.
-  void rebuild_variable_bounds(simplex::domain_t<i_t, f_t>& domain) const
+  void rebuild_variable_bounds(domain_propagation_t<i_t, f_t>& domain_propagation) const
   {
-    domain.clear();
+    domain_propagation.clear();
 
     std::vector<const mip_node_t*> path;
     path.reserve(depth);
@@ -144,15 +145,15 @@ class mip_node_t {
       path.push_back(node);
     }
     for (auto it = path.rbegin(); it != path.rend(); ++it) {
-      domain.push((*it)->update_variable_bounds());
+      domain_propagation.push((*it)->update_variable_bounds());
     }
   }
 
-  simplex::bound_change_t<i_t, f_t> update_variable_bounds() const
+  bound_change_t<i_t, f_t> update_variable_bounds() const
   {
-    simplex::bound_change_t<i_t, f_t> bound_change;
+    bound_change_t<i_t, f_t> bound_change;
     bound_change.var    = branch_var;
-    bound_change.origin = simplex::bound_change_origin_t::BRANCH;
+    bound_change.origin = bound_change_origin_t::BRANCH;
 
     if (branch_var >= 0) {
       bound_change.new_lower = branch_var_lower;

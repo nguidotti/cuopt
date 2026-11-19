@@ -28,6 +28,7 @@ node_status_t diving_worker_t<i_t, f_t>::classify_node(
   std::vector<i_t>& fractional,
   f_t& leaf_obj)
 {
+  if (lp_status == simplex::dual_status_t::DUAL_UNBOUNDED) { return node_status_t::INFEASIBLE; }
   if (lp_status != simplex::dual_status_t::OPTIMAL) { return node_status_t::FATHOMED; }
 
   fractional.clear();

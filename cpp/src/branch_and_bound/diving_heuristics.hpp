@@ -9,12 +9,12 @@
 
 #include <cuopt/mathematical_optimization/mip/mip_hyper_params.hpp>
 
+#include <branch_and_bound/domain_propagation.hpp>
 #include <branch_and_bound/pseudo_costs.hpp>
 #include <branch_and_bound/worker.hpp>
 #include <branch_and_bound/worker_pool.hpp>
 
 #include <dual_simplex/basis_updates.hpp>
-#include <dual_simplex/domain.hpp>
 
 #include <vector>
 
@@ -56,7 +56,7 @@ class diving_worker_t : public branch_and_bound_worker_t<i_t, f_t> {
   {
     if (!this->is_active.load(std::memory_order::relaxed)) { return; }
     this->is_active = false;
-    this->domain.clear();
+    this->domain_propagation.clear();
 
     if (bfs_worker) {
       assert(bfs_worker->active_diving_workers.load(std::memory_order::relaxed) > 0);

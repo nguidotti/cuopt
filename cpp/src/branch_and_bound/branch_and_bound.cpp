@@ -7,6 +7,7 @@
 
 #include <branch_and_bound/branch_and_bound.hpp>
 #include <branch_and_bound/degenerate_pivots.hpp>
+#include <branch_and_bound/domain_propagation.hpp>
 #include <branch_and_bound/fractional.hpp>
 #include <branch_and_bound/mip_node.hpp>
 #include <branch_and_bound/pseudo_costs.hpp>
@@ -23,7 +24,6 @@
 
 #include <dual_simplex/basis_solves.hpp>
 #include <dual_simplex/crossover.hpp>
-#include <dual_simplex/domain.hpp>
 #include <dual_simplex/initial_basis.hpp>
 #include <dual_simplex/logger.hpp>
 #include <dual_simplex/phase2.hpp>
@@ -53,13 +53,11 @@
 namespace cuopt::mathematical_optimization::mip {
 
 using simplex::basis_update_mpf_t;
-using simplex::bound_change_origin_t;
 using simplex::compute_objective;
 using simplex::compute_user_objective;
 using simplex::crossover_status_t;
 using simplex::crush_primal_solution;
 using simplex::decompress_vstatus;
-using simplex::domain_t;
 using simplex::dual_phase2_with_advanced_basis;
 using simplex::dual_status_t;
 using simplex::logger_t;
@@ -1095,6 +1093,7 @@ struct deterministic_bfs_policy_t
                          branch_direction_t dir) override
   {
     switch (status) {
+      case node_status_t::INFEASIBLE: this->worker.record_infeasible(node); break;
       case node_status_t::FATHOMED: this->worker.record_fathomed(node, node->lower_bound); break;
       case node_status_t::INTEGER_FEASIBLE:
         this->worker.record_integer_solution(node, node->lower_bound);
@@ -1245,7 +1244,7 @@ std::pair<node_status_t, branch_direction_t> branch_and_bound_t<i_t, f_t>::updat
   if (lp_status == dual_status_t::DUAL_UNBOUNDED) {
     node_ptr->lower_bound = upper_bound;
     policy.graphviz(search_tree, node_ptr, "infeasible", upper_bound);
-    status = node_status_t::FATHOMED;
+    status = node_status_t::INFEASIBLE;
 
   } else if (lp_status == dual_status_t::CUTOFF) {
     node_ptr->lower_bound = upper_bound;
@@ -1355,9 +1354,9 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bfs_worker_t<i_t, f_t>* worker,
   worker->ensure_orbital_fixing();
   // The branching of the start node itself is applied when its LP is solved.
   if (start_node->parent != nullptr) {
-    start_node->parent->rebuild_variable_bounds(worker->domain);
+    start_node->parent->rebuild_variable_bounds(worker->domain_propagation);
   } else {
-    worker->domain.clear();
+    worker->domain_propagation.clear();
   }
 
   bool is_start_feasible = worker->rebuild_bounds_from_stack(settings_);
@@ -1767,8 +1766,8 @@ bool branch_and_bound_t<i_t, f_t>::launch_diving_worker(bfs_worker_t<i_t, f_t>* 
   diving_worker_t<i_t, f_t>* diving_worker = diving_worker_pool_.pop_idle_worker();
   if (diving_worker == nullptr) { return false; }
 
-  bool success =
-    bfs_worker->node_queue.diving_init(diving_worker->start_node, diving_worker->domain);
+  bool success = bfs_worker->node_queue.diving_init(diving_worker->start_node,
+                                                    diving_worker->domain_propagation);
   if (!success) {
     diving_worker_pool_.return_worker_to_pool(diving_worker);
     return false;
@@ -2018,9 +2017,9 @@ void branch_and_bound_t<i_t, f_t>::launch_root_heuristics(
                                               strategy,
                                               this,
                                               root_heuristics.seed_rng_);
-    worker->domain.implied_bounds = &probing_implied_bound_;
-    worker->domain.clique_table   = clique_table_.get();
-    worker->work_estimate         = root_relax_work_estimate_;
+    worker->domain_propagation.implied_bounds = &probing_implied_bound_;
+    worker->domain_propagation.clique_table   = clique_table_.get();
+    worker->work_estimate                     = root_relax_work_estimate_;
 
     if (use_rins) {
       mutex_upper_.lock();
@@ -2091,9 +2090,9 @@ void branch_and_bound_t<i_t, f_t>::launch_root_heuristics(
                                                 lp_solution.x,
                                                 this,
                                                 root_heuristics.seed_rng_);
-    worker->domain.implied_bounds = &probing_implied_bound_;
-    worker->domain.clique_table   = clique_table_.get();
-    worker->work_estimate         = root_relax_work_estimate_;
+    worker->domain_propagation.implied_bounds = &probing_implied_bound_;
+    worker->domain_propagation.clique_table   = clique_table_.get();
+    worker->work_estimate                     = root_relax_work_estimate_;
     mutex_upper_.lock();
     worker->current_incumbent = incumbent_.x;
     mutex_upper_.unlock();
@@ -2171,9 +2170,9 @@ void branch_and_bound_t<i_t, f_t>::launch_root_heuristics(
 
       diving_worker_t<i_t, f_t>* worker = current_heuristic->create_diving_worker(
         cut_pass, lp, settings_, root_node, strategy, this, root_heuristics.seed_rng_);
-      worker->domain.implied_bounds = &probing_implied_bound_;
-      worker->domain.clique_table   = clique_table_.get();
-      worker->work_estimate         = root_relax_work_estimate_;
+      worker->domain_propagation.implied_bounds = &probing_implied_bound_;
+      worker->domain_propagation.clique_table   = clique_table_.get();
+      worker->work_estimate                     = root_relax_work_estimate_;
 
       if (strategy == search_strategy_t::GUIDED_DIVING) {
         mutex_upper_.lock();
@@ -2586,7 +2585,7 @@ typename branch_and_bound_t<i_t, f_t>::cut_pass_action_t branch_and_bound_t<i_t,
 
   f_t node_presolve_start_time = tic();
   mutex_original_lp_.lock();
-  bool feasible = simplex::full_bound_strengthening(Arow_, var_types_, settings_, original_lp_);
+  bool feasible = full_bound_strengthening(Arow_, var_types_, settings_, original_lp_);
   mutex_original_lp_.unlock();
   f_t node_presolve_time = toc(node_presolve_start_time);
   if (node_presolve_time > 1.0) {
@@ -3388,7 +3387,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
       mutex_original_lp_.lock();
       original_lp_.lower = lower_bounds;
       original_lp_.upper = upper_bounds;
-      bool feasible = simplex::full_bound_strengthening(Arow_, var_types_, settings_, original_lp_);
+      bool feasible      = full_bound_strengthening(Arow_, var_types_, settings_, original_lp_);
       mutex_original_lp_.unlock();
       if (!feasible) {
         settings_.log.printf("Bound strengthening failed\n");
@@ -3734,14 +3733,14 @@ void branch_and_bound_t<i_t, f_t>::run_deterministic_coordinator(const csr_matri
   scoped_context_registrations_t context_registrations(*deterministic_scheduler_);
   for (auto& worker : *deterministic_workers_) {
     context_registrations.add(worker.work_context);
-    worker.domain.implied_bounds = &probing_implied_bound_;
-    worker.domain.clique_table   = clique_table_.get();
+    worker.domain_propagation.implied_bounds = &probing_implied_bound_;
+    worker.domain_propagation.clique_table   = clique_table_.get();
   }
   if (deterministic_diving_workers_) {
     for (auto& worker : *deterministic_diving_workers_) {
       context_registrations.add(worker.work_context);
-      worker.domain.implied_bounds = &probing_implied_bound_;
-      worker.domain.clique_table   = clique_table_.get();
+      worker.domain_propagation.implied_bounds = &probing_implied_bound_;
+      worker.domain_propagation.clique_table   = clique_table_.get();
     }
   }
 
@@ -3880,13 +3879,15 @@ void branch_and_bound_t<i_t, f_t>::run_deterministic_bfs_loop(
 
       bool is_child             = (node->parent == worker.last_solved_node);
       worker.recompute_basis    = !is_child;
-      const size_t domain_start = worker.domain.size();
+      const size_t domain_start = worker.domain_propagation.size();
 
       node_status_t status = solve_node_deterministic(worker, node, search_tree);
 
       if (status == node_status_t::PENDING) {
         // Undo the branching of this node, so the retry applies it again on the parent's domain.
-        if (is_child && worker.domain.size() > domain_start) { worker.backtrack_bound_changes(); }
+        if (is_child && worker.domain_propagation.size() > domain_start) {
+          worker.backtrack_bound_changes();
+        }
         deterministic_scheduler_->wait_for_next_sync(worker.work_context);
         continue;
       }
@@ -4088,27 +4089,28 @@ node_status_t branch_and_bound_t<i_t, f_t>::solve_node_deterministic(
   if (node_ptr->parent == worker.last_solved_node) {
     feasible = worker.update_variable_bounds(node_ptr, settings_);
   } else {
-    node_ptr->rebuild_variable_bounds(worker.domain);
+    node_ptr->rebuild_variable_bounds(worker.domain_propagation);
     feasible = worker.rebuild_bounds_from_stack(settings_);
   }
 
   const bool is_cutoff =
-    feasible && !worker.domain.propagate_objective(
+    feasible && !worker.domain_propagation.propagate_objective(
                   worker.Arow, worker.var_types, settings_, worker.leaf_problem, cutoff);
 
   if (settings_.deterministic) {
     // TEMP APPROXIMATION;
-    worker.work_context.record_work_sync_on_horizon(worker.domain.last_nnz_processed / 1e8);
+    worker.work_context.record_work_sync_on_horizon(worker.domain_propagation.last_nnz_processed /
+                                                    1e8);
   }
 
   if (!feasible) {
     node_ptr->lower_bound = worker.local_upper_bound;
-    worker.record_fathomed(node_ptr, worker.local_upper_bound);
-    node_ptr->set_status(node_status_t::FATHOMED);
+    worker.record_infeasible(node_ptr);
+    node_ptr->set_status(node_status_t::INFEASIBLE);
     --exploration_stats_.nodes_unexplored;
     ++exploration_stats_.nodes_explored;
     worker.recompute_basis = true;
-    return node_status_t::FATHOMED;
+    return node_status_t::INFEASIBLE;
   }
 
   if (is_cutoff) {
@@ -4671,12 +4673,13 @@ void branch_and_bound_t<i_t, f_t>::deterministic_dive(
   // made during the dive.
   worker.leaf_problem.lower = std::move(entry.resolved_lower);
   worker.leaf_problem.upper = std::move(entry.resolved_upper);
-  worker.domain.clear();
-  bool feasible =
-    worker.domain.propagate_full(worker.Arow, worker.var_types, settings_, worker.leaf_problem);
+  worker.domain_propagation.clear();
+  bool feasible = worker.domain_propagation.propagate_full(
+    worker.Arow, worker.var_types, settings_, worker.leaf_problem);
 
   if (settings_.deterministic) {
-    worker.work_context.record_work_sync_on_horizon(worker.domain.last_nnz_processed / 1e8);
+    worker.work_context.record_work_sync_on_horizon(worker.domain_propagation.last_nnz_processed /
+                                                    1e8);
   }
   if (!feasible) { return; }
 
@@ -4722,12 +4725,13 @@ void branch_and_bound_t<i_t, f_t>::deterministic_dive(
     lp_settings.scale_columns = false;
 
     feasible = worker.update_variable_bounds(node_ptr, settings_) &&
-               worker.domain.propagate_objective(
+               worker.domain_propagation.propagate_objective(
                  worker.Arow, worker.var_types, settings_, worker.leaf_problem, cutoff);
 
     if (settings_.deterministic) {
       // TEMP APPROXIMATION;
-      worker.work_context.record_work_sync_on_horizon(worker.domain.last_nnz_processed / 1e8);
+      worker.work_context.record_work_sync_on_horizon(worker.domain_propagation.last_nnz_processed /
+                                                      1e8);
     }
 
     if (!feasible) {
