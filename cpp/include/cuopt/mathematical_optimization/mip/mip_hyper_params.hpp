@@ -132,11 +132,25 @@ struct mip_hyper_params_t {
   i_t submip_rens     = -1;
   i_t submip_mutation = -1;
 
-  // Base for calculating the target fix rate for the neighbourhood. Actual target value is
-  // determined automatically according to the success and infeasible rate.
-  f_t submip_base_target_fixrate = 0.6;
+  // Determines how long an observation has influence over the target fixrate. Must be in (0, 1].
+  f_t submip_observation_decay = 0.9;
 
-  // Minimum fix rate for accepting the neighbourhood.
+  // Base target fix rate
+  f_t submip_base_fixrate = 0.6;
+
+  // Minimum sigma (or spread) allowed in the split normal distribution.
+  f_t submip_min_sigma = 0.02;
+
+  // The target fix rate is randomly generated from a split normal distribution that is
+  // defined based on the parameters below.
+  f_t submip_base_lower_guide  = 0.25;
+  f_t submip_base_upper_guide  = 0.9;
+  f_t submip_success_weight    = 0.7;
+  f_t submip_infeasible_weight = 0.3;
+  f_t submip_empty_weight      = 0.1;
+  f_t submip_truncated_weight  = 0.3;
+
+  // Minimum fix rate for accepting a RINS/RENS neighbourhood once no more variables can be fixed.
   f_t submip_min_fixrate = 0.25;
 
   // Hard cap for the minimum fix rate for solving a sub-MIP.

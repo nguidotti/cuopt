@@ -142,7 +142,7 @@ class branch_and_bound_t {
 
   // Update the incumbent solution with the new feasible solution
   // found during branch and bound.
-  void set_solution_from_worker(const simplex::lp_problem_t<i_t, f_t>& lp,
+  bool set_solution_from_worker(const simplex::lp_problem_t<i_t, f_t>& lp,
                                 f_t leaf_objective,
                                 const std::vector<f_t>& leaf_solution,
                                 i_t leaf_depth,
@@ -178,6 +178,8 @@ class branch_and_bound_t {
   std::atomic<int>* get_node_halt_flag() { return &node_concurrent_halt_; }
 
   bool has_solver_space_incumbent() const { return incumbent_.has_incumbent; }
+
+  void halt_solver();
 
   bool has_solver_stopped() const
   {
@@ -300,11 +302,7 @@ class branch_and_bound_t {
 
   // Worker pool dedicated to recursive RINS
   diving_worker_pool_t<i_t, f_t> submip_worker_pool_;
-  std::vector<branch_and_bound_t*> active_submip_solvers_;
-  omp_mutex_t active_submip_solvers_mutex_;
-  submip_stats_t rins_stats_;
-  submip_stats_t rens_stats_;
-  submip_stats_t mutation_stats_;
+  submip_manager_t<i_t, f_t> submip_manager_;
 
   // Global status of the solver.
   omp_atomic_t<mip_status_t> solver_status_;
@@ -332,8 +330,6 @@ class branch_and_bound_t {
               double work_time = -1);
 
   bool received_halt_signal() { return settings_.received_halt_signal(); }
-
-  void halt_solver();
 
   enum class cut_pass_action_t { CONTINUE, BREAK, RETURN };
 
@@ -425,7 +421,7 @@ class branch_and_bound_t {
                                      branch_and_bound_stats_t<i_t, f_t>& bnb_stats,
                                      branch_and_bound_stats_t<i_t, f_t>& heuristic_stats,
                                      const simplex::user_problem_t<i_t, f_t>& original_problem,
-                                     submip_stats_t& submip_stats,
+                                     submip_manager_t<i_t, f_t>& submip_manager,
                                      f_t fixrate,
                                      int64_t simplex_iter_used,
                                      simplex::simplex_solver_settings_t<i_t, f_t> submip_settings);

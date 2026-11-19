@@ -174,6 +174,7 @@ branch_and_bound_t<i_t, f_t>::branch_and_bound_t(
     root_crossover_soln_(1, 1),
     seed_generator_(solver_settings.random_seed),
     pc_(1, solver_settings),
+    submip_manager_(solver_settings),
     solver_status_(mip_status_t::UNSET)
 {
   exploration_stats_.start_time = start_time;
@@ -254,12 +255,8 @@ void branch_and_bound_t<i_t, f_t>::set_initial_pseudocost(
 template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::halt_solver()
 {
-  std::lock_guard lock(active_submip_solvers_mutex_);
   node_concurrent_halt_.store(true, std::memory_order::release);
-
-  for (i_t i = 0; i < active_submip_solvers_.size(); ++i) {
-    if (active_submip_solvers_[i]) { active_submip_solvers_[i]->halt_solver(); }
-  }
+  submip_manager_.halt_submip();
 }
 
 template <typename i_t, typename f_t>
@@ -840,7 +837,7 @@ void branch_and_bound_t<i_t, f_t>::set_final_solution(mip_solution_t<i_t, f_t>& 
 }
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::set_solution_from_worker(const lp_problem_t<i_t, f_t>& lp,
+bool branch_and_bound_t<i_t, f_t>::set_solution_from_worker(const lp_problem_t<i_t, f_t>& lp,
                                                             f_t leaf_objective,
                                                             const std::vector<f_t>& leaf_solution,
                                                             i_t leaf_depth,
@@ -894,6 +891,8 @@ void branch_and_bound_t<i_t, f_t>::set_solution_from_worker(const lp_problem_t<i
       node_concurrent_halt_ = true;
     }
   }
+
+  return success;
 }
 
 template <typename i_t, typename f_t>
@@ -1866,7 +1865,7 @@ bool branch_and_bound_t<i_t, f_t>::launch_submip_worker(const std::vector<f_t>& 
                exploration_stats_,
                heuristic_stats_,
                original_problem_,
-               mutation_stats_,
+               submip_manager_,
                submip_settings);
       submip_worker_pool_.return_worker_to_pool(worker);
     }
@@ -1882,7 +1881,7 @@ bool branch_and_bound_t<i_t, f_t>::launch_submip_worker(const std::vector<f_t>& 
            exploration_stats_,
            heuristic_stats_,
            original_problem_,
-           rins_stats_,
+           submip_manager_,
            submip_settings);
       submip_worker_pool_.return_worker_to_pool(worker);
     } else {
@@ -1893,7 +1892,7 @@ bool branch_and_bound_t<i_t, f_t>::launch_submip_worker(const std::vector<f_t>& 
              exploration_stats_,
              heuristic_stats_,
              original_problem_,
-             rins_stats_,
+             submip_manager_,
              submip_settings);
         submip_worker_pool_.return_worker_to_pool(worker);
       }
@@ -1909,7 +1908,7 @@ bool branch_and_bound_t<i_t, f_t>::launch_submip_worker(const std::vector<f_t>& 
          exploration_stats_,
          heuristic_stats_,
          original_problem_,
-         rens_stats_,
+         submip_manager_,
          submip_settings);
     submip_worker_pool_.return_worker_to_pool(worker);
   } else {
@@ -1920,7 +1919,7 @@ bool branch_and_bound_t<i_t, f_t>::launch_submip_worker(const std::vector<f_t>& 
            exploration_stats_,
            heuristic_stats_,
            original_problem_,
-           rens_stats_,
+           submip_manager_,
            submip_settings);
       submip_worker_pool_.return_worker_to_pool(worker);
     }
@@ -2040,14 +2039,14 @@ void branch_and_bound_t<i_t, f_t>::launch_root_heuristics(
              exploration_stats_,
              heuristic_stats_,
              original_problem_,
-             rins_stats_,
+             submip_manager_,
              submip_settings);
       } else {
         rens(worker,
              exploration_stats_,
              heuristic_stats_,
              original_problem_,
-             rens_stats_,
+             submip_manager_,
              submip_settings);
       }
       worker->cleanup();
@@ -2062,14 +2061,14 @@ void branch_and_bound_t<i_t, f_t>::launch_root_heuristics(
                exploration_stats_,
                heuristic_stats_,
                original_problem_,
-               rins_stats_,
+               submip_manager_,
                submip_settings);
         } else {
           rens(worker,
                exploration_stats_,
                heuristic_stats_,
                original_problem_,
-               rens_stats_,
+               submip_manager_,
                submip_settings);
         }
         worker->cleanup();
@@ -2108,7 +2107,7 @@ void branch_and_bound_t<i_t, f_t>::launch_root_heuristics(
                exploration_stats_,
                heuristic_stats_,
                original_problem_,
-               mutation_stats_,
+               submip_manager_,
                submip_settings);
       worker->cleanup();
     } else {
@@ -2121,7 +2120,7 @@ void branch_and_bound_t<i_t, f_t>::launch_root_heuristics(
                  exploration_stats_,
                  heuristic_stats_,
                  original_problem_,
-                 mutation_stats_,
+                 submip_manager_,
                  submip_settings);
         worker->cleanup();
         --(*worker_count);
@@ -2809,10 +2808,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   exploration_stats_.nodes_explored   = 0;
   lower_bound_numerical_              = inf;
   original_lp_.A.to_compressed_row(Arow_);
-
-  active_submip_solvers_mutex_.lock();
-  active_submip_solvers_.assign(settings_.max_cut_passes, nullptr);
-  active_submip_solvers_mutex_.unlock();
+  submip_manager_.resize_bnb_slots(settings_.max_cut_passes);
 
   settings_.log.debug("Reduced cost strengthening enabled: %d\n",
                       settings_.reduced_cost_strengthening);
@@ -3517,9 +3513,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                                this,
                                seed_generator_);
 
-      active_submip_solvers_mutex_.lock();
-      active_submip_solvers_.assign(num_submip_workers, nullptr);
-      active_submip_solvers_mutex_.unlock();
+      submip_manager_.resize_bnb_slots(num_submip_workers);
 
       bfs_worker_t<i_t, f_t>* initial_worker = bfs_worker_pool_.pop_idle_worker();
       node_queue_t<i_t, f_t>& node_queue     = initial_worker->node_queue;
