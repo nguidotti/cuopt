@@ -169,9 +169,8 @@ bool solve_lp(const branch_and_bound_stats_t<i_t, f_t>& bnb_stats,
   simplex::dual_status_t lp_status = worker->solve_node_lp(
     settings, node, stats, log, max_iter, bnb_stats.start_time, bnb_ptr->get_upper_bound());
 
-  f_t upper_bound = bnb_ptr->get_upper_bound();
-  node_status_t node_status =
-    worker->classify_node(node, lp_status, upper_bound, settings, fractional, leaf_obj);
+  node_status_t node_status = worker->classify_node(
+    node, lp_status, bnb_ptr->get_upper_bound(), settings, fractional, leaf_obj);
 
   if (node_status == node_status_t::INFEASIBLE || node_status == node_status_t::FATHOMED) {
     DEBUG_SUBMIP("Dual simplex returned {}. leaf_obj={:.4g}, upper_bound={:.4g}",
