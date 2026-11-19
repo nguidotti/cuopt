@@ -179,9 +179,6 @@ bool solve_lp(const branch_and_bound_stats_t<i_t, f_t>& bnb_stats,
                  upper_bound)
     if (lp_status == simplex::dual_status_t::DUAL_UNBOUNDED) {
       controller.update_stats(settings, INFEASIBLE, fixrate);
-    } else if (lp_status == simplex::dual_status_t::CUTOFF ||
-               lp_status == simplex::dual_status_t::OPTIMAL) {
-      controller.update_stats(settings, EMPTY, fixrate);
     } else if (lp_status == simplex::dual_status_t::ITERATION_LIMIT) {
       controller.update_stats(settings, TRUNCATED, fixrate);
     }
@@ -196,7 +193,7 @@ bool solve_lp(const branch_and_bound_stats_t<i_t, f_t>& bnb_stats,
     DEBUG_SUBMIP("Found an integer-feasible solution with obj={:.4g}. upper_bound={:.4g}",
                  leaf_obj,
                  bnb_ptr->get_upper_bound())
-    controller.update_stats(settings, success ? SUCCESS : EMPTY, fixrate);
+    if (success) { controller.update_stats(settings, SUCCESS, fixrate); }
     return false;
   }
 
@@ -248,7 +245,10 @@ f_t submip_fixrate_controller_t<i_t, f_t>::get_target_fixrate(
 // The relevance of old observations decays with lambda.
 template <typename i_t, typename f_t>
 void submip_fixrate_controller_t<i_t, f_t>::update_stats(
-  const simplex_solver_settings_t<i_t, f_t>& settings, submip_status_t status, f_t fixrate)
+  const simplex_solver_settings_t<i_t, f_t>& settings,
+  submip_status_t status,
+  f_t fixrate,
+  f_t effort)
 {
   std::lock_guard lock(mutex_);
 
@@ -277,12 +277,15 @@ void submip_fixrate_controller_t<i_t, f_t>::update_stats(
       break;
 
     // If the sub-MIP was empty, then push the upper guide and peak away from the current
-    // fixrate.
-    case EMPTY:
-      lower_guide_ = base_lower + lambda * (lower_guide_ - base_lower);
-      upper_guide_ += omega_E * std::min(fixrate - upper_guide_, f_t(0));
-      peak_ += omega_E * (0.5 * (std::min(fixrate, peak_) + lower_guide_) - peak_);
+    // fixrate in proportion to the effort spent.
+    case EMPTY: {
+      f_t omega    = omega_E * effort;
+      f_t decay    = 1 - (1 - lambda) * effort;
+      lower_guide_ = base_lower + decay * (lower_guide_ - base_lower);
+      upper_guide_ += omega * std::min(fixrate - upper_guide_, f_t(0));
+      peak_ += omega * (0.5 * (std::min(fixrate, peak_) + lower_guide_) - peak_);
       break;
+    }
 
     // If the sub-MIP was infeasible, then push the upper guide and peak away from the current
     // fixrate.
@@ -302,10 +305,11 @@ void submip_fixrate_controller_t<i_t, f_t>::update_stats(
   fixrate_sum_per_status_[status] += fixrate;
 
   DEBUG_SUBMIP(
-    "Updated controller with status={}, fixrate={:.4g}, count={}/{}, mean fixrate={:.4g}, "
-    "lower_guide={:.4g}, peak={:.4g}, upper_guide={:.4g}",
+    "Updated controller with status={}, fixrate={:.4g}, effort={:.4g}, count={}/{}, "
+    "mean fixrate={:.4g}, lower_guide={:.4g}, peak={:.4g}, upper_guide={:.4g}",
     (int)status,
     fixrate,
+    effort,
     status_count_[status],
     num_calls_.load(std::memory_order_acquire),
     fixrate_sum_per_status_[status] / status_count_[status],
@@ -483,7 +487,7 @@ void solve_submip(diving_worker_t<i_t, f_t>* worker,
 
     bool success = bnb_ptr->set_solution_from_submip(
       worker->leaf_problem, solution, presolver, worker->search_strategy);
-    controller.update_stats(settings, success ? SUCCESS : EMPTY, fixrate);
+    if (success) { controller.update_stats(settings, SUCCESS, fixrate); }
     return;
   }
 
@@ -623,8 +627,13 @@ void solve_submip(diving_worker_t<i_t, f_t>* worker,
       worker->leaf_problem, submip_solution.x, presolver, worker->search_strategy);
   }
 
+  // Share of the node budget spent, assuming that each fixed variable linearly reduces the
+  // complexity of the sub-MIP.
+  i_t node_limit = std::max(settings.node_limit, 1);
+  f_t effort     = std::min((1 - fixrate) * submip_solution.nodes_explored / node_limit, f_t(1));
+
   submip_status_t status = convert_bnb_status(submip_status, num_success > 0);
-  if (status != UNSET) { controller.update_stats(settings, status, fixrate); }
+  if (status != UNSET) { controller.update_stats(settings, status, fixrate, effort); }
 }
 
 template <typename i_t, typename f_t>
