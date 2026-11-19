@@ -482,7 +482,8 @@ void solve_submip(diving_worker_t<i_t, f_t>* worker,
       }
     }
 
-    bool success = bnb_ptr->set_solution_from_submip(worker->leaf_problem, solution, presolver);
+    bool success = bnb_ptr->set_solution_from_submip(
+      worker->leaf_problem, solution, presolver, worker->search_strategy);
     controller.update_stats(settings, success ? SUCCESS : EMPTY, fixrate);
     return;
   }
@@ -496,7 +497,8 @@ void solve_submip(diving_worker_t<i_t, f_t>* worker,
   settings.set_simplex_solution_callback   = nullptr;
   settings.solution_callback               = [bnb_ptr, &num_success, &presolver, worker](
                                  const std::vector<f_t>& solution, f_t obj) {
-    num_success += bnb_ptr->set_solution_from_submip(worker->leaf_problem, solution, presolver);
+    num_success += bnb_ptr->set_solution_from_submip(
+      worker->leaf_problem, solution, presolver, worker->search_strategy);
   };
 
   DEBUG_SUBMIP("Sub-MIP: {} constraints, {} variables, {} nonzeros\n",
@@ -618,8 +620,8 @@ void solve_submip(diving_worker_t<i_t, f_t>* worker,
   heuristic_stats.nodes_explored += effort_adjustment * submip_nodes;
 
   if (submip_solution.has_incumbent) {
-    num_success +=
-      bnb_ptr->set_solution_from_submip(worker->leaf_problem, submip_solution.x, presolver);
+    num_success += bnb_ptr->set_solution_from_submip(
+      worker->leaf_problem, submip_solution.x, presolver, worker->search_strategy);
   }
 
   submip_status_t status = convert_bnb_status(submip_status, num_success > 0);
