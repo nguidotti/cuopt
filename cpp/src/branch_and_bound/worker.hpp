@@ -8,13 +8,13 @@
 #pragma once
 
 #include <branch_and_bound/constants.hpp>
+#include <branch_and_bound/domain_propagation.hpp>
 #include <branch_and_bound/mip_node.hpp>
 #include <branch_and_bound/node_queue.hpp>
 #include <branch_and_bound/symmetry.hpp>
 #include <branch_and_bound/utils.hpp>
 
 #include <dual_simplex/basis_updates.hpp>
-#include <dual_simplex/domain.hpp>
 
 #include <utilities/pcgenerator.hpp>
 #include <utilities/splitmix64.hpp>
@@ -77,7 +77,7 @@ class branch_and_bound_worker_t {
   std::vector<i_t> basic_list;
   std::vector<i_t> nonbasic_list;
 
-  simplex::domain_t<i_t, f_t> domain;
+  domain_propagation_t<i_t, f_t> domain_propagation;
 
   // The incumbent may change while we are still constructing RINS
   // sub-MIP or doing guided diving. Save it here so we always use
@@ -163,10 +163,10 @@ class branch_and_bound_worker_t {
   {
     // A root re-solved in place (e.g., the RINS/RENS rounds) already holds its bounds.
     if (node_ptr->parent == nullptr) {
-      domain.last_nnz_processed = 0;
+      domain_propagation.last_nnz_processed = 0;
       return true;
     }
-    return domain.apply_and_propagate(
+    return domain_propagation.apply_and_propagate(
       Arow, var_types, settings, node_ptr->update_variable_bounds(), leaf_problem);
   }
 
@@ -178,14 +178,14 @@ class branch_and_bound_worker_t {
         search_strategy != search_strategy_t::MUTATION) {
       leaf_problem.lower = root_lp.lower;
       leaf_problem.upper = root_lp.upper;
-      domain.apply_stack(leaf_problem.lower, leaf_problem.upper);
+      domain_propagation.apply_stack(leaf_problem.lower, leaf_problem.upper);
     }
 
-    domain.compute_activities(Arow, leaf_problem);
-    return domain.propagate_from_stack(Arow, var_types, settings, leaf_problem);
+    domain_propagation.compute_activities(Arow, leaf_problem);
+    return domain_propagation.propagate_from_stack(Arow, var_types, settings, leaf_problem);
   }
 
-  void backtrack_bound_changes() { domain.backtrack_to_parent(leaf_problem); }
+  void backtrack_bound_changes() { domain_propagation.backtrack_to_parent(leaf_problem); }
 
   void set_active() { is_active = true; }
 
@@ -241,7 +241,7 @@ class bfs_worker_t : public branch_and_bound_worker_t<i_t, f_t> {
 
   void cleanup()
   {
-    this->domain.clear();
+    this->domain_propagation.clear();
     this->is_active = false;
   }
 
