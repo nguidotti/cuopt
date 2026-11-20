@@ -44,11 +44,9 @@ struct submip_fixrate_controller_t {
   }
 
   f_t get_target_fixrate(const mip_hyper_params_t<i_t, f_t>& settings, pcgenerator_t& rng);
-  // `effort` is the share of the node budget spent by the sub-MIP tree search, in [0, 1].
   void update_stats(const simplex::simplex_solver_settings_t<i_t, f_t>& settings,
                     submip_status_t status,
-                    f_t fixrate,
-                    f_t effort = 0);
+                    f_t fixrate);
 };
 
 template <typename i_t, typename f_t>
