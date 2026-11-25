@@ -154,12 +154,12 @@ struct mip_hyper_params_t {
 
   // The target fix rate is randomly generated from a split normal distribution that is
   // defined based on the parameters below.
-  f_t submip_base_lower_guide  = 0.25;
-  f_t submip_base_upper_guide  = 0.9;
+  f_t submip_base_lower_guide  = 0.4;
+  f_t submip_base_upper_guide  = 0.8;
   f_t submip_success_weight    = 0.7;
   f_t submip_infeasible_weight = 0.3;
   f_t submip_empty_weight      = 0.1;
-  f_t submip_truncated_weight  = 0.3;
+  f_t submip_truncated_weight  = 0.2;
 
   // Minimum fix rate for accepting a RINS/RENS neighbourhood once no more variables can be fixed.
   f_t submip_min_fixrate = 0.25;
