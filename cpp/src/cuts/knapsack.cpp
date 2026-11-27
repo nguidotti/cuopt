@@ -207,7 +207,10 @@ i_t knapsack_generation_t<i_t, f_t>::generate_knapsack_cut(
   }
   if (verbose) { settings.log.printf(" <= %g\n", knapsack_inequality.rhs); }
   // seperation_rhs currently contains W.
-  seperation_rhs -= (std::floor(knapsack_inequality.rhs) + 1.0);
+  const f_t beta_tol      = 1e-6;
+  const f_t beta_floor    = std::floor(knapsack_inequality.rhs + beta_tol);
+  knapsack_inequality.rhs = beta_floor;
+  seperation_rhs -= (beta_floor + 1.0);
 
   if (verbose) {
     settings.log.printf("\t");
@@ -315,7 +318,7 @@ i_t knapsack_generation_t<i_t, f_t>::generate_knapsack_cut(
   }
 
   // sum_{j in C} a_j > beta is what makes sum_{j in C} x_j <= |C| - 1 valid.
-  const bool is_cover = cover_weight > knapsack_inequality.rhs;
+  const bool is_cover = cover_weight >= beta_floor + 1.0;
   cuopt_assert(is_cover, "knapsack separation produced a set that is not a cover");
   if (!is_cover) {
     restore_complemented(complemented_variables);

@@ -1124,6 +1124,67 @@ TEST(cuts, knapsack_fractional_capacity_regression)
   }
 }
 
+TEST(cuts, knapsack_scaled_capacity_ulp_regression)
+{
+  // A 50v-10 sub-MIP row: 19/48 x0 + 19/16 x1 + 19/24 x2 + 19/24 x3 >= 19/12, which scales by
+  // 48/19 to x0 + 3 x1 + 2 x2 + 2 x3 >= 4. The scaled weights and capacity land an ulp below their
+  // integers, which made sets of weight exactly 4 look like covers.
+  const std::vector<std::vector<double>> xstars = {
+    {0.1, 0.1, 0.9, 0.9, 0.0},
+    {0.99697023264693263, 0.99697023264694062, 0.0030297673530680982, 0.0030297673530683446, 0.0}};
+  const std::vector<int> weights = {1, 3, 2, 2};
+  for (std::size_t instance = 0; instance < xstars.size(); instance++) {
+    SCOPED_TRACE(instance);
+    simplex::simplex_solver_settings_t<int, double> settings;
+    settings.set_log(false);
+    simplex::lp_problem_t<int, double> lp(nullptr, 1, 5, 5);
+    lp.A.col_start = {0, 1, 2, 3, 4, 5};
+    lp.A.i         = {0, 0, 0, 0, 0};
+    lp.A.x = {-0.39583333333333331, -1.1875, -0.79166666666666663, -0.79166666666666663, 1.0};
+    lp.rhs = {-1.5833333333333335};
+    lp.lower.assign(5, 0.0);
+    lp.upper = {1.0, 1.0, 1.0, 1.0, std::numeric_limits<double>::infinity()};
+    csr_matrix_t<int, double> rows(1, 5, 5);
+    lp.A.to_compressed_row(rows);
+    const std::vector<int> slacks                         = {4};
+    const std::vector<simplex::variable_type_t> var_types = {simplex::variable_type_t::INTEGER,
+                                                             simplex::variable_type_t::INTEGER,
+                                                             simplex::variable_type_t::INTEGER,
+                                                             simplex::variable_type_t::INTEGER,
+                                                             simplex::variable_type_t::CONTINUOUS};
+    const std::vector<double>& xstar                      = xstars[instance];
+    mip::knapsack_generation_t<int, double> separator(lp, settings, rows, slacks, var_types);
+    ASSERT_EQ(separator.num_knapsack_constraints(), 1);
+
+    mip::inequality_t<int, double> cut(5);
+    if (separator.generate_knapsack_cut(
+          lp, settings, rows, slacks, var_types, xstar, 0, cut, tic()) != 0) {
+      continue;
+    }
+    EXPECT_LT(cut.vector.dot(xstar), cut.rhs);
+
+    int feasible_assignments = 0;
+    for (int mask = 0; mask < 16; mask++) {
+      SCOPED_TRACE(mask);
+      std::vector<double> point(5, 0.0);
+      int weight = 0;
+      for (int j = 0; j < 4; j++) {
+        const int value = (mask >> j) & 1;
+        point[j]        = value;
+        weight += weights[j] * value;
+      }
+      if (weight < 4) { continue; }
+      feasible_assignments++;
+      point[4] = lp.rhs[0];
+      for (int j = 0; j < 4; j++) {
+        point[4] -= lp.A.x[j] * point[j];
+      }
+      EXPECT_GE(cut.vector.dot(point), cut.rhs - 1e-9);
+    }
+    EXPECT_EQ(feasible_assignments, 9);
+  }
+}
+
 TEST(cuts, test_duplicate_cuts_detection)
 {
   simplex::simplex_solver_settings_t<int, double> settings;

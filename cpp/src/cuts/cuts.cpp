@@ -496,8 +496,11 @@ bool rational_coefficients(const std::vector<variable_type_t>& var_types,
   f_t scalar = static_cast<f_t>(lcm_denominators) / static_cast<f_t>(gcd_numerators);
   if (!std::isfinite(scalar) || scalar <= 0.0 || scalar > 1000.0) { return false; }
 
-  // The scaled product can land an ulp off the integer it represents.
   rational_inequality.scale(scalar);
+  // The scaled product can land an ulp off the integer it represents.
+  for (i_t k : indices) {
+    rational_inequality.vector.x[k] = std::round(rational_inequality.vector.x[k]);
+  }
 
   // Suppose sum_j a_j * x_j <= beta, and we compute a scaling s such that
   // A_j = s*a_j + delta_j, with A_j integer. Here delta_j is the error when
